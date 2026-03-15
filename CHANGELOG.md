@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Legacy Node.js MCP server (`mcp-server/`) — fully superseded by Rust-native implementation in `src/mcp.rs`
 
+### Fixed
+
+- CI and CodeQL workflows now run on all PRs, fixing deadlock where docs-only PRs could never satisfy required checks
+- Removed stale `javascript-typescript` language from CodeQL matrix (no JS/TS source remains)
+
 ### Changed
 
 - Reorganized planning and PRD documents into `.context/` directory

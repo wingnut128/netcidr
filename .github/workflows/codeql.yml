@@ -3,16 +3,8 @@ name: CodeQL
 on:
   push:
     branches: [ main ]
-    paths-ignore:
-      - '**.md'
-      - 'LICENSE'
-      - '.gitignore'
   pull_request:
     branches: [ main ]
-    paths-ignore:
-      - '**.md'
-      - 'LICENSE'
-      - '.gitignore'
   schedule:
     - cron: '0 0 * * 1'  # Run every Monday at midnight
 
@@ -28,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [ 'rust', 'javascript-typescript' ]
+        language: [ 'rust' ]
 
     steps:
       - name: Checkout repository
