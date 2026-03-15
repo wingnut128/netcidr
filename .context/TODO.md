@@ -11,14 +11,6 @@ Reference: `.context/prd-ipam-persistence.md`
 - [ ] Target prefix mode: given a /N, count how many fit in available space
 - [ ] Utilization rollup: allocated vs total IPs, breakdown by status (active/reserved/released)
 
-## Phase 6: Additional Storage Backends
-
-### MySQL (`ipam-mysql` feature)
-- [ ] `src/ipam/mysql/mod.rs` — `MysqlStore` implementation
-- [ ] `sqlx` with `mysql` runtime
-- [ ] Embedded `sqlx` migrations
-- [ ] Trait contract tests via testcontainer
-
 ## Cross-cutting / Deferred
 
 - [ ] **Trait-contract test suite for backend parity** — Shared test suite run against `&dyn IpamStore` per backend (SQLite in-memory by default, Postgres via Docker). Not yet implemented as a reusable harness.
