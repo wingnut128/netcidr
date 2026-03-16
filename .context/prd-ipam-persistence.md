@@ -26,7 +26,7 @@ Without persistence, every planning session starts from scratch and relies on th
 4. **Audit trail** — Record when allocations were created, modified, and released
 5. **Multi-interface parity** — Expose IPAM operations through CLI, API, and MCP server equally
 6. **Zero-config default** — Work out of the box with an embedded database; no external services required
-7. **Pluggable storage backend** — Define a trait-based abstraction so the persistence layer is not locked to a single database engine; SQLite ships as the default, external databases (PostgreSQL, MySQL) can be added without changing business logic
+7. **Pluggable storage backend** — Define a trait-based abstraction so the persistence layer is not locked to a single database engine; SQLite ships as the default, PostgreSQL can be added without changing business logic
 
 ## 3. Non-Goals
 
@@ -68,7 +68,7 @@ The persistence layer is defined by an `IpamStore` trait. All IPAM business logi
 ```
 CLI (clap) ──┐                                    ┌─ SqliteStore (default)
 API (axum) ──┼──> Core Library ──> ipam module ──> IpamStore trait ──┼─ PostgresStore (feature: "ipam-postgres")
-MCP (node) ──┘    (existing)       (new)                             └─ MysqlStore    (feature: "ipam-mysql")
+MCP (node) ──┘    (existing)       (new)                             │
                        │
                Pure computation
                (unchanged)
@@ -96,12 +96,6 @@ The existing stateless calculation modules remain untouched. A new `ipam` module
 **When to use:** Teams that already run PostgreSQL and want row-level locking, multi-writer concurrency, or integration with existing infrastructure.
 
 **Driver:** `sqlx` with `postgres` feature, or `tokio-postgres`.
-
-### Backend: MySQL (Optional)
-
-**When to use:** Organizations standardized on MySQL/MariaDB.
-
-**Driver:** `sqlx` with `mysql` feature.
 
 ### Storage Trait Design
 
@@ -160,12 +154,6 @@ pub async fn create_store(config: &IpamConfig) -> Result<Arc<dyn IpamStore>> {
         #[cfg(feature = "ipam-postgres")]
         Backend::Postgres => {
             let store = PostgresStore::new(&config.postgres).await?;
-            store.migrate().await?;
-            Ok(Arc::new(store))
-        }
-        #[cfg(feature = "ipam-mysql")]
-        Backend::Mysql => {
-            let store = MysqlStore::new(&config.mysql).await?;
             store.migrate().await?;
             Ok(Arc::new(store))
         }
@@ -423,10 +411,6 @@ New tools exposed through the MCP server, following the existing pattern of wrap
   - Row-level locking for multi-writer concurrency
   - `sqlx` migrations embedded in binary
   - Reuse Phase 1 trait-contract tests against a PostgreSQL testcontainer
-- **MySQL** (`src/ipam/mysql/`):
-  - Feature-gated behind `ipam-mysql` Cargo feature
-  - `sqlx` with `mysql` runtime
-  - Reuse trait-contract tests against a MySQL testcontainer
 - Each backend ships as an opt-in feature — only SQLite compiles by default to keep the dependency tree lean
 
 ## 10. Migration Strategy
@@ -451,9 +435,9 @@ CREATE TABLE IF NOT EXISTS schema_version (
 
 Migrations are compiled into the binary — no external SQL files to manage.
 
-### PostgreSQL / MySQL
+### PostgreSQL
 
-Use `sqlx::migrate!()` macro with SQL files in `migrations/{backend}/`. The macro embeds them at compile time, so deployments are still single-binary with no runtime file dependencies. Each backend's migration directory contains dialect-specific SQL (e.g., PostgreSQL `INET` types vs. MySQL `VARCHAR` for CIDRs).
+Use `sqlx::migrate!()` macro with SQL files in `migrations/postgres/`. The macro embeds them at compile time, so deployments are still single-binary with no runtime file dependencies. The migration directory contains dialect-specific SQL (e.g., PostgreSQL `INET` types).
 
 ## 11. Configuration Additions
 
@@ -462,7 +446,7 @@ New fields in `ipcalc.toml`:
 ```toml
 [ipam]
 enabled = true
-backend = "sqlite"                 # "sqlite" | "postgres" | "mysql"
+backend = "sqlite"                 # "sqlite" | "postgres"
 auto_init = true                   # create/migrate DB on first use
 
 [ipam.sqlite]
@@ -474,27 +458,23 @@ url = "postgresql://user:pass@host:5432/ipcalc"
 max_connections = 10
 min_connections = 2
 
-[ipam.mysql]
-url = "mysql://user:pass@host:3306/ipcalc"
-max_connections = 10
-min_connections = 2
 ```
 
 New CLI flags on `ipcalc serve`:
 
 ```
---ipam-backend <name>  Storage backend: sqlite, postgres, mysql (default: sqlite)
+--ipam-backend <name>  Storage backend: sqlite, postgres (default: sqlite)
 --ipam-db <path>       Override SQLite database path
---ipam-db-url <url>    Connection URL for postgres/mysql backends
+--ipam-db-url <url>    Connection URL for postgres backend
 --ipam-enabled         Enable IPAM endpoints (default: true if DB exists)
 ```
 
 Environment variables (override config file, overridden by CLI flags):
 
 ```
-IPCALC_IPAM_BACKEND=sqlite|postgres|mysql
+IPCALC_IPAM_BACKEND=sqlite|postgres
 IPCALC_IPAM_DB=/path/to/ipcalc.db          # sqlite
-IPCALC_IPAM_DB_URL=postgresql://...         # postgres/mysql
+IPCALC_IPAM_DB_URL=postgresql://...         # postgres
 ```
 
 ## 12. Observability
@@ -522,7 +502,7 @@ pub enum IpCalcError {
 
 | Layer | Approach |
 |-------|----------|
-| Trait contract | A shared test suite written against `&dyn IpamStore` — run once per backend to verify behavioral parity. SQLite (in-memory) runs in CI by default; Postgres/MySQL run via testcontainers when their features are enabled. |
+| Trait contract | A shared test suite written against `&dyn IpamStore` — run once per backend to verify behavioral parity. SQLite (in-memory) runs in CI by default; Postgres runs via testcontainers when the feature is enabled. |
 | Unit | In-memory SQLite for `ipam::operations` business logic tests |
 | Integration | Temp-file DB, exercise CLI subcommands via subprocess |
 | Conflict detection | Property-based tests: random CIDR pairs, verify no false negatives |
