@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Auto-merge CI workflow for PRs from repo owner and Dependabot (squash merge)
 - Utilization report now includes per-status breakdown (active/reserved/released addresses and counts)
+- Property-based tests (proptest) for CIDR tiling, gap completeness, and no-overlap invariants
 
 ### Removed
 

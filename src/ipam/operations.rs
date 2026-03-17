@@ -1156,4 +1156,279 @@ mod tests {
         assert_eq!(cidrs.len(), 1);
         assert_eq!(cidrs[0].0, "10.0.0.128/25");
     }
+
+    // -----------------------------------------------------------------------
+    // Property-based tests
+    // -----------------------------------------------------------------------
+
+    mod prop {
+        use super::*;
+        use proptest::prelude::*;
+
+        // ----- Property 1: CIDR tiling exactness -----
+
+        proptest! {
+            #[test]
+            fn prop_range_to_cidrs_tiles_exactly(
+                start in 0u32..=0xFFFF_FF00u32,
+                span in 1u32..=0x0000_FFFFu32,
+            ) {
+                let start = start as u128;
+                let end = start + span as u128;
+                // Cap at IPv4 max
+                if end > u32::MAX as u128 {
+                    return Ok(());
+                }
+
+                let cidrs = range_to_cidrs(start, end, true);
+
+                // Non-empty
+                prop_assert!(!cidrs.is_empty(), "range_to_cidrs returned empty for [{}, {}]", start, end);
+
+                // Verify coverage: first block starts at `start`, last block ends at `end`
+                let first_block_start = {
+                    let cidr = &cidrs[0].0;
+                    let range = parse_range(cidr).unwrap();
+                    range.start
+                };
+                prop_assert_eq!(first_block_start, start, "first block doesn't start at range start");
+
+                let last_block_end = {
+                    let cidr = &cidrs[cidrs.len() - 1].0;
+                    let range = parse_range(cidr).unwrap();
+                    range.end
+                };
+                prop_assert_eq!(last_block_end, end, "last block doesn't end at range end");
+
+                // Verify no gaps and no overlaps between consecutive blocks
+                for i in 1..cidrs.len() {
+                    let prev = parse_range(&cidrs[i - 1].0).unwrap();
+                    let curr = parse_range(&cidrs[i].0).unwrap();
+
+                    prop_assert_eq!(
+                        prev.end + 1,
+                        curr.start,
+                        "gap or overlap between blocks {} and {}: prev.end={}, curr.start={}",
+                        cidrs[i - 1].0,
+                        cidrs[i].0,
+                        prev.end,
+                        curr.start,
+                    );
+                }
+
+                // Verify sizes match
+                let total_size: u128 = cidrs.iter().map(|(_, s)| s).sum();
+                prop_assert_eq!(total_size, end - start + 1, "total size mismatch");
+            }
+        }
+
+        // ----- Property 2: find_gaps + allocations = supernet (completeness) -----
+
+        proptest! {
+            #[test]
+            fn prop_gaps_plus_allocations_cover_supernet(
+                sn_prefix in 8u8..=24,
+            ) {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+
+                rt.block_on(async {
+                    // Use a fixed network start for simplicity (10.0.0.0)
+                    let sn_start = u32::from(Ipv4Addr::new(10, 0, 0, 0));
+                    let mask = if sn_prefix == 0 { 0u32 } else { !0u32 << (32 - sn_prefix) };
+                    let sn_start = sn_start & mask;
+                    let sn_size = 1u128 << (32 - sn_prefix);
+                    let sn_end = sn_start as u128 + sn_size - 1;
+
+                    let supernet = IpRange {
+                        start: sn_start as u128,
+                        end: sn_end,
+                        is_v4: true,
+                    };
+
+                    // Generate random allocations using proptest's test runner
+                    // For this property we use a deterministic set of allocations
+                    // by subdividing the supernet
+                    let alloc_prefix = sn_prefix + 2; // quarter-sized blocks
+                    let block_size = 1u128 << (32 - alloc_prefix);
+                    let num_blocks = sn_size / block_size;
+
+                    // Allocate every other block to create gaps
+                    let allocated: Vec<IpRange> = (0..num_blocks)
+                        .filter(|i| i % 2 == 0)
+                        .map(|i| {
+                            let start = sn_start as u128 + i * block_size;
+                            IpRange {
+                                start,
+                                end: start + block_size - 1,
+                                is_v4: true,
+                            }
+                        })
+                        .collect();
+
+                    let gaps = find_gaps(&supernet, &allocated);
+
+                    // Sum of allocated + gaps must equal supernet size
+                    let allocated_total: u128 = allocated
+                        .iter()
+                        .map(|r| r.end - r.start + 1)
+                        .sum();
+                    let gap_total: u128 = gaps
+                        .iter()
+                        .map(|(s, e)| e - s + 1)
+                        .sum();
+
+                    assert_eq!(
+                        allocated_total + gap_total,
+                        sn_size,
+                        "allocated({}) + gaps({}) != supernet size({})",
+                        allocated_total,
+                        gap_total,
+                        sn_size,
+                    );
+
+                    // Verify no gap overlaps with any allocation
+                    for (gs, ge) in &gaps {
+                        let gap_range = IpRange {
+                            start: *gs,
+                            end: *ge,
+                            is_v4: true,
+                        };
+                        for alloc in &allocated {
+                            assert!(
+                                !ranges_overlap(&gap_range, alloc),
+                                "gap [{}, {}] overlaps allocation [{}, {}]",
+                                gs, ge, alloc.start, alloc.end,
+                            );
+                        }
+                    }
+                });
+            }
+        }
+
+        // ----- Property 3: no overlap after arbitrary operations -----
+
+        /// Operations we can perform against a supernet.
+        #[derive(Debug, Clone)]
+        enum Op {
+            AutoAllocate { prefix: u8 },
+            ReleaseRandom,
+        }
+
+        fn random_ops(sn_prefix: u8) -> impl Strategy<Value = Vec<Op>> {
+            let alloc_prefix = (sn_prefix + 1)..=28u8;
+            let op = prop_oneof![
+                3 => alloc_prefix.prop_map(|p| Op::AutoAllocate { prefix: p }),
+                1 => Just(Op::ReleaseRandom),
+            ];
+            proptest::collection::vec(op, 1..=20)
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(50))]
+            #[test]
+            fn prop_no_overlap_after_random_operations(
+                (sn_prefix, test_ops) in (16u8..=22u8).prop_flat_map(|p| (Just(p), random_ops(p))),
+            ) {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+
+                rt.block_on(async {
+                    let store = SqliteStore::in_memory().unwrap();
+                    store.initialize().await.unwrap();
+                    store.migrate().await.unwrap();
+                    let ops_engine = IpamOps::new(Arc::new(store));
+
+                    let cidr = format!("10.0.0.0/{}", sn_prefix);
+                    let sn = ops_engine
+                        .create_supernet(&CreateSupernet {
+                            cidr,
+                            name: None,
+                            description: None,
+                        })
+                        .await
+                        .unwrap();
+
+                    let mut allocation_ids: Vec<String> = Vec::new();
+
+                    for op in &test_ops {
+                        match op {
+                            Op::AutoAllocate { prefix } => {
+                                if let Ok(allocs) = ops_engine
+                                    .allocate_auto(&AutoAllocateRequest {
+                                        supernet_id: sn.id.clone(),
+                                        prefix_length: *prefix,
+                                        count: Some(1),
+                                        status: None,
+                                        resource_id: None,
+                                        resource_type: None,
+                                        name: None,
+                                        description: None,
+                                        environment: None,
+                                        owner: None,
+                                        parent_allocation_id: None,
+                                        tags: None,
+                                    })
+                                    .await
+                                {
+                                    for a in allocs {
+                                        allocation_ids.push(a.id);
+                                    }
+                                }
+                                // NoFreeSpace is expected, not an error
+                            }
+                            Op::ReleaseRandom => {
+                                if !allocation_ids.is_empty() {
+                                    // Release the last allocation (deterministic given the sequence)
+                                    let id = allocation_ids.pop().unwrap();
+                                    let _ = ops_engine.release_allocation(&id).await;
+                                }
+                            }
+                        }
+                    }
+
+                    // After all operations: verify no overlaps among active/reserved
+                    let active = ops_engine
+                        .store()
+                        .find_allocations_in_supernet(
+                            &sn.id,
+                            &[AllocationStatus::Active, AllocationStatus::Reserved],
+                        )
+                        .await
+                        .unwrap();
+
+                    let ranges: Vec<IpRange> = active
+                        .iter()
+                        .filter_map(|a| parse_range(&a.cidr).ok())
+                        .collect();
+
+                    for i in 0..ranges.len() {
+                        for j in (i + 1)..ranges.len() {
+                            assert!(
+                                !ranges_overlap(&ranges[i], &ranges[j]),
+                                "overlap detected: {} and {}",
+                                active[i].cidr,
+                                active[j].cidr,
+                            );
+                        }
+                    }
+
+                    // Also verify address space conservation
+                    let util = ops_engine.utilization(&sn.id).await.unwrap();
+                    assert_eq!(
+                        util.allocated_addresses + util.free_addresses,
+                        util.total_addresses,
+                        "address space conservation violated: {} + {} != {}",
+                        util.allocated_addresses,
+                        util.free_addresses,
+                        util.total_addresses,
+                    );
+                });
+            }
+        }
+    }
 }

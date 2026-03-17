@@ -14,8 +14,10 @@ Reference: `.context/prd-ipam-persistence.md`
 ## Cross-cutting / Deferred
 
 - [ ] **Trait-contract test suite for backend parity** — Shared test suite run against `&dyn IpamStore` per backend (SQLite in-memory by default, Postgres via Docker). Not yet implemented as a reusable harness.
-- [ ] Property-based tests for conflict detection (random CIDR pairs, no false negatives)
-- [ ] Fuzz targets for CIDR inputs to allocation functions
+- [x] Property-based tests (proptest):
+  - CIDR tiling exactness: `range_to_cidrs(start, end)` output tiles `[start, end]` with zero gaps and zero overlaps
+  - Gap completeness: gaps + allocations exactly cover the supernet address space
+  - No overlap after arbitrary operations: random allocate/release sequences never produce overlapping active/reserved allocations, and `allocated + free == total` always holds
 - [ ] Migration upgrade path tests (v0 -> vN with sample data)
 - [ ] JSON export/import (`ipam dump` / `ipam load`) — deferred to v2
 - [ ] IPv6 IPAM implementation (schema supports it, code is IPv4-only for v1)
