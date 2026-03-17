@@ -22,7 +22,7 @@ A fast IPv4 and IPv6 subnet calculator written in Rust. Available as a CLI tool,
 - **HTTP API**: REST endpoints for all calculations
 - **OpenAPI documentation**: Machine-readable API specification for easy integration with tools like Swagger Editor, Postman, and Insomnia
 - **MCP server**: [Model Context Protocol](https://modelcontextprotocol.io) server for AI assistant integration (Claude, etc.) over stdio
-- **IPAM (IP Address Management)**: allocation tracking with conflict detection, audit trail, and utilization reporting — available via CLI (`ipcalc ipam`) and REST API (`ipcalc serve --ipam-enabled`)
+- **IPAM (IP Address Management)**: allocation tracking with conflict detection, audit trail, utilization reporting, reservation TTL/expiry, and JSON export/import — available via CLI (`ipcalc ipam`) and REST API (`ipcalc serve --ipam-enabled`)
 - **Configurable security**: rate limiting, request size limits, timeouts, restrictive CORS, and security headers
 - **TOML configuration**: server settings via config file with CLI flag overrides
 

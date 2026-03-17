@@ -93,6 +93,8 @@ pub struct AllocateSpecificRequest {
     pub parent_allocation_id: Option<String>,
     /// Key-value tags
     pub tags: Option<Vec<Tag>>,
+    /// TTL in seconds (reservation expires after this duration)
+    pub ttl_seconds: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -120,6 +122,8 @@ pub struct AutoAllocateBody {
     pub parent_allocation_id: Option<String>,
     /// Key-value tags
     pub tags: Option<Vec<Tag>>,
+    /// TTL in seconds (reservation expires after this duration)
+    pub ttl_seconds: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -323,6 +327,7 @@ async fn ipam_allocate_specific(
         owner: body.owner,
         parent_allocation_id: body.parent_allocation_id,
         tags: body.tags,
+        ttl_seconds: body.ttl_seconds,
     };
     match ops.allocate_specific(&input).await {
         Ok(allocation) => (StatusCode::CREATED, Json(allocation)).into_response(),
@@ -362,6 +367,7 @@ async fn ipam_auto_allocate(
         owner: body.owner,
         parent_allocation_id: body.parent_allocation_id,
         tags: body.tags,
+        ttl_seconds: body.ttl_seconds,
     };
     match ops.allocate_auto(&request).await {
         Ok(allocations) => {

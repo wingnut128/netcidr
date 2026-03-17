@@ -340,6 +340,7 @@ impl IpCalcMcp {
             owner: params.owner,
             parent_allocation_id: None,
             tags: None,
+            ttl_seconds: None,
         };
         result_to_string(ops.allocate_auto(&request).await)
     }
@@ -367,6 +368,7 @@ impl IpCalcMcp {
             owner: params.owner,
             parent_allocation_id: None,
             tags: None,
+            ttl_seconds: None,
         };
         result_to_string(ops.allocate_specific(&input).await)
     }

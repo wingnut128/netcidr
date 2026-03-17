@@ -179,6 +179,7 @@ impl IpamOps {
                 owner: request.owner.clone(),
                 parent_allocation_id: request.parent_allocation_id.clone(),
                 tags: request.tags.clone(),
+                ttl_seconds: request.ttl_seconds,
             };
             let alloc = self.store.create_allocation(&input).await?;
             self.audit("allocate", "allocation", &alloc.id, Some(&alloc.cidr))
@@ -418,6 +419,141 @@ impl IpamOps {
     /// Query the audit log.
     pub async fn query_audit(&self, filter: &AuditFilter) -> Result<Vec<AuditEntry>> {
         self.store.query_audit(filter).await
+    }
+
+    // -----------------------------------------------------------------------
+    // Expiry
+    // -----------------------------------------------------------------------
+
+    /// Release all allocations whose `expires_at` has passed.
+    /// Returns the number of expired allocations released.
+    pub async fn reap_expired(&self) -> Result<usize> {
+        let now = Utc::now().to_rfc3339();
+        let supernets = self.store.list_supernets().await?;
+        let mut reaped = 0;
+
+        for sn in &supernets {
+            let active = self
+                .store
+                .find_allocations_in_supernet(
+                    &sn.id,
+                    &[AllocationStatus::Active, AllocationStatus::Reserved],
+                )
+                .await?;
+
+            for alloc in &active {
+                if let Some(ref expires) = alloc.expires_at
+                    && expires.as_str() <= now.as_str()
+                {
+                    self.store.release_allocation(&alloc.id).await?;
+                    self.audit("expire", "allocation", &alloc.id, Some(&alloc.cidr))
+                        .await?;
+                    reaped += 1;
+                }
+            }
+        }
+        Ok(reaped)
+    }
+
+    // -----------------------------------------------------------------------
+    // Dump / Load
+    // -----------------------------------------------------------------------
+
+    /// Export all IPAM data as a serializable dump.
+    pub async fn dump(&self) -> Result<IpamDump> {
+        let supernets = self.store.list_supernets().await?;
+        let allocations = self
+            .store
+            .list_allocations(&AllocationFilter::default())
+            .await?;
+
+        Ok(IpamDump {
+            version: 1,
+            exported_at: Utc::now().to_rfc3339(),
+            supernets,
+            allocations,
+        })
+    }
+
+    /// Import IPAM data from a dump. Fails if any supernets already exist.
+    pub async fn load(&self, dump: &IpamDump) -> Result<(usize, usize)> {
+        // Check for existing data
+        let existing = self.store.list_supernets().await?;
+        if !existing.is_empty() {
+            return Err(IpCalcError::InvalidInput(
+                "cannot import into a non-empty store — existing supernets found".to_string(),
+            ));
+        }
+
+        let mut sn_count = 0;
+        let mut alloc_count = 0;
+
+        // Import supernets first (allocations depend on them)
+        for sn in &dump.supernets {
+            self.store
+                .create_supernet(&CreateSupernet {
+                    cidr: sn.cidr.clone(),
+                    name: sn.name.clone(),
+                    description: sn.description.clone(),
+                })
+                .await?;
+            sn_count += 1;
+        }
+
+        // Build a mapping from old supernet CIDR -> new supernet ID
+        let new_supernets = self.store.list_supernets().await?;
+        let cidr_to_id: std::collections::HashMap<&str, &str> = new_supernets
+            .iter()
+            .map(|sn| (sn.cidr.as_str(), sn.id.as_str()))
+            .collect();
+
+        // Import allocations (skip parent_allocation_id for simplicity)
+        for alloc in &dump.allocations {
+            let new_sn_id = cidr_to_id
+                .get(
+                    // Find the supernet CIDR for this allocation's original supernet_id
+                    dump.supernets
+                        .iter()
+                        .find(|sn| sn.id == alloc.supernet_id)
+                        .map(|sn| sn.cidr.as_str())
+                        .ok_or_else(|| {
+                            IpCalcError::InvalidInput(format!(
+                                "allocation {} references unknown supernet {}",
+                                alloc.cidr, alloc.supernet_id
+                            ))
+                        })?,
+                )
+                .ok_or_else(|| {
+                    IpCalcError::InvalidInput(format!(
+                        "failed to map supernet for allocation {}",
+                        alloc.cidr
+                    ))
+                })?;
+
+            self.store
+                .create_allocation(&CreateAllocation {
+                    supernet_id: new_sn_id.to_string(),
+                    cidr: alloc.cidr.clone(),
+                    status: Some(alloc.status.clone()),
+                    resource_id: alloc.resource_id.clone(),
+                    resource_type: alloc.resource_type.clone(),
+                    name: alloc.name.clone(),
+                    description: alloc.description.clone(),
+                    environment: alloc.environment.clone(),
+                    owner: alloc.owner.clone(),
+                    parent_allocation_id: None,
+                    tags: if alloc.tags.is_empty() {
+                        None
+                    } else {
+                        Some(alloc.tags.clone())
+                    },
+                    ttl_seconds: None,
+                })
+                .await?;
+            alloc_count += 1;
+        }
+
+        Ok((sn_count, alloc_count))
     }
 
     // -----------------------------------------------------------------------
@@ -767,6 +903,7 @@ mod tests {
                 owner: None,
                 parent_allocation_id: None,
                 tags: None,
+                ttl_seconds: None,
             })
             .await
             .unwrap();
@@ -787,6 +924,7 @@ mod tests {
                 owner: None,
                 parent_allocation_id: None,
                 tags: None,
+                ttl_seconds: None,
             })
             .await
             .unwrap_err();
@@ -820,6 +958,7 @@ mod tests {
             owner: None,
             parent_allocation_id: None,
             tags: None,
+            ttl_seconds: None,
         })
         .await
         .unwrap();
@@ -839,6 +978,7 @@ mod tests {
                 owner: None,
                 parent_allocation_id: None,
                 tags: None,
+                ttl_seconds: None,
             })
             .await
             .unwrap();
@@ -874,6 +1014,7 @@ mod tests {
             owner: None,
             parent_allocation_id: None,
             tags: None,
+            ttl_seconds: None,
         })
         .await
         .unwrap();
@@ -916,6 +1057,7 @@ mod tests {
             owner: None,
             parent_allocation_id: None,
             tags: None,
+            ttl_seconds: None,
         })
         .await
         .unwrap();
@@ -951,6 +1093,7 @@ mod tests {
             owner: None,
             parent_allocation_id: None,
             tags: None,
+            ttl_seconds: None,
         })
         .await
         .unwrap();
@@ -989,6 +1132,7 @@ mod tests {
                 owner: None,
                 parent_allocation_id: None,
                 tags: None,
+                ttl_seconds: None,
             })
             .await
             .unwrap();
@@ -1005,6 +1149,7 @@ mod tests {
             owner: None,
             parent_allocation_id: None,
             tags: None,
+            ttl_seconds: None,
         })
         .await
         .unwrap();
@@ -1031,6 +1176,7 @@ mod tests {
                 owner: None,
                 parent_allocation_id: None,
                 tags: None,
+                ttl_seconds: None,
             })
             .await
             .unwrap();
@@ -1066,6 +1212,7 @@ mod tests {
                 owner: None,
                 parent_allocation_id: None,
                 tags: None,
+                ttl_seconds: None,
             })
             .await
             .unwrap();
@@ -1083,6 +1230,7 @@ mod tests {
             owner: None,
             parent_allocation_id: None,
             tags: None,
+            ttl_seconds: None,
         })
         .await
         .unwrap();
@@ -1100,6 +1248,136 @@ mod tests {
         assert_eq!(util.by_status.reserved_count, 1);
         assert_eq!(util.by_status.released_addresses, 64);
         assert_eq!(util.by_status.released_count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_ttl_expiry() {
+        let ops = test_ops().await;
+
+        let sn = ops
+            .create_supernet(&CreateSupernet {
+                cidr: "10.0.0.0/24".to_string(),
+                name: None,
+                description: None,
+            })
+            .await
+            .unwrap();
+
+        // Allocate with TTL of 0 seconds (already expired)
+        let alloc = ops
+            .allocate_specific(&CreateAllocation {
+                supernet_id: sn.id.clone(),
+                cidr: "10.0.0.0/25".to_string(),
+                status: None,
+                resource_id: None,
+                resource_type: None,
+                name: None,
+                description: None,
+                environment: None,
+                owner: None,
+                parent_allocation_id: None,
+                tags: None,
+                ttl_seconds: Some(0),
+            })
+            .await
+            .unwrap();
+
+        assert!(alloc.expires_at.is_some());
+
+        // Reap expired — should release the allocation
+        let reaped = ops.reap_expired().await.unwrap();
+        assert_eq!(reaped, 1);
+
+        // Verify it's released
+        let fetched = ops.get_allocation(&alloc.id).await.unwrap();
+        assert_eq!(fetched.status, AllocationStatus::Released);
+
+        // Reap again — nothing to reap
+        let reaped = ops.reap_expired().await.unwrap();
+        assert_eq!(reaped, 0);
+    }
+
+    #[tokio::test]
+    async fn test_dump_and_load() {
+        let ops = test_ops().await;
+
+        let sn = ops
+            .create_supernet(&CreateSupernet {
+                cidr: "10.0.0.0/8".to_string(),
+                name: Some("Corp".to_string()),
+                description: None,
+            })
+            .await
+            .unwrap();
+
+        ops.allocate_specific(&CreateAllocation {
+            supernet_id: sn.id.clone(),
+            cidr: "10.0.0.0/24".to_string(),
+            status: None,
+            resource_id: Some("vpc-1".to_string()),
+            resource_type: None,
+            name: Some("web".to_string()),
+            description: None,
+            environment: None,
+            owner: None,
+            parent_allocation_id: None,
+            tags: None,
+            ttl_seconds: None,
+        })
+        .await
+        .unwrap();
+
+        // Dump
+        let dump = ops.dump().await.unwrap();
+        assert_eq!(dump.supernets.len(), 1);
+        assert_eq!(dump.allocations.len(), 1);
+        assert_eq!(dump.version, 1);
+
+        // Serialize to JSON and back
+        let json = serde_json::to_string(&dump).unwrap();
+        let parsed: IpamDump = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.supernets.len(), 1);
+        assert_eq!(parsed.allocations.len(), 1);
+
+        // Load into a fresh store
+        let ops2 = test_ops().await;
+        let (sn_count, alloc_count) = ops2.load(&parsed).await.unwrap();
+        assert_eq!(sn_count, 1);
+        assert_eq!(alloc_count, 1);
+
+        // Verify data
+        let supernets = ops2.list_supernets().await.unwrap();
+        assert_eq!(supernets[0].cidr, "10.0.0.0/8");
+
+        let allocs = ops2
+            .list_allocations(&AllocationFilter::default())
+            .await
+            .unwrap();
+        assert_eq!(allocs[0].cidr, "10.0.0.0/24");
+        assert_eq!(allocs[0].resource_id, Some("vpc-1".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_load_rejects_non_empty_store() {
+        let ops = test_ops().await;
+
+        ops.create_supernet(&CreateSupernet {
+            cidr: "10.0.0.0/8".to_string(),
+            name: None,
+            description: None,
+        })
+        .await
+        .unwrap();
+
+        let dump = IpamDump {
+            version: 1,
+            exported_at: "2026-03-16T00:00:00Z".to_string(),
+            supernets: vec![],
+            allocations: vec![],
+        };
+
+        let err = ops.load(&dump).await.unwrap_err();
+        assert!(matches!(err, IpCalcError::InvalidInput(_)));
     }
 
     #[test]
@@ -1372,6 +1650,7 @@ mod tests {
                                         owner: None,
                                         parent_allocation_id: None,
                                         tags: None,
+                                        ttl_seconds: None,
                                     })
                                     .await
                                 {

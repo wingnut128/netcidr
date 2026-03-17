@@ -103,6 +103,7 @@ pub async fn handle_ipam_command(
             owner,
             status,
             parent_id,
+            ttl,
         } => {
             let status = parse_status(&status)?;
             let alloc = ops
@@ -118,6 +119,7 @@ pub async fn handle_ipam_command(
                     owner,
                     parent_allocation_id: parent_id,
                     tags: None,
+                    ttl_seconds: ttl,
                 })
                 .await?;
             output_result(writer, output_file, &alloc);
@@ -135,6 +137,7 @@ pub async fn handle_ipam_command(
             owner,
             status,
             parent_id,
+            ttl,
         } => {
             let status = parse_status(&status)?;
             let allocs = ops
@@ -151,6 +154,7 @@ pub async fn handle_ipam_command(
                     owner,
                     parent_allocation_id: parent_id,
                     tags: None,
+                    ttl_seconds: ttl,
                 })
                 .await?;
             let result = AllocationList {
@@ -274,6 +278,47 @@ pub async fn handle_ipam_command(
                 entries,
             };
             output_result(writer, output_file, &result);
+        }
+
+        IpamCommands::Dump => {
+            let dump = ops.dump().await?;
+            let json = serde_json::to_string_pretty(&dump).expect("Failed to serialize dump");
+            if output_file.is_none() {
+                print_stdout(&json);
+            }
+        }
+
+        IpamCommands::Load { file } => {
+            let json = match file {
+                Some(path) => std::fs::read_to_string(&path).map_err(|e| {
+                    ipcalc::error::IpCalcError::InvalidInput(format!(
+                        "failed to read {}: {}",
+                        path, e
+                    ))
+                })?,
+                None => {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    std::io::stdin().read_to_string(&mut buf).map_err(|e| {
+                        ipcalc::error::IpCalcError::InvalidInput(format!(
+                            "failed to read stdin: {}",
+                            e
+                        ))
+                    })?;
+                    buf
+                }
+            };
+
+            let dump: ipcalc::ipam::models::IpamDump =
+                serde_json::from_str(&json).map_err(|e| {
+                    ipcalc::error::IpCalcError::InvalidInput(format!("invalid JSON: {}", e))
+                })?;
+
+            let (sn_count, alloc_count) = ops.load(&dump).await?;
+            eprintln!(
+                "Imported {} supernets and {} allocations",
+                sn_count, alloc_count
+            );
         }
 
         IpamCommands::Tags { command } => match command {

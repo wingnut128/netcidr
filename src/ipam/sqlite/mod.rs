@@ -109,6 +109,7 @@ impl SqliteStore {
             created_at: row.get("created_at")?,
             updated_at: row.get("updated_at")?,
             released_at: row.get("released_at")?,
+            expires_at: row.get("expires_at")?,
         })
     }
 }
@@ -294,13 +295,18 @@ impl IpamStore for SqliteStore {
 
         let (network, broadcast, prefix, total, _ip_version) = parse_cidr_metadata(&input.cidr)?;
 
+        let expires_at = input
+            .ttl_seconds
+            .map(|ttl| (Utc::now() + chrono::Duration::seconds(ttl as i64)).to_rfc3339());
+
         conn.execute(
-            "INSERT INTO allocations (id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            "INSERT INTO allocations (id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, expires_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 id, input.supernet_id, input.cidr, network, broadcast, prefix, total as i64,
                 input.resource_id, input.resource_type, input.name, input.description,
-                input.environment, input.owner, status, input.parent_allocation_id, now, now
+                input.environment, input.owner, status, input.parent_allocation_id, now, now,
+                expires_at
             ],
         ).map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
 
@@ -336,6 +342,7 @@ impl IpamStore for SqliteStore {
             created_at: now.clone(),
             updated_at: now,
             released_at: None,
+            expires_at,
         })
     }
 
@@ -343,7 +350,7 @@ impl IpamStore for SqliteStore {
         let conn = self.conn()?;
         let mut alloc = conn
             .query_row(
-                "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at FROM allocations WHERE id = ?1",
+                "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = ?1",
                 params![id],
                 Self::row_to_allocation,
             )
@@ -358,7 +365,7 @@ impl IpamStore for SqliteStore {
     async fn list_allocations(&self, filter: &AllocationFilter) -> Result<Vec<Allocation>> {
         let conn = self.conn()?;
         let mut sql = String::from(
-            "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at FROM allocations WHERE 1=1",
+            "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE 1=1",
         );
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
         let mut idx = 1;
@@ -475,7 +482,7 @@ impl IpamStore for SqliteStore {
         // Fetch updated allocation using same connection
         let mut alloc = conn
             .query_row(
-                "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at FROM allocations WHERE id = ?1",
+                "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = ?1",
                 params![id],
                 Self::row_to_allocation,
             )
@@ -511,7 +518,7 @@ impl IpamStore for SqliteStore {
         // Fetch using same connection to avoid pool exhaustion
         let mut alloc = conn
             .query_row(
-                "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at FROM allocations WHERE id = ?1",
+                "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = ?1",
                 params![id],
                 Self::row_to_allocation,
             )
@@ -532,7 +539,7 @@ impl IpamStore for SqliteStore {
         let placeholders: Vec<String> =
             (0..statuses.len()).map(|i| format!("?{}", i + 2)).collect();
         let sql = format!(
-            "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at FROM allocations WHERE supernet_id = ?1 AND status IN ({}) ORDER BY network_address",
+            "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE supernet_id = ?1 AND status IN ({}) ORDER BY network_address",
             placeholders.join(", ")
         );
 
@@ -725,6 +732,7 @@ mod tests {
                     key: "env".to_string(),
                     value: "prod".to_string(),
                 }]),
+                ttl_seconds: None,
             })
             .await
             .unwrap();
@@ -786,6 +794,7 @@ mod tests {
                 owner: None,
                 parent_allocation_id: None,
                 tags: None,
+                ttl_seconds: None,
             })
             .await
             .unwrap();
@@ -820,6 +829,7 @@ mod tests {
                 owner: None,
                 parent_allocation_id: None,
                 tags: None,
+                ttl_seconds: None,
             })
             .await
             .unwrap();
@@ -837,6 +847,7 @@ mod tests {
                 owner: None,
                 parent_allocation_id: None,
                 tags: None,
+                ttl_seconds: None,
             })
             .await
             .unwrap();
@@ -907,6 +918,7 @@ mod tests {
                 owner: None,
                 parent_allocation_id: None,
                 tags: None,
+                ttl_seconds: None,
             })
             .await
             .unwrap();

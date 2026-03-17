@@ -95,6 +95,7 @@ pub struct Allocation {
     pub created_at: String,
     pub updated_at: String,
     pub released_at: Option<String>,
+    pub expires_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -110,6 +111,8 @@ pub struct CreateAllocation {
     pub owner: Option<String>,
     pub parent_allocation_id: Option<String>,
     pub tags: Option<Vec<Tag>>,
+    /// TTL in seconds — if set, computes `expires_at` from current time.
+    pub ttl_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -126,6 +129,8 @@ pub struct AutoAllocateRequest {
     pub owner: Option<String>,
     pub parent_allocation_id: Option<String>,
     pub tags: Option<Vec<Tag>>,
+    /// TTL in seconds — if set, computes `expires_at` from current time.
+    pub ttl_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -247,4 +252,16 @@ pub struct FreeBlocksReport {
     pub supernet_cidr: String,
     pub blocks: Vec<FreeBlock>,
     pub total_free: u128,
+}
+
+// ---------------------------------------------------------------------------
+// Dump / Load (export/import)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IpamDump {
+    pub version: u32,
+    pub exported_at: String,
+    pub supernets: Vec<Supernet>,
+    pub allocations: Vec<Allocation>,
 }

@@ -7,8 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-03-16
+
 ### Added
 
+- JSON export/import: `ipam dump` exports all supernets and allocations to JSON, `ipam load` imports into an empty store
+- Reservation TTL/expiry: `--ttl <seconds>` flag on `ipam allocate` and `ipam auto-allocate`, `expires_at` column (schema migration v2), lazy expiry via `reap_expired()`
 - Auto-merge CI workflow for PRs from repo owner and Dependabot (squash merge)
 - Utilization report now includes per-status breakdown (active/reserved/released addresses and counts)
 - Property-based tests (proptest) for CIDR tiling, gap completeness, and no-overlap invariants

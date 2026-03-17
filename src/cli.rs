@@ -209,6 +209,9 @@ pub enum IpamCommands {
         /// Parent allocation ID for sub-allocations
         #[arg(long)]
         parent_id: Option<String>,
+        /// TTL in seconds (reservation expires after this duration)
+        #[arg(long)]
+        ttl: Option<u64>,
     },
 
     /// Auto-allocate the next available block(s) of a given prefix length
@@ -245,6 +248,9 @@ pub enum IpamCommands {
         /// Parent allocation ID
         #[arg(long)]
         parent_id: Option<String>,
+        /// TTL in seconds (reservation expires after this duration)
+        #[arg(long)]
+        ttl: Option<u64>,
     },
 
     /// Manage allocations (get, list, update)
@@ -306,6 +312,15 @@ pub enum IpamCommands {
     Tags {
         #[command(subcommand)]
         command: TagCommands,
+    },
+
+    /// Export all IPAM data to JSON
+    Dump,
+
+    /// Import IPAM data from JSON (stdin or file)
+    Load {
+        /// Path to JSON file (reads from stdin if omitted)
+        file: Option<String>,
     },
 }
 

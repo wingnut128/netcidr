@@ -94,6 +94,9 @@ impl TextOutput for Allocation {
         if let Some(ref v) = self.released_at {
             writeln!(out, "Released:          {}", v).unwrap();
         }
+        if let Some(ref v) = self.expires_at {
+            writeln!(out, "Expires:           {}", v).unwrap();
+        }
         out
     }
 }
@@ -397,6 +400,7 @@ fn allocation_csv_header() -> &'static [&'static str] {
         "created_at",
         "updated_at",
         "released_at",
+        "expires_at",
     ]
 }
 
@@ -419,6 +423,7 @@ fn write_allocation_csv_row(wtr: &mut csv::Writer<Vec<u8>>, a: &Allocation) -> R
         &a.created_at,
         &a.updated_at,
         a.released_at.as_deref().unwrap_or(""),
+        a.expires_at.as_deref().unwrap_or(""),
     ])
     .map_err(csv_err)
 }

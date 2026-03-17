@@ -124,6 +124,7 @@ macro_rules! store_contract_tests {
                     owner: None,
                     parent_allocation_id: None,
                     tags: None,
+                    ttl_seconds: None,
                 })
                 .await
                 .unwrap();
@@ -205,6 +206,7 @@ macro_rules! store_contract_tests {
                     owner: None,
                     parent_allocation_id: None,
                     tags: None,
+                    ttl_seconds: None,
                 })
                 .await
                 .unwrap();
@@ -255,6 +257,7 @@ macro_rules! store_contract_tests {
                             value: "eng".to_string(),
                         },
                     ]),
+                    ttl_seconds: None,
                 })
                 .await
                 .unwrap();
@@ -300,6 +303,7 @@ macro_rules! store_contract_tests {
                     owner: None,
                     parent_allocation_id: None,
                     tags: None,
+                    ttl_seconds: None,
                 })
                 .await
                 .unwrap();
@@ -352,6 +356,7 @@ macro_rules! store_contract_tests {
                     owner: None,
                     parent_allocation_id: None,
                     tags: None,
+                    ttl_seconds: None,
                 })
                 .await
                 .unwrap();
@@ -400,6 +405,7 @@ macro_rules! store_contract_tests {
                     owner: Some("team-a".to_string()),
                     parent_allocation_id: None,
                     tags: None,
+                    ttl_seconds: None,
                 })
                 .await
                 .unwrap();
@@ -417,6 +423,7 @@ macro_rules! store_contract_tests {
                     owner: Some("team-b".to_string()),
                     parent_allocation_id: None,
                     tags: None,
+                    ttl_seconds: None,
                 })
                 .await
                 .unwrap();
@@ -500,6 +507,7 @@ macro_rules! store_contract_tests {
                     owner: None,
                     parent_allocation_id: None,
                     tags: None,
+                    ttl_seconds: None,
                 })
                 .await
                 .unwrap();
@@ -517,6 +525,7 @@ macro_rules! store_contract_tests {
                     owner: None,
                     parent_allocation_id: None,
                     tags: None,
+                    ttl_seconds: None,
                 })
                 .await
                 .unwrap();
@@ -571,6 +580,7 @@ macro_rules! store_contract_tests {
                     owner: None,
                     parent_allocation_id: None,
                     tags: None,
+                    ttl_seconds: None,
                 })
                 .await
                 .unwrap();
@@ -643,6 +653,7 @@ macro_rules! store_contract_tests {
                         key: "env".to_string(),
                         value: "prod".to_string(),
                     }]),
+                    ttl_seconds: None,
                 })
                 .await
                 .unwrap();
@@ -757,6 +768,7 @@ macro_rules! store_contract_tests {
                     owner: None,
                     parent_allocation_id: None,
                     tags: None,
+                    ttl_seconds: None,
                 })
                 .await
                 .unwrap();
@@ -774,6 +786,7 @@ macro_rules! store_contract_tests {
                     owner: None,
                     parent_allocation_id: Some(parent.id.clone()),
                     tags: None,
+                    ttl_seconds: None,
                 })
                 .await
                 .unwrap();
@@ -851,6 +864,7 @@ mod migration_upgrade {
                     key: "env".to_string(),
                     value: "prod".to_string(),
                 }]),
+                ttl_seconds: None,
             })
             .await
             .unwrap();
@@ -930,6 +944,7 @@ mod migration_upgrade {
                 owner: None,
                 parent_allocation_id: None,
                 tags: None,
+                ttl_seconds: None,
             })
             .await
             .unwrap();
@@ -947,6 +962,7 @@ mod migration_upgrade {
                 owner: None,
                 parent_allocation_id: None,
                 tags: None,
+                ttl_seconds: None,
             })
             .await
             .unwrap();
@@ -964,6 +980,7 @@ mod migration_upgrade {
                 owner: None,
                 parent_allocation_id: None,
                 tags: None,
+                ttl_seconds: None,
             })
             .await
             .unwrap();

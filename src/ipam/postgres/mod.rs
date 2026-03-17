@@ -76,6 +76,7 @@ impl PostgresStore {
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
             released_at: row.get("released_at"),
+            expires_at: row.get("expires_at"),
         }
     }
 }
@@ -284,9 +285,13 @@ impl IpamStore for PostgresStore {
             .to_string();
         let (network, broadcast, prefix, total, _ip_version) = parse_cidr_metadata(&input.cidr)?;
 
+        let expires_at = input
+            .ttl_seconds
+            .map(|ttl| (Utc::now() + chrono::Duration::seconds(ttl as i64)).to_rfc3339());
+
         sqlx::query(
-            "INSERT INTO allocations (id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
+            "INSERT INTO allocations (id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, expires_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)",
         )
         .bind(&id)
         .bind(&input.supernet_id)
@@ -305,6 +310,7 @@ impl IpamStore for PostgresStore {
         .bind(&input.parent_allocation_id)
         .bind(&now)
         .bind(&now)
+        .bind(&expires_at)
         .execute(&self.pool)
         .await
         .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
@@ -345,12 +351,13 @@ impl IpamStore for PostgresStore {
             created_at: now.clone(),
             updated_at: now,
             released_at: None,
+            expires_at,
         })
     }
 
     async fn get_allocation(&self, id: &str) -> Result<Allocation> {
         let row = sqlx::query(
-            "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at FROM allocations WHERE id = $1",
+            "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -365,7 +372,7 @@ impl IpamStore for PostgresStore {
 
     async fn list_allocations(&self, filter: &AllocationFilter) -> Result<Vec<Allocation>> {
         let mut sql = String::from(
-            "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at FROM allocations WHERE true",
+            "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE true",
         );
         let mut param_values: Vec<String> = Vec::new();
         let mut idx = 1;
@@ -524,7 +531,7 @@ impl IpamStore for PostgresStore {
         }
 
         let sql = format!(
-            "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at FROM allocations WHERE supernet_id = $1 AND status IN ({}) ORDER BY network_address",
+            "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE supernet_id = $1 AND status IN ({}) ORDER BY network_address",
             placeholders.join(", ")
         );
 

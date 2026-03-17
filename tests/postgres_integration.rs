@@ -180,6 +180,7 @@ async fn allocation_lifecycle(store: &PostgresStore) {
                 key: "team".to_string(),
                 value: "infra".to_string(),
             }]),
+            ttl_seconds: None,
         })
         .await
         .unwrap();
@@ -265,6 +266,7 @@ async fn tags(store: &PostgresStore) {
             owner: None,
             parent_allocation_id: None,
             tags: None,
+            ttl_seconds: None,
         })
         .await
         .unwrap();
@@ -387,6 +389,7 @@ async fn operations_layer(store: PostgresStore) {
             owner: None,
             parent_allocation_id: None,
             tags: None,
+            ttl_seconds: None,
         })
         .await
         .unwrap();

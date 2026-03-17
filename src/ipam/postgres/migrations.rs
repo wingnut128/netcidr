@@ -1,6 +1,6 @@
 /// Embedded schema migrations for the PostgreSQL IPAM backend.
 /// Each migration is a (version, sql) tuple applied in order.
-pub const MIGRATIONS: &[(u32, &str)] = &[(1, MIGRATION_001)];
+pub const MIGRATIONS: &[(u32, &str)] = &[(1, MIGRATION_001), (2, MIGRATION_002)];
 
 const MIGRATION_001: &str = r#"
 CREATE TABLE IF NOT EXISTS supernets (
@@ -61,4 +61,8 @@ CREATE TABLE IF NOT EXISTS audit_log (
 
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action);
+"#;
+
+const MIGRATION_002: &str = r#"
+ALTER TABLE allocations ADD COLUMN expires_at TEXT;
 "#;
