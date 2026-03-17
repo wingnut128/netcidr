@@ -6,10 +6,10 @@ Reference: `.context/prd-ipam-persistence.md`
 
 ## Phase 5: Free Space & Utilization Enhancements
 
-- [ ] Gap-walking algorithm: load active allocations sorted by network address, identify gaps
-- [ ] Aligned CIDR fitting: for each gap, compute largest aligned blocks that fit
-- [ ] Target prefix mode: given a /N, count how many fit in available space
-- [ ] Utilization rollup: allocated vs total IPs, breakdown by status (active/reserved/released)
+- [x] Gap-walking algorithm: load active allocations sorted by network address, identify gaps
+- [x] Aligned CIDR fitting: for each gap, compute largest aligned blocks that fit
+- [x] Target prefix mode: given a /N, count how many fit in available space
+- [x] Utilization rollup: allocated vs total IPs, breakdown by status (active/reserved/released)
 
 ## Cross-cutting / Deferred
 

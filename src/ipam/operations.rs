@@ -228,11 +228,13 @@ impl IpamOps {
     // Query operations
     // -----------------------------------------------------------------------
 
-    /// Calculate utilization for a supernet.
+    /// Calculate utilization for a supernet with per-status breakdown.
     pub async fn utilization(&self, supernet_id: &str) -> Result<UtilizationReport> {
         validation::validate_identifier(supernet_id)?;
         let supernet = self.store.get_supernet(supernet_id).await?;
-        let active = self
+
+        // Fetch active + reserved allocations (these consume space)
+        let active_reserved = self
             .store
             .find_allocations_in_supernet(
                 supernet_id,
@@ -240,7 +242,35 @@ impl IpamOps {
             )
             .await?;
 
-        let allocated: u128 = active.iter().map(|a| a.total_hosts).sum();
+        // Fetch released allocations for the breakdown
+        let released = self
+            .store
+            .find_allocations_in_supernet(supernet_id, &[AllocationStatus::Released])
+            .await?;
+
+        let mut active_addresses: u128 = 0;
+        let mut active_count: usize = 0;
+        let mut reserved_addresses: u128 = 0;
+        let mut reserved_count: usize = 0;
+
+        for alloc in &active_reserved {
+            match alloc.status {
+                AllocationStatus::Active => {
+                    active_addresses += alloc.total_hosts;
+                    active_count += 1;
+                }
+                AllocationStatus::Reserved => {
+                    reserved_addresses += alloc.total_hosts;
+                    reserved_count += 1;
+                }
+                AllocationStatus::Released => {}
+            }
+        }
+
+        let released_addresses: u128 = released.iter().map(|a| a.total_hosts).sum();
+        let released_count = released.len();
+
+        let allocated = active_addresses + reserved_addresses;
         let total = supernet.total_hosts;
         let free = total.saturating_sub(allocated);
         let pct = if total > 0 {
@@ -256,7 +286,15 @@ impl IpamOps {
             allocated_addresses: allocated,
             free_addresses: free,
             utilization_percent: pct,
-            allocation_count: active.len(),
+            allocation_count: active_reserved.len(),
+            by_status: StatusBreakdown {
+                active_addresses,
+                active_count,
+                reserved_addresses,
+                reserved_count,
+                released_addresses,
+                released_count,
+            },
         })
     }
 
@@ -845,6 +883,12 @@ mod tests {
         assert_eq!(util.allocated_addresses, 128);
         assert_eq!(util.free_addresses, 128);
         assert!((util.utilization_percent - 50.0).abs() < 0.1);
+        assert_eq!(util.by_status.active_addresses, 128);
+        assert_eq!(util.by_status.active_count, 1);
+        assert_eq!(util.by_status.reserved_addresses, 0);
+        assert_eq!(util.by_status.reserved_count, 0);
+        assert_eq!(util.by_status.released_addresses, 0);
+        assert_eq!(util.by_status.released_count, 0);
     }
 
     #[tokio::test]
@@ -993,6 +1037,69 @@ mod tests {
 
         assert_eq!(allocs.len(), 1);
         assert_eq!(allocs[0].cidr, "10.0.0.0/25");
+    }
+
+    #[tokio::test]
+    async fn test_utilization_status_breakdown() {
+        let ops = test_ops().await;
+
+        let sn = ops
+            .create_supernet(&CreateSupernet {
+                cidr: "10.0.0.0/24".to_string(),
+                name: None,
+                description: None,
+            })
+            .await
+            .unwrap();
+
+        // Active allocation
+        let a1 = ops
+            .allocate_specific(&CreateAllocation {
+                supernet_id: sn.id.clone(),
+                cidr: "10.0.0.0/26".to_string(),
+                status: None,
+                resource_id: None,
+                resource_type: None,
+                name: None,
+                description: None,
+                environment: None,
+                owner: None,
+                parent_allocation_id: None,
+                tags: None,
+            })
+            .await
+            .unwrap();
+
+        // Reserved allocation
+        ops.allocate_specific(&CreateAllocation {
+            supernet_id: sn.id.clone(),
+            cidr: "10.0.0.64/26".to_string(),
+            status: Some(AllocationStatus::Reserved),
+            resource_id: None,
+            resource_type: None,
+            name: None,
+            description: None,
+            environment: None,
+            owner: None,
+            parent_allocation_id: None,
+            tags: None,
+        })
+        .await
+        .unwrap();
+
+        // Release the first allocation
+        ops.release_allocation(&a1.id).await.unwrap();
+
+        let util = ops.utilization(&sn.id).await.unwrap();
+        // Only reserved counts as allocated (active was released)
+        assert_eq!(util.allocated_addresses, 64);
+        assert_eq!(util.free_addresses, 192);
+        assert_eq!(util.by_status.active_addresses, 0);
+        assert_eq!(util.by_status.active_count, 0);
+        assert_eq!(util.by_status.reserved_addresses, 64);
+        assert_eq!(util.by_status.reserved_count, 1);
+        assert_eq!(util.by_status.released_addresses, 64);
+        assert_eq!(util.by_status.released_count, 1);
     }
 
     #[test]

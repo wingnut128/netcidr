@@ -131,6 +131,27 @@ impl TextOutput for UtilizationReport {
         writeln!(out, "Free:              {}", self.free_addresses).unwrap();
         writeln!(out, "Utilization:       {:.2}%", self.utilization_percent).unwrap();
         writeln!(out, "Allocation Count:  {}", self.allocation_count).unwrap();
+        writeln!(out).unwrap();
+        writeln!(out, "By Status").unwrap();
+        writeln!(out, "---------").unwrap();
+        writeln!(
+            out,
+            "  Active:          {} addresses ({} allocations)",
+            self.by_status.active_addresses, self.by_status.active_count
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "  Reserved:        {} addresses ({} allocations)",
+            self.by_status.reserved_addresses, self.by_status.reserved_count
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "  Released:        {} addresses ({} allocations)",
+            self.by_status.released_addresses, self.by_status.released_count
+        )
+        .unwrap();
         out
     }
 }
@@ -290,6 +311,12 @@ impl CsvOutput for UtilizationReport {
             "free_addresses",
             "utilization_percent",
             "allocation_count",
+            "active_addresses",
+            "active_count",
+            "reserved_addresses",
+            "reserved_count",
+            "released_addresses",
+            "released_count",
         ])
         .map_err(csv_err)?;
         wtr.write_record([
@@ -300,6 +327,12 @@ impl CsvOutput for UtilizationReport {
             &self.free_addresses.to_string(),
             &format!("{:.2}", self.utilization_percent),
             &self.allocation_count.to_string(),
+            &self.by_status.active_addresses.to_string(),
+            &self.by_status.active_count.to_string(),
+            &self.by_status.reserved_addresses.to_string(),
+            &self.by_status.reserved_count.to_string(),
+            &self.by_status.released_addresses.to_string(),
+            &self.by_status.released_count.to_string(),
         ])
         .map_err(csv_err)?;
         finish_csv(wtr)

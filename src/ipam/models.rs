@@ -211,6 +211,17 @@ pub struct AuditList {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
+pub struct StatusBreakdown {
+    pub active_addresses: u128,
+    pub active_count: usize,
+    pub reserved_addresses: u128,
+    pub reserved_count: usize,
+    pub released_addresses: u128,
+    pub released_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct UtilizationReport {
     pub supernet_id: String,
     pub supernet_cidr: String,
@@ -219,6 +230,7 @@ pub struct UtilizationReport {
     pub free_addresses: u128,
     pub utilization_percent: f64,
     pub allocation_count: usize,
+    pub by_status: StatusBreakdown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
