@@ -63,6 +63,16 @@ After every commit (whether from a Linear ticket or not):
 - **README.md**: Update whenever there are important changes to the codebase — new or changed CLI commands, new build/make targets, new features, deprecation warnings, removed functionality, or changes to setup/install instructions. Do not update README for purely internal refactors or CI-only changes unless they affect the developer workflow (e.g., new `make` targets).
 - **SECURITY.md**: Update the supported versions table whenever a new version is released. Only the two most recent minor versions are supported (e.g., 0.13.x and 0.12.x). All older versions should be marked as unsupported.
 
+### Patch version bump
+
+When creating a PR that includes `feat:` or `fix:` commits, bump the patch version as part of the PR:
+
+1. Increment the `version` patch number in `Cargo.toml` (e.g., `0.13.1` → `0.13.2`)
+2. Move `[Unreleased]` entries in `CHANGELOG.md` to a new `[X.Y.Z]` section with today's date
+3. Update `SECURITY.md` supported versions table if the minor version changed
+
+Do NOT bump for `ci:`, `docs:`, `test:`, `refactor:`, or `chore:` PRs — those stay under `[Unreleased]`.
+
 ### Task completion checklist
 
 Every task is only "done" when ALL of the following are true:
