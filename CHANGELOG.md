@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- IP version guard: cross-family allocations rejected (e.g., IPv4 CIDR in IPv6 supernet)
+- Prefix length validation in auto-allocate (rejects prefix > 32 for IPv4, > 128 for IPv6)
+- IPv6 unit tests for range arithmetic: `parse_range`, `ranges_overlap`, `range_contains`, `find_gaps`, `find_free_blocks`, `range_to_cidrs`, `split_cidr_to_prefix`
+- IPv6 IPAM integration tests: supernet CRUD, allocate specific, auto-allocate, overlap rejection, utilization, free blocks, find-by-IP, release/re-allocate
+- IPv6 CLI integration test: end-to-end IPAM workflow via subprocess
+
 ### Changed
 
 - CI: removed auto-merge workflow (security improvement — no more actor-based exemptions)

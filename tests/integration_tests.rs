@@ -880,3 +880,74 @@ fn test_ipam_csv_output() {
 
     let _ = std::fs::remove_file(db);
 }
+
+// ── IPv6 IPAM CLI Integration ─────────────────────────────────────────
+
+#[test]
+fn test_ipam_ipv6_supernet_lifecycle() {
+    let db = "/tmp/ipcalc-test-v6-lifecycle.db";
+    let _ = std::fs::remove_file(db);
+
+    // Create IPv6 supernet
+    let (stdout, _, success) = run_ipam(
+        db,
+        &["supernet", "create", "2001:db8::/32", "--name", "IPv6Corp"],
+    );
+    assert!(success, "create failed");
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
+    assert_eq!(json["cidr"], "2001:db8::/32");
+    assert_eq!(json["ip_version"], 6);
+    let sn_id = json["id"].as_str().unwrap().to_string();
+
+    // Allocate specific IPv6 block
+    let (stdout, _, success) = run_ipam(
+        db,
+        &["allocate", &sn_id, "2001:db8:1::/48", "--name", "WebV6"],
+    );
+    assert!(success, "allocate failed");
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(json["cidr"], "2001:db8:1::/48");
+    let alloc_id = json["id"].as_str().unwrap().to_string();
+
+    // Auto-allocate
+    let (stdout, _, success) = run_ipam(db, &["auto-allocate", &sn_id, "-p", "48", "-n", "2"]);
+    assert!(success, "auto-allocate failed");
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let allocs = json["allocations"].as_array().unwrap();
+    assert_eq!(allocs.len(), 2);
+
+    // Utilization
+    let (stdout, _, success) = run_ipam(db, &["utilization", &sn_id]);
+    assert!(success, "utilization failed");
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(json["allocation_count"], 3);
+
+    // Free blocks
+    let (stdout, _, success) = run_ipam(db, &["free-blocks", &sn_id, "-p", "48"]);
+    assert!(success, "free-blocks failed");
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(!json["blocks"].as_array().unwrap().is_empty());
+
+    // Find by IPv6 address
+    let (stdout, _, success) = run_ipam(db, &["find-ip", "2001:db8:1::50"]);
+    assert!(success, "find-ip failed");
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let found = json["allocations"].as_array().unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0]["cidr"], "2001:db8:1::/48");
+
+    // Release
+    let (stdout, _, success) = run_ipam(db, &["release", &alloc_id]);
+    assert!(success, "release failed");
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(json["status"], "released");
+
+    // Delete supernet (need to release remaining allocations first)
+    // Just verify the data is consistent
+    let (stdout, _, success) = run_ipam(db, &["utilization", &sn_id]);
+    assert!(success);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(json["by_status"]["released_count"], 1);
+
+    let _ = std::fs::remove_file(db);
+}

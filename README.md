@@ -22,7 +22,7 @@ A fast IPv4 and IPv6 subnet calculator written in Rust. Available as a CLI tool,
 - **HTTP API**: REST endpoints for all calculations
 - **OpenAPI documentation**: Machine-readable API specification for easy integration with tools like Swagger Editor, Postman, and Insomnia
 - **MCP server**: [Model Context Protocol](https://modelcontextprotocol.io) server for AI assistant integration (Claude, etc.) over stdio
-- **IPAM (IP Address Management)**: allocation tracking with conflict detection, audit trail, utilization reporting, reservation TTL/expiry, and JSON export/import — available via CLI (`ipcalc ipam`) and REST API (`ipcalc serve --ipam-enabled`)
+- **IPAM (IP Address Management)**: IPv4 and IPv6 allocation tracking with conflict detection, audit trail, utilization reporting, reservation TTL/expiry, and JSON export/import — available via CLI (`ipcalc ipam`) and REST API (`ipcalc serve --ipam-enabled`)
 - **Configurable security**: rate limiting, request size limits, timeouts, restrictive CORS, and security headers
 - **TOML configuration**: server settings via config file with CLI flag overrides
 
@@ -599,6 +599,12 @@ ipcalc ipam find-ip 10.0.1.50
 
 # View audit log
 ipcalc ipam audit --limit 10
+
+# IPv6 IPAM — same commands, IPv6 CIDRs
+ipcalc ipam supernet create 2001:db8::/32 --name "IPv6 Space"
+ipcalc ipam allocate <supernet-id> 2001:db8:1::/48 --name "Site A"
+ipcalc ipam auto-allocate <supernet-id> -p 48 -n 5
+ipcalc ipam find-ip 2001:db8:1::50
 
 # Use a specific database file
 ipcalc ipam --db /path/to/my.db supernet list

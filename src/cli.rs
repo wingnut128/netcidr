@@ -187,7 +187,7 @@ pub enum IpamCommands {
     Allocate {
         /// Supernet ID
         supernet_id: String,
-        /// CIDR to allocate (e.g., 10.0.1.0/24)
+        /// CIDR to allocate (e.g., 10.0.1.0/24 or 2001:db8:1::/48)
         cidr: String,
         /// Allocation name
         #[arg(long)]
@@ -332,7 +332,7 @@ pub enum IpamCommands {
 pub enum SupernetCommands {
     /// Create a new supernet
     Create {
-        /// CIDR notation (e.g., 10.0.0.0/8)
+        /// CIDR notation (e.g., 10.0.0.0/8 or 2001:db8::/32)
         cidr: String,
         /// Supernet name
         #[arg(long)]

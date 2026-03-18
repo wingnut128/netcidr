@@ -94,6 +94,9 @@ impl IpamOps {
         let supernet_range = parse_range(&supernet.cidr)?;
         let candidate_range = parse_range(&input.cidr)?;
 
+        // Reject cross-family allocations (e.g., IPv4 CIDR in IPv6 supernet)
+        validate_same_ip_version(&supernet_range, &candidate_range, &input.cidr)?;
+
         // Verify the candidate falls within the supernet
         if !range_contains(&supernet_range, &candidate_range) {
             return Err(IpCalcError::AllocationConflict {
@@ -137,6 +140,17 @@ impl IpamOps {
         let supernet = self.store.get_supernet(&request.supernet_id).await?;
         let supernet_range = parse_range(&supernet.cidr)?;
         let count = request.count.unwrap_or(1);
+
+        // Validate prefix length is within range for the IP version
+        let max_prefix: u8 = if supernet_range.is_v4 { 32 } else { 128 };
+        if request.prefix_length > max_prefix {
+            return Err(IpCalcError::InvalidInput(format!(
+                "prefix length {} exceeds maximum {} for IPv{}",
+                request.prefix_length,
+                max_prefix,
+                if supernet_range.is_v4 { 4 } else { 6 }
+            )));
+        }
 
         let existing = self
             .store
@@ -709,6 +723,22 @@ fn ranges_overlap(a: &IpRange, b: &IpRange) -> bool {
 
 fn range_contains(outer: &IpRange, inner: &IpRange) -> bool {
     outer.start <= inner.start && inner.end <= outer.end
+}
+
+/// Reject cross-family allocations (e.g., IPv4 CIDR in IPv6 supernet).
+fn validate_same_ip_version(
+    supernet: &IpRange,
+    candidate: &IpRange,
+    candidate_cidr: &str,
+) -> Result<()> {
+    if supernet.is_v4 != candidate.is_v4 {
+        let sn_ver = if supernet.is_v4 { "IPv4" } else { "IPv6" };
+        let cand_ver = if candidate.is_v4 { "IPv4" } else { "IPv6" };
+        return Err(IpCalcError::InvalidInput(format!(
+            "cannot allocate {cand_ver} CIDR {candidate_cidr} in {sn_ver} supernet"
+        )));
+    }
+    Ok(())
 }
 
 /// Find gaps (unallocated regions) in a supernet given sorted existing allocations.
@@ -1433,6 +1463,632 @@ mod tests {
         let cidrs = range_to_cidrs(start, end, true);
         assert_eq!(cidrs.len(), 1);
         assert_eq!(cidrs[0].0, "10.0.0.128/25");
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 2: IP version guard tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_cross_family_allocation_rejected() {
+        let ops = test_ops().await;
+
+        let sn = ops
+            .create_supernet(&CreateSupernet {
+                cidr: "2001:db8::/32".to_string(),
+                name: None,
+                description: None,
+            })
+            .await
+            .unwrap();
+
+        // Try to allocate an IPv4 CIDR in an IPv6 supernet
+        let err = ops
+            .allocate_specific(&CreateAllocation {
+                supernet_id: sn.id.clone(),
+                cidr: "10.0.0.0/24".to_string(),
+                status: None,
+                resource_id: None,
+                resource_type: None,
+                name: None,
+                description: None,
+                environment: None,
+                owner: None,
+                parent_allocation_id: None,
+                tags: None,
+                ttl_seconds: None,
+            })
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, IpCalcError::InvalidInput(_)));
+        assert!(err.to_string().contains("IPv4"));
+        assert!(err.to_string().contains("IPv6"));
+    }
+
+    #[tokio::test]
+    async fn test_cross_family_allocation_v6_in_v4_rejected() {
+        let ops = test_ops().await;
+
+        let sn = ops
+            .create_supernet(&CreateSupernet {
+                cidr: "10.0.0.0/8".to_string(),
+                name: None,
+                description: None,
+            })
+            .await
+            .unwrap();
+
+        let err = ops
+            .allocate_specific(&CreateAllocation {
+                supernet_id: sn.id.clone(),
+                cidr: "2001:db8::/48".to_string(),
+                status: None,
+                resource_id: None,
+                resource_type: None,
+                name: None,
+                description: None,
+                environment: None,
+                owner: None,
+                parent_allocation_id: None,
+                tags: None,
+                ttl_seconds: None,
+            })
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, IpCalcError::InvalidInput(_)));
+    }
+
+    #[tokio::test]
+    async fn test_auto_allocate_prefix_too_large_for_v4() {
+        let ops = test_ops().await;
+
+        let sn = ops
+            .create_supernet(&CreateSupernet {
+                cidr: "10.0.0.0/8".to_string(),
+                name: None,
+                description: None,
+            })
+            .await
+            .unwrap();
+
+        let err = ops
+            .allocate_auto(&AutoAllocateRequest {
+                supernet_id: sn.id.clone(),
+                prefix_length: 33,
+                count: Some(1),
+                status: None,
+                resource_id: None,
+                resource_type: None,
+                name: None,
+                description: None,
+                environment: None,
+                owner: None,
+                parent_allocation_id: None,
+                tags: None,
+                ttl_seconds: None,
+            })
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, IpCalcError::InvalidInput(_)));
+        assert!(err.to_string().contains("prefix length 33"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 3: IPv6 IPAM integration tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_ipv6_create_supernet() {
+        let ops = test_ops().await;
+
+        let sn = ops
+            .create_supernet(&CreateSupernet {
+                cidr: "2001:db8::/32".to_string(),
+                name: Some("IPv6 Corp".to_string()),
+                description: Some("Test IPv6 supernet".to_string()),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(sn.cidr, "2001:db8::/32");
+        assert_eq!(sn.ip_version, 6);
+        assert_eq!(sn.prefix_length, 32);
+        assert_eq!(sn.total_hosts, 1u128 << 96);
+    }
+
+    #[tokio::test]
+    async fn test_ipv6_supernet_overlap_rejected() {
+        let ops = test_ops().await;
+
+        ops.create_supernet(&CreateSupernet {
+            cidr: "2001:db8::/32".to_string(),
+            name: None,
+            description: None,
+        })
+        .await
+        .unwrap();
+
+        let err = ops
+            .create_supernet(&CreateSupernet {
+                cidr: "2001:db8:1000::/36".to_string(),
+                name: None,
+                description: None,
+            })
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, IpCalcError::AllocationConflict { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_ipv6_allocate_specific() {
+        let ops = test_ops().await;
+
+        let sn = ops
+            .create_supernet(&CreateSupernet {
+                cidr: "2001:db8::/32".to_string(),
+                name: None,
+                description: None,
+            })
+            .await
+            .unwrap();
+
+        let alloc = ops
+            .allocate_specific(&CreateAllocation {
+                supernet_id: sn.id.clone(),
+                cidr: "2001:db8::/48".to_string(),
+                status: None,
+                resource_id: Some("vpc-v6".to_string()),
+                resource_type: None,
+                name: Some("web-v6".to_string()),
+                description: None,
+                environment: Some("prod".to_string()),
+                owner: None,
+                parent_allocation_id: None,
+                tags: None,
+                ttl_seconds: None,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(alloc.cidr, "2001:db8::/48");
+        assert_eq!(alloc.total_hosts, 1u128 << 80);
+        assert_eq!(alloc.status, AllocationStatus::Active);
+    }
+
+    #[tokio::test]
+    async fn test_ipv6_allocate_overlap_rejected() {
+        let ops = test_ops().await;
+
+        let sn = ops
+            .create_supernet(&CreateSupernet {
+                cidr: "2001:db8::/32".to_string(),
+                name: None,
+                description: None,
+            })
+            .await
+            .unwrap();
+
+        ops.allocate_specific(&CreateAllocation {
+            supernet_id: sn.id.clone(),
+            cidr: "2001:db8::/48".to_string(),
+            status: None,
+            resource_id: None,
+            resource_type: None,
+            name: None,
+            description: None,
+            environment: None,
+            owner: None,
+            parent_allocation_id: None,
+            tags: None,
+            ttl_seconds: None,
+        })
+        .await
+        .unwrap();
+
+        // Overlapping: /64 within the /48
+        let err = ops
+            .allocate_specific(&CreateAllocation {
+                supernet_id: sn.id.clone(),
+                cidr: "2001:db8::/64".to_string(),
+                status: None,
+                resource_id: None,
+                resource_type: None,
+                name: None,
+                description: None,
+                environment: None,
+                owner: None,
+                parent_allocation_id: None,
+                tags: None,
+                ttl_seconds: None,
+            })
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, IpCalcError::AllocationConflict { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_ipv6_auto_allocate() {
+        let ops = test_ops().await;
+
+        let sn = ops
+            .create_supernet(&CreateSupernet {
+                cidr: "2001:db8::/32".to_string(),
+                name: None,
+                description: None,
+            })
+            .await
+            .unwrap();
+
+        // Manually allocate first /48
+        ops.allocate_specific(&CreateAllocation {
+            supernet_id: sn.id.clone(),
+            cidr: "2001:db8::/48".to_string(),
+            status: None,
+            resource_id: None,
+            resource_type: None,
+            name: None,
+            description: None,
+            environment: None,
+            owner: None,
+            parent_allocation_id: None,
+            tags: None,
+            ttl_seconds: None,
+        })
+        .await
+        .unwrap();
+
+        // Auto-allocate next 3 /48s
+        let allocs = ops
+            .allocate_auto(&AutoAllocateRequest {
+                supernet_id: sn.id.clone(),
+                prefix_length: 48,
+                count: Some(3),
+                status: None,
+                resource_id: None,
+                resource_type: None,
+                name: None,
+                description: None,
+                environment: None,
+                owner: None,
+                parent_allocation_id: None,
+                tags: None,
+                ttl_seconds: None,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(allocs.len(), 3);
+        assert_eq!(allocs[0].cidr, "2001:db8:1::/48");
+        assert_eq!(allocs[1].cidr, "2001:db8:2::/48");
+        assert_eq!(allocs[2].cidr, "2001:db8:3::/48");
+    }
+
+    #[tokio::test]
+    async fn test_ipv6_utilization() {
+        let ops = test_ops().await;
+
+        // Use a small /126 supernet (4 addresses) for easy math
+        let sn = ops
+            .create_supernet(&CreateSupernet {
+                cidr: "2001:db8::/126".to_string(),
+                name: None,
+                description: None,
+            })
+            .await
+            .unwrap();
+
+        ops.allocate_specific(&CreateAllocation {
+            supernet_id: sn.id.clone(),
+            cidr: "2001:db8::/127".to_string(),
+            status: None,
+            resource_id: None,
+            resource_type: None,
+            name: None,
+            description: None,
+            environment: None,
+            owner: None,
+            parent_allocation_id: None,
+            tags: None,
+            ttl_seconds: None,
+        })
+        .await
+        .unwrap();
+
+        let util = ops.utilization(&sn.id).await.unwrap();
+        assert_eq!(util.total_addresses, 4);
+        assert_eq!(util.allocated_addresses, 2);
+        assert_eq!(util.free_addresses, 2);
+        assert!((util.utilization_percent - 50.0).abs() < 0.1);
+    }
+
+    #[tokio::test]
+    async fn test_ipv6_free_blocks() {
+        let ops = test_ops().await;
+
+        let sn = ops
+            .create_supernet(&CreateSupernet {
+                cidr: "2001:db8::/46".to_string(),
+                name: None,
+                description: None,
+            })
+            .await
+            .unwrap();
+
+        // Allocate the first /48
+        ops.allocate_specific(&CreateAllocation {
+            supernet_id: sn.id.clone(),
+            cidr: "2001:db8::/48".to_string(),
+            status: None,
+            resource_id: None,
+            resource_type: None,
+            name: None,
+            description: None,
+            environment: None,
+            owner: None,
+            parent_allocation_id: None,
+            tags: None,
+            ttl_seconds: None,
+        })
+        .await
+        .unwrap();
+
+        let report = ops.free_blocks(&sn.id, Some(48)).await.unwrap();
+        // /46 has 4 /48s; we allocated 1, so 3 free
+        assert_eq!(report.blocks.len(), 3);
+        assert_eq!(report.blocks[0].cidr, "2001:db8:1::/48");
+        assert_eq!(report.blocks[1].cidr, "2001:db8:2::/48");
+        assert_eq!(report.blocks[2].cidr, "2001:db8:3::/48");
+    }
+
+    #[tokio::test]
+    async fn test_ipv6_find_by_ip() {
+        let ops = test_ops().await;
+
+        let sn = ops
+            .create_supernet(&CreateSupernet {
+                cidr: "2001:db8::/32".to_string(),
+                name: None,
+                description: None,
+            })
+            .await
+            .unwrap();
+
+        ops.allocate_specific(&CreateAllocation {
+            supernet_id: sn.id.clone(),
+            cidr: "2001:db8:1::/48".to_string(),
+            status: None,
+            resource_id: None,
+            resource_type: None,
+            name: None,
+            description: None,
+            environment: None,
+            owner: None,
+            parent_allocation_id: None,
+            tags: None,
+            ttl_seconds: None,
+        })
+        .await
+        .unwrap();
+
+        let found = ops.find_by_ip("2001:db8:1::50").await.unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].cidr, "2001:db8:1::/48");
+
+        let not_found = ops.find_by_ip("2001:db8:2::1").await.unwrap();
+        assert!(not_found.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_ipv6_release_frees_space() {
+        let ops = test_ops().await;
+
+        let sn = ops
+            .create_supernet(&CreateSupernet {
+                cidr: "2001:db8::/126".to_string(),
+                name: None,
+                description: None,
+            })
+            .await
+            .unwrap();
+
+        let a1 = ops
+            .allocate_specific(&CreateAllocation {
+                supernet_id: sn.id.clone(),
+                cidr: "2001:db8::/127".to_string(),
+                status: None,
+                resource_id: None,
+                resource_type: None,
+                name: None,
+                description: None,
+                environment: None,
+                owner: None,
+                parent_allocation_id: None,
+                tags: None,
+                ttl_seconds: None,
+            })
+            .await
+            .unwrap();
+
+        ops.allocate_specific(&CreateAllocation {
+            supernet_id: sn.id.clone(),
+            cidr: "2001:db8::2/127".to_string(),
+            status: None,
+            resource_id: None,
+            resource_type: None,
+            name: None,
+            description: None,
+            environment: None,
+            owner: None,
+            parent_allocation_id: None,
+            tags: None,
+            ttl_seconds: None,
+        })
+        .await
+        .unwrap();
+
+        // Fully allocated
+        let util = ops.utilization(&sn.id).await.unwrap();
+        assert!((util.utilization_percent - 100.0).abs() < 0.1);
+
+        // Release first block
+        ops.release_allocation(&a1.id).await.unwrap();
+
+        // Auto-allocate should reclaim it
+        let allocs = ops
+            .allocate_auto(&AutoAllocateRequest {
+                supernet_id: sn.id.clone(),
+                prefix_length: 127,
+                count: Some(1),
+                status: None,
+                resource_id: None,
+                resource_type: None,
+                name: None,
+                description: None,
+                environment: None,
+                owner: None,
+                parent_allocation_id: None,
+                tags: None,
+                ttl_seconds: None,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(allocs.len(), 1);
+        assert_eq!(allocs[0].cidr, "2001:db8::/127");
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 4: IPv6 pure-function unit tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_range_ipv6() {
+        let range = parse_range("2001:db8::/32").unwrap();
+        assert!(!range.is_v4);
+        assert_eq!(
+            range.start,
+            u128::from(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0))
+        );
+        // /32 means the last 96 bits are all ones in the host part
+        let expected_end = range.start | ((1u128 << 96) - 1);
+        assert_eq!(range.end, expected_end);
+    }
+
+    #[test]
+    fn test_parse_range_ipv6_128() {
+        let range = parse_range("2001:db8::1/128").unwrap();
+        assert!(!range.is_v4);
+        assert_eq!(range.start, range.end);
+    }
+
+    #[test]
+    fn test_ranges_overlap_ipv6() {
+        let a = parse_range("2001:db8::/48").unwrap();
+        let b = parse_range("2001:db8::/32").unwrap();
+        // a is contained within b, so they overlap
+        assert!(ranges_overlap(&a, &b));
+
+        let c = parse_range("2001:db9::/32").unwrap();
+        assert!(!ranges_overlap(&a, &c));
+    }
+
+    #[test]
+    fn test_range_contains_ipv6() {
+        let outer = parse_range("2001:db8::/32").unwrap();
+        let inner = parse_range("2001:db8:1::/48").unwrap();
+        assert!(range_contains(&outer, &inner));
+
+        let outside = parse_range("2001:db9::/48").unwrap();
+        assert!(!range_contains(&outer, &outside));
+    }
+
+    #[test]
+    fn test_find_gaps_ipv6() {
+        let supernet = parse_range("2001:db8::/32").unwrap();
+        // Allocate the first /48
+        let alloc = parse_range("2001:db8::/48").unwrap();
+        let gaps = find_gaps(&supernet, std::slice::from_ref(&alloc));
+
+        // There should be one gap: from end of /48 to end of /32
+        assert_eq!(gaps.len(), 1);
+        assert_eq!(gaps[0].0, alloc.end + 1);
+        assert_eq!(gaps[0].1, supernet.end);
+    }
+
+    #[test]
+    fn test_find_free_blocks_ipv6() {
+        let supernet = parse_range("2001:db8::/32").unwrap();
+        // No existing allocations — first /48 should be 2001:db8::/48
+        let blocks = find_free_blocks(&supernet, &[], 48, 3).unwrap();
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[0], "2001:db8::/48");
+        assert_eq!(blocks[1], "2001:db8:1::/48");
+        assert_eq!(blocks[2], "2001:db8:2::/48");
+    }
+
+    #[test]
+    fn test_find_free_blocks_ipv6_with_gap() {
+        let supernet = parse_range("2001:db8::/32").unwrap();
+        let existing = vec![parse_range("2001:db8::/48").unwrap()];
+        let blocks = find_free_blocks(&supernet, &existing, 48, 1).unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0], "2001:db8:1::/48");
+    }
+
+    #[test]
+    fn test_range_to_cidrs_ipv6() {
+        // A single /48 should decompose to itself
+        let range = parse_range("2001:db8::/48").unwrap();
+        let cidrs = range_to_cidrs(range.start, range.end, false);
+        assert_eq!(cidrs.len(), 1);
+        assert_eq!(cidrs[0].0, "2001:db8::/48");
+        assert_eq!(cidrs[0].1, 1u128 << 80);
+    }
+
+    #[test]
+    fn test_range_to_cidrs_ipv6_non_aligned() {
+        // Two consecutive /48s should decompose into a /47 if aligned
+        let range_start = u128::from(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0));
+        let block_size = 1u128 << 80; // /48
+        let range_end = range_start + 2 * block_size - 1;
+        let cidrs = range_to_cidrs(range_start, range_end, false);
+        assert_eq!(cidrs.len(), 1);
+        assert_eq!(cidrs[0].0, "2001:db8::/47");
+    }
+
+    #[test]
+    fn test_split_cidr_to_prefix_ipv6() {
+        // Split a /46 into /48s
+        let blocks = split_cidr_to_prefix("2001:db8::/46", 48, false);
+        assert_eq!(blocks.len(), 4);
+        assert_eq!(blocks[0], "2001:db8::/48");
+        assert_eq!(blocks[1], "2001:db8:1::/48");
+        assert_eq!(blocks[2], "2001:db8:2::/48");
+        assert_eq!(blocks[3], "2001:db8:3::/48");
+    }
+
+    #[test]
+    fn test_validate_same_ip_version_ok() {
+        let v4a = parse_range("10.0.0.0/8").unwrap();
+        let v4b = parse_range("10.0.0.0/24").unwrap();
+        assert!(validate_same_ip_version(&v4a, &v4b, "10.0.0.0/24").is_ok());
+
+        let v6a = parse_range("2001:db8::/32").unwrap();
+        let v6b = parse_range("2001:db8::/48").unwrap();
+        assert!(validate_same_ip_version(&v6a, &v6b, "2001:db8::/48").is_ok());
+    }
+
+    #[test]
+    fn test_validate_same_ip_version_mismatch() {
+        let v4 = parse_range("10.0.0.0/8").unwrap();
+        let v6 = parse_range("2001:db8::/48").unwrap();
+        assert!(validate_same_ip_version(&v4, &v6, "2001:db8::/48").is_err());
+        assert!(validate_same_ip_version(&v6, &v4, "10.0.0.0/8").is_err());
     }
 
     // -----------------------------------------------------------------------
