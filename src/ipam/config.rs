@@ -246,4 +246,160 @@ mod tests {
         let url = resolve_postgres_url_inner(None, None, &config);
         assert!(url.is_none());
     }
+
+    #[test]
+    fn test_postgres_url_empty_env_falls_through() {
+        let config = PostgresConfig {
+            url: Some("postgresql://config".to_string()),
+            ..Default::default()
+        };
+        let url = resolve_postgres_url_inner(None, Some(""), &config);
+        assert_eq!(url, Some("postgresql://config".to_string()));
+    }
+
+    #[test]
+    fn test_invalid_ipam_toml_syntax() {
+        let bad_toml = "enabled = {{{";
+        let result = toml::from_str::<IpamConfig>(bad_toml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_wrong_type_for_ipam_field() {
+        let bad_toml = r#"enabled = "not_a_bool""#;
+        let result = toml::from_str::<IpamConfig>(bad_toml);
+        assert!(result.is_err(), "string for bool field should fail");
+    }
+
+    #[test]
+    fn test_invalid_backend_name_in_toml() {
+        let toml_str = r#"backend = "mysql""#;
+        let result = toml::from_str::<IpamConfig>(toml_str);
+        assert!(
+            result.is_err(),
+            "unrecognized backend should fail deserialization"
+        );
+    }
+
+    #[test]
+    fn test_invalid_backend_from_str() {
+        let result = "mysql".parse::<Backend>();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("unknown IPAM backend"));
+    }
+
+    #[test]
+    fn test_backend_from_str_case_insensitive() {
+        assert_eq!("SQLITE".parse::<Backend>().unwrap(), Backend::Sqlite);
+        assert_eq!("Postgres".parse::<Backend>().unwrap(), Backend::Postgres);
+        assert_eq!("POSTGRESQL".parse::<Backend>().unwrap(), Backend::Postgres);
+    }
+
+    #[test]
+    fn test_empty_ipam_toml_yields_defaults() {
+        let config: IpamConfig = toml::from_str("").unwrap();
+        assert!(config.enabled);
+        assert!(config.auto_init);
+        assert_eq!(config.backend, Backend::Sqlite);
+        assert!(config.sqlite.db_path.is_none());
+        assert!(config.sqlite.wal_mode);
+        assert!(config.postgres.url.is_none());
+        assert_eq!(config.postgres.max_connections, 10);
+        assert_eq!(config.postgres.min_connections, 2);
+    }
+
+    #[test]
+    fn test_partial_ipam_config_fills_defaults() {
+        let toml_str = r#"
+            enabled = false
+            backend = "postgres"
+        "#;
+        let config: IpamConfig = toml::from_str(toml_str).unwrap();
+        assert!(!config.enabled);
+        assert_eq!(config.backend, Backend::Postgres);
+        // defaults for unspecified fields
+        assert!(config.auto_init);
+        assert!(config.sqlite.wal_mode);
+        assert_eq!(config.postgres.max_connections, 10);
+    }
+
+    #[test]
+    fn test_sqlite_config_with_special_chars_in_path() {
+        let toml_str = r#"
+            [sqlite]
+            db_path = "/tmp/my data/ipcalc (copy).db"
+        "#;
+        let config: IpamConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            config.sqlite.db_path,
+            Some("/tmp/my data/ipcalc (copy).db".to_string())
+        );
+    }
+
+    #[test]
+    fn test_sqlite_config_with_unicode_path() {
+        let toml_str = r#"
+            [sqlite]
+            db_path = "/tmp/données/ipcalc.db"
+        "#;
+        let config: IpamConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            config.sqlite.db_path,
+            Some("/tmp/données/ipcalc.db".to_string())
+        );
+    }
+
+    #[test]
+    fn test_postgres_config_boundary_connections() {
+        let toml_str = r#"
+            [postgres]
+            max_connections = 0
+            min_connections = 0
+        "#;
+        let config: IpamConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.postgres.max_connections, 0);
+        assert_eq!(config.postgres.min_connections, 0);
+    }
+
+    #[test]
+    fn test_negative_connections_rejected() {
+        let toml_str = r#"
+            [postgres]
+            max_connections = -1
+        "#;
+        let result = toml::from_str::<IpamConfig>(toml_str);
+        assert!(result.is_err(), "negative value for u32 should fail");
+    }
+
+    #[test]
+    fn test_unknown_ipam_fields_accepted() {
+        let toml_str = r#"
+            enabled = true
+            fake_field = "ignored"
+        "#;
+        let config: IpamConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.enabled);
+    }
+
+    #[test]
+    fn test_backend_display() {
+        assert_eq!(Backend::Sqlite.to_string(), "sqlite");
+        assert_eq!(Backend::Postgres.to_string(), "postgres");
+    }
+
+    #[test]
+    fn test_backend_default_is_sqlite() {
+        assert_eq!(Backend::default(), Backend::Sqlite);
+    }
+
+    #[test]
+    fn test_db_path_with_spaces_via_resolution() {
+        let config = SqliteConfig {
+            db_path: Some("/path with spaces/db.sqlite".to_string()),
+            wal_mode: true,
+        };
+        let path = resolve_db_path_inner(None, None, &config);
+        assert_eq!(path, "/path with spaces/db.sqlite");
+    }
 }
