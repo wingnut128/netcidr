@@ -448,3 +448,156 @@ async fn test_body_size_limit() {
     let resp: Response = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
+
+// ── Version Endpoint Matches Cargo.toml ─────────────────────────────
+
+#[tokio::test]
+async fn test_version_matches_cargo_toml() {
+    let (status, body) = get("/version").await;
+    assert_eq!(status, 200);
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(json["name"], "ipcalc");
+    assert_eq!(json["version"], env!("CARGO_PKG_VERSION"));
+}
+
+// ── CORS Headers ────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_cors_preflight_options_request() {
+    let app = create_router(RouterConfig::default());
+    let req = Request::builder()
+        .method("OPTIONS")
+        .uri("/batch")
+        .header("origin", "https://example.com")
+        .header("access-control-request-method", "POST")
+        .header("access-control-request-headers", "content-type")
+        .body(Body::empty())
+        .unwrap();
+    let resp: Response = app.oneshot(req).await.unwrap();
+    // CORS is configured with an empty origin allowlist, so the preflight
+    // should not include an access-control-allow-origin header for arbitrary origins.
+    assert!(
+        resp.headers().get("access-control-allow-origin").is_none(),
+        "No origins should be allowed when the allowlist is empty"
+    );
+}
+
+#[tokio::test]
+async fn test_cors_get_request_no_origin_header() {
+    let (_status, _body, headers) = get_with_headers("/health").await;
+    // Without an Origin header in the request, no CORS headers should appear
+    assert!(headers.get("access-control-allow-origin").is_none());
+}
+
+// ── Invalid Content-Type ────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_post_with_wrong_content_type() {
+    let app = create_router(RouterConfig::default());
+    let req = Request::builder()
+        .method("POST")
+        .uri("/batch")
+        .header(header::CONTENT_TYPE, "text/plain")
+        .body(Body::from(r#"{"cidrs":["192.168.1.0/24"]}"#))
+        .unwrap();
+    let resp: Response = app.oneshot(req).await.unwrap();
+    // Axum rejects non-JSON content type for Json<T> extractors with 415
+    assert_eq!(resp.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+}
+
+#[tokio::test]
+async fn test_post_with_no_content_type() {
+    let app = create_router(RouterConfig::default());
+    let req = Request::builder()
+        .method("POST")
+        .uri("/batch")
+        .body(Body::from(r#"{"cidrs":["192.168.1.0/24"]}"#))
+        .unwrap();
+    let resp: Response = app.oneshot(req).await.unwrap();
+    // Missing Content-Type header should also be rejected
+    assert_eq!(resp.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+}
+
+// ── Malformed JSON ──────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_malformed_json_batch() {
+    let (status, body) = post_json("/batch", r#"{"cidrs": [invalid json"#).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    // Axum returns a JSON parse error description
+    assert!(!body.is_empty());
+}
+
+#[tokio::test]
+async fn test_wrong_json_shape_batch() {
+    // Valid JSON but wrong shape (missing required "cidrs" field)
+    let (status, body) = post_json("/batch", r#"{"wrong_field": true}"#).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(!body.is_empty());
+}
+
+#[tokio::test]
+async fn test_empty_body_batch() {
+    let (status, _body) = post_json("/batch", "").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+// ── Timeout Configuration ───────────────────────────────────────────
+
+#[tokio::test]
+async fn test_timeout_config_applied() {
+    // Verify the server config timeout value is respected in the router.
+    // We can't easily trigger a real timeout in a unit test, but we verify
+    // that a custom timeout config doesn't break router creation and normal
+    // requests still succeed.
+    use ipcalc::config::ServerConfig;
+    let config = RouterConfig {
+        server: ServerConfig {
+            timeout_seconds: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let app = create_router(config);
+    let req = Request::builder()
+        .uri("/health")
+        .body(Body::empty())
+        .unwrap();
+    let resp: Response = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+// ── Body Size Limit on Different Endpoints ──────────────────────────
+
+#[tokio::test]
+async fn test_body_size_limit_default_allows_normal_batch() {
+    // Default max_body_size is 1 MB; a normal batch request should be well within that
+    let cidrs: Vec<String> = (0..100)
+        .map(|i| format!(r#""10.0.{}.0/24""#, i % 256))
+        .collect();
+    let body = format!(r#"{{"cidrs":[{}]}}"#, cidrs.join(","));
+    let (status, _body) = post_json("/batch", &body).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+// ── 404 for Unknown Routes ──────────────────────────────────────────
+
+#[tokio::test]
+async fn test_unknown_route_returns_404() {
+    let (status, _body) = get("/nonexistent").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_post_to_get_only_endpoint() {
+    let app = create_router(RouterConfig::default());
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v4?cidr=192.168.1.0/24")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from("{}"))
+        .unwrap();
+    let resp: Response = app.oneshot(req).await.unwrap();
+    // POST to a GET-only route should return 405 Method Not Allowed
+    assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+}
