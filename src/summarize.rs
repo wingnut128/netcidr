@@ -310,6 +310,100 @@ mod tests {
         assert_eq!(result.cidrs[0].prefix_length, 47);
     }
 
+    // -----------------------------------------------------------------------
+    // IPv6 test cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_ipv6_adjacent_64s_merge_to_63() {
+        let result = summarize_ipv6(&[
+            "2001:db8:1:0::/64".to_string(),
+            "2001:db8:1:1::/64".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(result.input_count, 2);
+        assert_eq!(result.output_count, 1);
+        assert_eq!(
+            result.cidrs[0].network,
+            Ipv6Addr::from_str("2001:db8:1::").unwrap()
+        );
+        assert_eq!(result.cidrs[0].prefix_length, 63);
+    }
+
+    #[test]
+    fn test_ipv6_containment_collapse() {
+        // /48 contains the /64, should collapse to the /48
+        let result = summarize_ipv6(&[
+            "2001:db8:abcd::/48".to_string(),
+            "2001:db8:abcd:1::/64".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(result.output_count, 1);
+        assert_eq!(
+            result.cidrs[0].network,
+            Ipv6Addr::from_str("2001:db8:abcd::").unwrap()
+        );
+        assert_eq!(result.cidrs[0].prefix_length, 48);
+    }
+
+    #[test]
+    fn test_ipv6_duplicate_cidrs() {
+        let result =
+            summarize_ipv6(&["2001:db8::/32".to_string(), "2001:db8::/32".to_string()]).unwrap();
+        assert_eq!(result.input_count, 2);
+        assert_eq!(result.output_count, 1);
+        assert_eq!(
+            result.cidrs[0].network,
+            Ipv6Addr::from_str("2001:db8::").unwrap()
+        );
+        assert_eq!(result.cidrs[0].prefix_length, 32);
+    }
+
+    #[test]
+    fn test_ipv6_non_adjacent_no_merge() {
+        // These /64s are not siblings (differ in bit 62), so they should not merge
+        let result = summarize_ipv6(&[
+            "2001:db8:1:0::/64".to_string(),
+            "2001:db8:1:2::/64".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(result.output_count, 2);
+    }
+
+    #[test]
+    fn test_ipv6_non_normalized_input() {
+        // 2001:db8::1/32 has host bits set; should normalize to 2001:db8::/32
+        let result = summarize_ipv6(&["2001:db8::1/32".to_string()]).unwrap();
+        assert_eq!(result.output_count, 1);
+        assert_eq!(
+            result.cidrs[0].network,
+            Ipv6Addr::from_str("2001:db8::").unwrap()
+        );
+        assert_eq!(result.cidrs[0].prefix_length, 32);
+    }
+
+    #[test]
+    fn test_mixed_ipv6_in_ipv4_summarize_errors() {
+        // Passing an IPv6 CIDR to summarize_ipv4 should produce an error
+        let result = summarize_ipv4(&["192.168.0.0/24".to_string(), "2001:db8::/32".to_string()]);
+        assert!(
+            result.is_err(),
+            "expected error for mixed input, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_mixed_ipv4_in_ipv6_summarize_errors() {
+        // Passing an IPv4 CIDR to summarize_ipv6 should produce an error
+        let result = summarize_ipv6(&["2001:db8::/32".to_string(), "192.168.0.0/24".to_string()]);
+        assert!(
+            result.is_err(),
+            "expected error for mixed input, got {:?}",
+            result
+        );
+    }
+
     #[test]
     fn test_empty_input() {
         let result = summarize_ipv4(&[]);

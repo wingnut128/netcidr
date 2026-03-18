@@ -306,6 +306,104 @@ mod tests {
         );
     }
 
+    // -----------------------------------------------------------------------
+    // IPv6 test cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_single_address_v6_start_eq_end() {
+        let result = from_range_ipv6("2001:db8::abcd", "2001:db8::abcd").unwrap();
+        assert_eq!(result.cidr_count, 1);
+        assert_eq!(result.cidrs[0].prefix_length, 128);
+        assert_eq!(
+            result.cidrs[0].network,
+            Ipv6Addr::from_str("2001:db8::abcd").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_two_adjacent_addresses_v6() {
+        let result = from_range_ipv6("2001:db8::0", "2001:db8::1").unwrap();
+        assert_eq!(result.cidr_count, 1);
+        assert_eq!(result.cidrs[0].prefix_length, 127);
+        assert_eq!(
+            result.cidrs[0].network,
+            Ipv6Addr::from_str("2001:db8::").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_full_64_aligned_range_v6() {
+        // A full /64 range: 2001:db8:1:: to 2001:db8:1::ffff:ffff:ffff:ffff
+        let result = from_range_ipv6("2001:db8:1::", "2001:db8:1:0:ffff:ffff:ffff:ffff").unwrap();
+        assert_eq!(result.cidr_count, 1);
+        assert_eq!(result.cidrs[0].prefix_length, 64);
+        assert_eq!(
+            result.cidrs[0].network,
+            Ipv6Addr::from_str("2001:db8:1::").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_non_aligned_range_v6() {
+        // 2001:db8::1 to 2001:db8::6 is non-aligned, requires multiple CIDRs
+        let result = from_range_ipv6("2001:db8::1", "2001:db8::6").unwrap();
+        assert!(
+            result.cidr_count > 1,
+            "expected multiple CIDRs, got {}",
+            result.cidr_count
+        );
+        // Verify first CIDR starts at ::1
+        assert_eq!(
+            result.cidrs[0].network,
+            Ipv6Addr::from_str("2001:db8::1").unwrap()
+        );
+        // Verify last CIDR ends at ::6
+        assert_eq!(
+            result.cidrs.last().unwrap().last,
+            Ipv6Addr::from_str("2001:db8::6").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_large_48_range_v6() {
+        // A full /48 range
+        let result =
+            from_range_ipv6("2001:db8:abcd::", "2001:db8:abcd:ffff:ffff:ffff:ffff:ffff").unwrap();
+        assert_eq!(result.cidr_count, 1);
+        assert_eq!(result.cidrs[0].prefix_length, 48);
+        assert_eq!(
+            result.cidrs[0].network,
+            Ipv6Addr::from_str("2001:db8:abcd::").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_reversed_range_v6() {
+        let result = from_range_ipv6("2001:db8::ffff", "2001:db8::1");
+        assert!(
+            matches!(result, Err(IpCalcError::InvalidRange(_, _))),
+            "expected InvalidRange, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_algorithm_correctness_v6() {
+        // Verify CIDRs exactly cover the range with no gaps
+        let result = from_range_ipv6("2001:db8::5", "2001:db8::130").unwrap();
+        let start_u128 = u128::from(Ipv6Addr::from_str("2001:db8::5").unwrap());
+        let end_u128 = u128::from(Ipv6Addr::from_str("2001:db8::130").unwrap());
+        let mut expected_next = start_u128;
+        for cidr in &result.cidrs {
+            let net = u128::from(cidr.network);
+            assert_eq!(net, expected_next, "Gap in CIDR coverage");
+            let block_size: u128 = 1u128 << (128 - cidr.prefix_length);
+            expected_next = net + block_size;
+        }
+        assert_eq!(expected_next, end_u128 + 1, "CIDRs don't cover full range");
+    }
+
     #[test]
     fn test_algorithm_correctness_v4() {
         // Verify that the CIDRs exactly cover the range with no gaps/overlaps

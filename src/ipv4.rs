@@ -296,6 +296,61 @@ mod tests {
     }
 
     #[test]
+    fn test_entire_ipv4_space_slash_0() {
+        let subnet = Ipv4Subnet::from_cidr("0.0.0.0/0").unwrap();
+        assert_eq!(subnet.network, Ipv4Addr::new(0, 0, 0, 0));
+        assert_eq!(subnet.broadcast, Ipv4Addr::new(255, 255, 255, 255));
+        assert_eq!(subnet.mask, Ipv4Addr::new(0, 0, 0, 0));
+        assert_eq!(subnet.prefix_length, 0);
+        assert_eq!(subnet.total_hosts, 4_294_967_296);
+        assert_eq!(subnet.usable_hosts, 4_294_967_294);
+        assert_eq!(subnet.first_host, Ipv4Addr::new(0, 0, 0, 1));
+        assert_eq!(subnet.last_host, Ipv4Addr::new(255, 255, 255, 254));
+    }
+
+    #[test]
+    fn test_single_host_top_of_range_slash_32() {
+        let subnet = Ipv4Subnet::from_cidr("255.255.255.255/32").unwrap();
+        assert_eq!(subnet.network, Ipv4Addr::new(255, 255, 255, 255));
+        assert_eq!(subnet.broadcast, Ipv4Addr::new(255, 255, 255, 255));
+        assert_eq!(subnet.mask, Ipv4Addr::new(255, 255, 255, 255));
+        assert_eq!(subnet.prefix_length, 32);
+        assert_eq!(subnet.total_hosts, 1);
+        assert_eq!(subnet.usable_hosts, 1);
+        assert_eq!(subnet.first_host, Ipv4Addr::new(255, 255, 255, 255));
+        assert_eq!(subnet.last_host, Ipv4Addr::new(255, 255, 255, 255));
+        assert_eq!(subnet.network_class, "E (Reserved)");
+    }
+
+    #[test]
+    fn test_non_normalized_input_host_bits_set() {
+        // Input has host bits set (192.168.1.50), should normalize network to 192.168.1.0
+        let subnet = Ipv4Subnet::from_cidr("192.168.1.50/24").unwrap();
+        assert_eq!(subnet.network, Ipv4Addr::new(192, 168, 1, 0));
+        assert_eq!(subnet.broadcast, Ipv4Addr::new(192, 168, 1, 255));
+        assert_eq!(subnet.mask, Ipv4Addr::new(255, 255, 255, 0));
+        assert_eq!(subnet.prefix_length, 24);
+        assert_eq!(subnet.first_host, Ipv4Addr::new(192, 168, 1, 1));
+        assert_eq!(subnet.last_host, Ipv4Addr::new(192, 168, 1, 254));
+        assert_eq!(subnet.total_hosts, 256);
+        assert_eq!(subnet.usable_hosts, 254);
+    }
+
+    #[test]
+    fn test_point_to_point_slash_31_host_bit_set() {
+        // Input has host bit set (10.1.1.1), should normalize network to 10.1.1.0
+        let subnet = Ipv4Subnet::from_cidr("10.1.1.1/31").unwrap();
+        assert_eq!(subnet.network, Ipv4Addr::new(10, 1, 1, 0));
+        assert_eq!(subnet.broadcast, Ipv4Addr::new(10, 1, 1, 1));
+        assert_eq!(subnet.mask, Ipv4Addr::new(255, 255, 255, 254));
+        assert_eq!(subnet.prefix_length, 31);
+        assert_eq!(subnet.total_hosts, 2);
+        assert_eq!(subnet.usable_hosts, 2);
+        assert_eq!(subnet.first_host, Ipv4Addr::new(10, 1, 1, 0));
+        assert_eq!(subnet.last_host, Ipv4Addr::new(10, 1, 1, 1));
+    }
+
+    #[test]
     fn test_json_serialization_field_names() {
         let subnet = Ipv4Subnet::from_cidr("192.168.1.0/24").unwrap();
         let json: serde_json::Value = serde_json::to_value(&subnet).unwrap();

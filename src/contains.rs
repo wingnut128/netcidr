@@ -121,4 +121,72 @@ mod tests {
             result
         );
     }
+
+    #[test]
+    fn test_ipv4_slash_31_point_to_point() {
+        let result = check_ipv4_contains("10.0.0.0/31", "10.0.0.0").unwrap();
+        assert!(result.contained);
+
+        let result = check_ipv4_contains("10.0.0.0/31", "10.0.0.1").unwrap();
+        assert!(result.contained);
+
+        let result = check_ipv4_contains("10.0.0.0/31", "10.0.0.2").unwrap();
+        assert!(!result.contained);
+    }
+
+    #[test]
+    fn test_ipv6_slash_128_single_host() {
+        let result = check_ipv6_contains("2001:db8::1/128", "2001:db8::1").unwrap();
+        assert!(result.contained);
+
+        let result = check_ipv6_contains("2001:db8::1/128", "2001:db8::2").unwrap();
+        assert!(!result.contained);
+    }
+
+    #[test]
+    fn test_ipv6_slash_0_full_range() {
+        let result = check_ipv6_contains("::/0", "2001:db8::1").unwrap();
+        assert!(result.contained);
+
+        let result = check_ipv6_contains("::/0", "ff02::1").unwrap();
+        assert!(result.contained);
+
+        let result = check_ipv6_contains("::/0", "::1").unwrap();
+        assert!(result.contained);
+    }
+
+    #[test]
+    fn test_ipv4_boundary_first_and_last_address() {
+        let result = check_ipv4_contains("192.168.1.0/24", "192.168.1.0").unwrap();
+        assert!(result.contained, "network address should be contained");
+
+        let result = check_ipv4_contains("192.168.1.0/24", "192.168.1.255").unwrap();
+        assert!(result.contained, "broadcast address should be contained");
+
+        let result = check_ipv4_contains("192.168.1.0/24", "192.168.2.0").unwrap();
+        assert!(
+            !result.contained,
+            "first address of next subnet should not be contained"
+        );
+    }
+
+    #[test]
+    fn test_cross_family_ipv6_addr_in_ipv4_cidr() {
+        let result = check_ipv4_contains("192.168.1.0/24", "2001:db8::1");
+        assert!(
+            matches!(result, Err(IpCalcError::InvalidIpv4Address(ref s)) if s == "2001:db8::1"),
+            "expected InvalidIpv4Address for IPv6 address in IPv4 CIDR, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_cross_family_ipv4_addr_in_ipv6_cidr() {
+        let result = check_ipv6_contains("2001:db8::/32", "192.168.1.1");
+        assert!(
+            matches!(result, Err(IpCalcError::InvalidIpv6Address(ref s)) if s == "192.168.1.1"),
+            "expected InvalidIpv6Address for IPv4 address in IPv6 CIDR, got {:?}",
+            result
+        );
+    }
 }

@@ -231,6 +231,76 @@ mod tests {
     }
 
     #[test]
+    fn test_ipv6_entire_space_prefix_0() {
+        let subnet = Ipv6Subnet::from_cidr("::/0").unwrap();
+        assert_eq!(subnet.network, Ipv6Addr::from_str("::").unwrap());
+        assert_eq!(
+            subnet.last,
+            Ipv6Addr::from_str("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff").unwrap()
+        );
+        assert_eq!(subnet.prefix_length, 0);
+        assert_eq!(subnet.total_addresses, "2^128");
+        assert_eq!(
+            subnet.network_address_full,
+            "0000:0000:0000:0000:0000:0000:0000:0000"
+        );
+        assert_eq!(
+            subnet.last_address_full,
+            "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"
+        );
+        // ipv6_mask(0) should be all zeros
+        assert_eq!(ipv6_mask(0), 0u128);
+    }
+
+    #[test]
+    fn test_ipv6_loopback_single_host() {
+        let subnet = Ipv6Subnet::from_cidr("::1/128").unwrap();
+        assert_eq!(subnet.network, Ipv6Addr::from_str("::1").unwrap());
+        assert_eq!(subnet.last, Ipv6Addr::from_str("::1").unwrap());
+        assert_eq!(subnet.total_addresses, "1");
+        assert_eq!(subnet.prefix_length, 128);
+        assert_eq!(subnet.address_type, "Loopback (RFC 4291)");
+    }
+
+    #[test]
+    fn test_ipv6_multicast_prefix_8() {
+        let subnet = Ipv6Subnet::from_cidr("ff02::1/8").unwrap();
+        // Network should be masked to ff00::
+        assert_eq!(subnet.network, Ipv6Addr::from_str("ff00::").unwrap());
+        assert_eq!(subnet.prefix_length, 8);
+        assert_eq!(subnet.address_type, "Multicast (RFC 4291)");
+        assert_eq!(
+            subnet.last,
+            Ipv6Addr::from_str("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_ipv6_unspecified_single_host() {
+        let subnet = Ipv6Subnet::from_cidr("::/128").unwrap();
+        assert_eq!(subnet.network, Ipv6Addr::from_str("::").unwrap());
+        assert_eq!(subnet.last, Ipv6Addr::from_str("::").unwrap());
+        assert_eq!(subnet.total_addresses, "1");
+        assert_eq!(subnet.prefix_length, 128);
+        assert_eq!(subnet.address_type, "Unspecified (RFC 4291)");
+    }
+
+    #[test]
+    fn test_ipv6_non_normalized_input() {
+        // 2001:db8::1/32 should normalize the network address to 2001:db8::
+        let subnet = Ipv6Subnet::from_cidr("2001:db8::1/32").unwrap();
+        assert_eq!(subnet.network, Ipv6Addr::from_str("2001:db8::").unwrap());
+        assert_eq!(
+            subnet.network_address_full,
+            "2001:0db8:0000:0000:0000:0000:0000:0000"
+        );
+        assert_eq!(subnet.prefix_length, 32);
+        assert_eq!(subnet.address_type, "Documentation (RFC 3849)");
+        // The input field should record the original address (parsed, not raw)
+        assert_eq!(subnet.input, "2001:db8::1/32");
+    }
+
+    #[test]
     fn test_json_serialization_field_names() {
         let subnet = Ipv6Subnet::from_cidr("2001:db8::/32").unwrap();
         let json: serde_json::Value = serde_json::to_value(&subnet).unwrap();
