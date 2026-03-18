@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Upgraded rusqlite 0.32 → 0.39 and r2d2_sqlite 0.25 → 0.33 (no API changes required)
+- Upgraded reqwest 0.12 → 0.13 (feature `rustls-tls` renamed to `rustls`, added `query` feature)
 - CI: removed auto-merge workflow (security improvement — no more actor-based exemptions)
 - CI: merged MCP test job into main test job using `--all-features`
 - CI: added semgrep scanning as a CI job (previously only ran locally)
