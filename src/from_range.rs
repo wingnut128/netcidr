@@ -9,24 +9,35 @@ use std::str::FromStr;
 // Result structs
 // ---------------------------------------------------------------------------
 
+/// The set of CIDR blocks that exactly cover an IPv4 address range.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct Ipv4FromRangeResult {
+    /// Start of the input range (inclusive).
     pub start_address: String,
+    /// End of the input range (inclusive).
     pub end_address: String,
+    /// Number of CIDR blocks produced.
     pub cidr_count: usize,
+    /// The CIDR blocks, in ascending network-address order.
     pub cidrs: Vec<Ipv4Subnet>,
 }
 
+/// The set of CIDR blocks that exactly cover an IPv6 address range.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct Ipv6FromRangeResult {
+    /// Start of the input range (inclusive).
     pub start_address: String,
+    /// End of the input range (inclusive).
     pub end_address: String,
+    /// Number of CIDR blocks produced.
     pub cidr_count: usize,
+    /// The CIDR blocks, in ascending network-address order.
     pub cidrs: Vec<Ipv6Subnet>,
 }
 
+/// Maximum number of CIDRs a range-to-CIDR conversion may produce by default.
 pub const DEFAULT_MAX_GENERATED_CIDRS: usize = 1_000_000;
 
 // ---------------------------------------------------------------------------
@@ -96,10 +107,19 @@ fn range_to_cidrs_v6(start: u128, end: u128, limit: usize) -> Vec<(u128, u8)> {
 // Public entry points
 // ---------------------------------------------------------------------------
 
+/// Convert an IPv4 address range into the minimal set of CIDR blocks that
+/// exactly cover it, using the default output limit.
+///
+/// # Errors
+///
+/// Returns an error if either address is invalid, `start` is greater than
+/// `end`, or the result exceeds [`DEFAULT_MAX_GENERATED_CIDRS`].
 pub fn from_range_ipv4(start: &str, end: &str) -> Result<Ipv4FromRangeResult> {
     from_range_ipv4_with_limit(start, end, DEFAULT_MAX_GENERATED_CIDRS)
 }
 
+/// Like [`from_range_ipv4`], but with a caller-specified maximum number of
+/// output CIDRs.
 pub fn from_range_ipv4_with_limit(
     start: &str,
     end: &str,
@@ -142,10 +162,19 @@ pub fn from_range_ipv4_with_limit(
     })
 }
 
+/// Convert an IPv6 address range into the minimal set of CIDR blocks that
+/// exactly cover it, using the default output limit.
+///
+/// # Errors
+///
+/// Returns an error if either address is invalid, `start` is greater than
+/// `end`, or the result exceeds [`DEFAULT_MAX_GENERATED_CIDRS`].
 pub fn from_range_ipv6(start: &str, end: &str) -> Result<Ipv6FromRangeResult> {
     from_range_ipv6_with_limit(start, end, DEFAULT_MAX_GENERATED_CIDRS)
 }
 
+/// Like [`from_range_ipv6`], but with a caller-specified maximum number of
+/// output CIDRs.
 pub fn from_range_ipv6_with_limit(
     start: &str,
     end: &str,

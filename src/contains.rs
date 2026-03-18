@@ -5,17 +5,28 @@ use serde::Serialize;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 
+/// Result of checking whether an IP address falls within a CIDR range.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct ContainsResult {
+    /// The normalized CIDR that was tested.
     pub cidr: String,
+    /// The IP address that was tested.
     pub address: String,
+    /// `true` if the address is inside the CIDR range.
     pub contained: bool,
+    /// Network address of the CIDR.
     pub network_address: String,
+    /// Broadcast (IPv4) or last (IPv6) address of the CIDR.
     pub broadcast_address: String,
 }
 
-/// Check if an IPv4 address is contained within a CIDR range.
+/// Check whether an IPv4 address is contained within a CIDR range.
+///
+/// # Errors
+///
+/// Returns an error if `cidr` is not a valid IPv4 CIDR or `address` is not a
+/// valid IPv4 address.
 pub fn check_ipv4_contains(cidr: &str, address: &str) -> Result<ContainsResult> {
     let subnet = Ipv4Subnet::from_cidr(cidr)?;
     let addr = Ipv4Addr::from_str(address)
@@ -36,7 +47,12 @@ pub fn check_ipv4_contains(cidr: &str, address: &str) -> Result<ContainsResult> 
     })
 }
 
-/// Check if an IPv6 address is contained within a CIDR range.
+/// Check whether an IPv6 address is contained within a CIDR range.
+///
+/// # Errors
+///
+/// Returns an error if `cidr` is not a valid IPv6 CIDR or `address` is not a
+/// valid IPv6 address.
 pub fn check_ipv6_contains(cidr: &str, address: &str) -> Result<ContainsResult> {
     let subnet = Ipv6Subnet::from_cidr(cidr)?;
     let addr = Ipv6Addr::from_str(address)

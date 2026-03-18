@@ -8,19 +8,27 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 // Result structs
 // ---------------------------------------------------------------------------
 
+/// Result of summarizing (aggregating) a list of IPv4 CIDRs.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct Ipv4SummaryResult {
+    /// Number of CIDR strings provided as input.
     pub input_count: usize,
+    /// Number of CIDRs after summarization.
     pub output_count: usize,
+    /// The summarized CIDR list, in ascending network-address order.
     pub cidrs: Vec<Ipv4Subnet>,
 }
 
+/// Result of summarizing (aggregating) a list of IPv6 CIDRs.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct Ipv6SummaryResult {
+    /// Number of CIDR strings provided as input.
     pub input_count: usize,
+    /// Number of CIDRs after summarization.
     pub output_count: usize,
+    /// The summarized CIDR list, in ascending network-address order.
     pub cidrs: Vec<Ipv6Subnet>,
 }
 
@@ -129,6 +137,7 @@ fn summarize_entries(entries: &mut Vec<(u128, u8)>, bits: u8) {
     merge_siblings(entries, bits);
 }
 
+/// Maximum number of input CIDRs accepted by the summarize functions by default.
 pub const DEFAULT_MAX_SUMMARIZE_INPUTS: usize = 10_000;
 
 // ---------------------------------------------------------------------------
@@ -162,10 +171,20 @@ fn validate_and_summarize(
     Ok((input_count, entries))
 }
 
+/// Summarize (aggregate) a list of IPv4 CIDRs into the smallest equivalent set.
+///
+/// Adjacent and overlapping prefixes are merged; contained prefixes are removed.
+/// Uses the default input limit of [`DEFAULT_MAX_SUMMARIZE_INPUTS`].
+///
+/// # Errors
+///
+/// Returns an error if the input list is empty, any CIDR is invalid, or the
+/// number of inputs exceeds the limit.
 pub fn summarize_ipv4(cidrs: &[String]) -> Result<Ipv4SummaryResult> {
     summarize_ipv4_with_limit(cidrs, DEFAULT_MAX_SUMMARIZE_INPUTS)
 }
 
+/// Like [`summarize_ipv4`], but with a caller-specified maximum number of inputs.
 pub fn summarize_ipv4_with_limit(cidrs: &[String], max_inputs: usize) -> Result<Ipv4SummaryResult> {
     let (input_count, entries) = validate_and_summarize(cidrs, max_inputs, 32, |cidr| {
         let subnet = Ipv4Subnet::from_cidr(cidr)?;
@@ -185,10 +204,20 @@ pub fn summarize_ipv4_with_limit(cidrs: &[String], max_inputs: usize) -> Result<
     })
 }
 
+/// Summarize (aggregate) a list of IPv6 CIDRs into the smallest equivalent set.
+///
+/// Adjacent and overlapping prefixes are merged; contained prefixes are removed.
+/// Uses the default input limit of [`DEFAULT_MAX_SUMMARIZE_INPUTS`].
+///
+/// # Errors
+///
+/// Returns an error if the input list is empty, any CIDR is invalid, or the
+/// number of inputs exceeds the limit.
 pub fn summarize_ipv6(cidrs: &[String]) -> Result<Ipv6SummaryResult> {
     summarize_ipv6_with_limit(cidrs, DEFAULT_MAX_SUMMARIZE_INPUTS)
 }
 
+/// Like [`summarize_ipv6`], but with a caller-specified maximum number of inputs.
 pub fn summarize_ipv6_with_limit(cidrs: &[String], max_inputs: usize) -> Result<Ipv6SummaryResult> {
     let (input_count, entries) = validate_and_summarize(cidrs, max_inputs, 128, |cidr| {
         let subnet = Ipv6Subnet::from_cidr(cidr)?;

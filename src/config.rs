@@ -158,4 +158,170 @@ mod tests {
         // defaults for unspecified fields
         assert_eq!(config.max_generated_cidrs, 1_000_000);
     }
+
+    #[test]
+    fn test_invalid_toml_syntax_returns_config_parse_error() {
+        let bad_toml = r#"max_batch_size = "not a number"#; // unclosed quote
+        let result = toml::from_str::<ServerConfig>(bad_toml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_malformed_toml_missing_value() {
+        let bad_toml = "max_batch_size = ";
+        let result = toml::from_str::<ServerConfig>(bad_toml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_wrong_type_for_field() {
+        let bad_toml = r#"max_batch_size = "hello""#;
+        let result = toml::from_str::<ServerConfig>(bad_toml);
+        assert!(result.is_err(), "string value for usize field should fail");
+    }
+
+    #[test]
+    fn test_negative_value_for_unsigned_field() {
+        let bad_toml = "timeout_seconds = -1";
+        let result = toml::from_str::<ServerConfig>(bad_toml);
+        assert!(result.is_err(), "negative value for u64 field should fail");
+    }
+
+    #[test]
+    fn test_unknown_fields_are_accepted() {
+        // serde(default) without deny_unknown_fields silently ignores unknown keys
+        let toml_str = r#"
+            max_batch_size = 42
+            totally_fake_field = "hello"
+            another_unknown = 999
+        "#;
+        let config: ServerConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.max_batch_size, 42);
+        // other fields get defaults
+        assert_eq!(config.timeout_seconds, 30);
+    }
+
+    #[test]
+    fn test_partial_config_fills_defaults() {
+        let toml_str = r#"
+            enable_swagger = true
+        "#;
+        let config: ServerConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.enable_swagger);
+        assert_eq!(config.max_batch_size, 10_000);
+        assert_eq!(config.max_generated_cidrs, 1_000_000);
+        assert_eq!(config.max_summarize_inputs, 10_000);
+        assert_eq!(config.max_body_size, 1_048_576);
+        assert_eq!(config.rate_limit_per_second, 20);
+        assert_eq!(config.rate_limit_burst, 50);
+        assert_eq!(config.timeout_seconds, 30);
+        assert!(!config.ipam_enabled);
+        assert_eq!(config.ipam_backend, "sqlite");
+        assert!(config.ipam_db.is_none());
+        assert!(config.ipam_db_url.is_none());
+    }
+
+    #[test]
+    fn test_empty_toml_yields_all_defaults() {
+        let config: ServerConfig = toml::from_str("").unwrap();
+        let defaults = ServerConfig::default();
+        assert_eq!(config.max_batch_size, defaults.max_batch_size);
+        assert_eq!(config.timeout_seconds, defaults.timeout_seconds);
+        assert_eq!(config.enable_swagger, defaults.enable_swagger);
+        assert_eq!(config.ipam_backend, defaults.ipam_backend);
+    }
+
+    #[test]
+    fn test_boundary_values_zero() {
+        let toml_str = r#"
+            max_batch_size = 0
+            timeout_seconds = 0
+            rate_limit_per_second = 0
+            rate_limit_burst = 0
+            max_body_size = 0
+        "#;
+        let config: ServerConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.max_batch_size, 0);
+        assert_eq!(config.timeout_seconds, 0);
+        assert_eq!(config.rate_limit_per_second, 0);
+        assert_eq!(config.rate_limit_burst, 0);
+        assert_eq!(config.max_body_size, 0);
+    }
+
+    #[test]
+    fn test_boundary_value_large_numbers() {
+        let toml_str = r#"
+            max_batch_size = 18446744073709551615
+            timeout_seconds = 18446744073709551615
+        "#;
+        let config: ServerConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.max_batch_size, usize::MAX);
+        assert_eq!(config.timeout_seconds, u64::MAX);
+    }
+
+    #[test]
+    fn test_load_nonexistent_file_returns_io_error() {
+        let result = ServerConfig::load("/tmp/nonexistent_ipcalc_config_test.toml");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, IpCalcError::Io(_)),
+            "expected Io error, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_load_invalid_toml_file_returns_config_parse_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad.toml");
+        std::fs::write(&path, "invalid toml {{{{").unwrap();
+        let result = ServerConfig::load(path.to_str().unwrap());
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, IpCalcError::ConfigParse(_)),
+            "expected ConfigParse error, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_load_valid_toml_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("good.toml");
+        std::fs::write(&path, "max_batch_size = 42\ntimeout_seconds = 5\n").unwrap();
+        let config = ServerConfig::load(path.to_str().unwrap()).unwrap();
+        assert_eq!(config.max_batch_size, 42);
+        assert_eq!(config.timeout_seconds, 5);
+    }
+
+    #[test]
+    fn test_merge_overrides_none_values_unchanged() {
+        let mut config = ServerConfig::default();
+        let original_batch = config.max_batch_size;
+        let original_timeout = config.timeout_seconds;
+        config.merge_cli_overrides(&CliOverrides::default());
+        assert_eq!(config.max_batch_size, original_batch);
+        assert_eq!(config.timeout_seconds, original_timeout);
+        assert!(!config.enable_swagger);
+        assert!(!config.ipam_enabled);
+    }
+
+    #[test]
+    fn test_merge_overrides_ipam_fields() {
+        let mut config = ServerConfig::default();
+        config.merge_cli_overrides(&CliOverrides {
+            ipam_enabled: true,
+            ipam_backend: Some("postgres".to_string()),
+            ipam_db: Some("/tmp/test.db".to_string()),
+            ipam_db_url: Some("postgresql://localhost/test".to_string()),
+            ..Default::default()
+        });
+        assert!(config.ipam_enabled);
+        assert_eq!(config.ipam_backend, "postgres");
+        assert_eq!(config.ipam_db, Some("/tmp/test.db".to_string()));
+        assert_eq!(
+            config.ipam_db_url,
+            Some("postgresql://localhost/test".to_string())
+        );
+    }
 }

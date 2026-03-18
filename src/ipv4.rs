@@ -4,31 +4,49 @@ use serde::Serialize;
 use std::net::Ipv4Addr;
 use std::str::FromStr;
 
+/// Calculated properties of an IPv4 subnet.
+///
+/// Contains the network address, broadcast address, subnet mask, host range,
+/// and metadata such as network class, privacy status, and address type
+/// (e.g., RFC 1918, multicast).
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct Ipv4Subnet {
+    /// The original CIDR input string (normalized to `address/prefix`).
     pub input: String,
+    /// Network (base) address of the subnet.
     #[serde(rename = "network_address")]
     #[cfg_attr(feature = "swagger", schema(value_type = String))]
     pub network: Ipv4Addr,
+    /// Broadcast address of the subnet.
     #[serde(rename = "broadcast_address")]
     #[cfg_attr(feature = "swagger", schema(value_type = String))]
     pub broadcast: Ipv4Addr,
+    /// Subnet mask (e.g., `255.255.255.0` for a `/24`).
     #[serde(rename = "subnet_mask")]
     #[cfg_attr(feature = "swagger", schema(value_type = String))]
     pub mask: Ipv4Addr,
+    /// Wildcard (inverse) mask.
     #[serde(rename = "wildcard_mask")]
     #[cfg_attr(feature = "swagger", schema(value_type = String))]
     pub wildcard: Ipv4Addr,
+    /// CIDR prefix length (0--32).
     pub prefix_length: u8,
+    /// First usable host address (equals `network` for /31 and /32).
     #[cfg_attr(feature = "swagger", schema(value_type = String))]
     pub first_host: Ipv4Addr,
+    /// Last usable host address (equals `broadcast` for /31 and /32).
     #[cfg_attr(feature = "swagger", schema(value_type = String))]
     pub last_host: Ipv4Addr,
+    /// Total number of addresses in the subnet (including network and broadcast).
     pub total_hosts: u64,
+    /// Number of usable host addresses (excludes network and broadcast for prefixes < /31).
     pub usable_hosts: u64,
+    /// Legacy classful network class (A, B, C, D, or E).
     pub network_class: String,
+    /// Whether the address falls in a private, loopback, link-local, or CGN range.
     pub is_private: bool,
+    /// Human-readable address-type label with RFC reference (e.g., "Private (RFC 1918)").
     pub address_type: String,
 }
 
@@ -43,6 +61,12 @@ pub fn ipv4_mask(prefix: u8) -> u32 {
 }
 
 impl Ipv4Subnet {
+    /// Parse an IPv4 CIDR string (e.g., `"192.168.1.0/24"`) and compute subnet properties.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input fails validation, contains an invalid IPv4
+    /// address, or has a prefix length outside 0--32.
     pub fn from_cidr(cidr: &str) -> Result<Self> {
         validation::validate_cidr(cidr)?;
 
@@ -60,6 +84,11 @@ impl Ipv4Subnet {
         Self::new(addr, prefix)
     }
 
+    /// Build an [`Ipv4Subnet`] from a parsed address and prefix length.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IpCalcError::InvalidPrefixLength`] if `prefix` exceeds 32.
     pub fn new(addr: Ipv4Addr, prefix: u8) -> Result<Self> {
         if prefix > 32 {
             return Err(IpCalcError::InvalidPrefixLength(prefix));
