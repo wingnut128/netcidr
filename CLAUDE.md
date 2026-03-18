@@ -50,9 +50,9 @@ When working on a Linear ticket:
 1. Create a GitHub issue that references the Linear ticket ID (e.g., "Linear Ticket: BEA-XX") in the issue body
 2. Open a feature branch for the work
 3. Implement, commit, and push the branch
-4. Update `CHANGELOG.md` with the changes (add to `[Unreleased]` or a new version section as appropriate)
+4. Update `CHANGELOG.md` with the changes (add to `[Unreleased]`)
 5. Update `README.md` when changes affect user-facing behavior: new features, changed commands, new build targets, deprecations, or removed functionality
-6. Create a PR — branch protection requires all changes go through a pull request (you cannot push directly to main)
+6. Create a PR — branch protection requires CI to pass before merge (no review required for solo maintainer)
 7. After CI passes, merge the PR and clean up the branch (local + remote, prune stale refs)
 
 ### Post-commit documentation rules
@@ -63,15 +63,13 @@ After every commit (whether from a Linear ticket or not):
 - **README.md**: Update whenever there are important changes to the codebase — new or changed CLI commands, new build/make targets, new features, deprecation warnings, removed functionality, or changes to setup/install instructions. Do not update README for purely internal refactors or CI-only changes unless they affect the developer workflow (e.g., new `make` targets).
 - **SECURITY.md**: Update the supported versions table whenever a new version is released. Only the two most recent minor versions are supported (e.g., 0.13.x and 0.12.x). All older versions should be marked as unsupported.
 
-### Patch version bump
+### Versioning
 
-When creating a PR that includes `feat:` or `fix:` commits, bump the patch version as part of the PR:
+This project uses semantic versioning. Version bumps happen at **release time**, not per-PR:
 
-1. Increment the `version` patch number in `Cargo.toml` (e.g., `0.13.1` → `0.13.2`)
-2. Move `[Unreleased]` entries in `CHANGELOG.md` to a new `[X.Y.Z]` section with today's date
-3. Update `SECURITY.md` supported versions table if the minor version changed
-
-Do NOT bump for `ci:`, `docs:`, `test:`, `refactor:`, or `chore:` PRs — those stay under `[Unreleased]`.
+- All changes accumulate under `[Unreleased]` in `CHANGELOG.md`
+- When ready to release, create a PR that bumps `Cargo.toml` version, moves `[Unreleased]` to a dated `[X.Y.Z]` section, and updates `SECURITY.md` if the minor version changed
+- Do NOT bump the version on every feature or fix PR
 
 ### Task completion checklist
 
@@ -84,10 +82,10 @@ Every task is only "done" when ALL of the following are true:
 
 ## Release Process
 
-Releases use a `workflow_dispatch` GitHub Actions workflow to respect branch protection on `main`.
+Releases use a `workflow_dispatch` GitHub Actions workflow.
 
-1. Create a PR that bumps the `version` in `Cargo.toml` and moves `[Unreleased]` entries to a new `[X.Y.Z]` section in `CHANGELOG.md`
-2. Merge the PR through normal review/CI
+1. Create a PR that bumps `version` in `Cargo.toml`, moves `[Unreleased]` entries to a dated `[X.Y.Z]` section in `CHANGELOG.md`, and updates `SECURITY.md` if the minor version changed
+2. Merge the PR through CI
 3. Go to **Actions → Release → Run workflow** and enter the version (e.g. `0.12.0`, no leading `v`)
 4. The workflow validates `Cargo.toml` version matches, confirms a CHANGELOG entry exists, extracts release notes, creates a GitHub release with tag `vX.Y.Z`, and builds/uploads cross-platform binaries
 

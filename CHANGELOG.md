@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- CI: removed auto-merge workflow (security improvement — no more actor-based exemptions)
+- CI: merged MCP test job into main test job using `--all-features`
+- CI: added semgrep scanning as a CI job (previously only ran locally)
+- CI: added Dependabot configuration for GitHub Actions and Cargo dependencies
+- Version bumps now happen at release time, not per-PR
+
 ## [0.13.4] - 2026-03-18
 
 ### Added

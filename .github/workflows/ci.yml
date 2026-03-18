@@ -17,8 +17,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Run tests
-        run: cargo test --verbose
+      - name: Run tests (default + mcp + tui)
+        run: cargo test --features mcp,tui --verbose
 
   clippy:
     name: Clippy
@@ -55,14 +55,12 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-  mcp-server:
-    name: MCP Server (Rust)
+  semgrep:
+    name: Semgrep
     runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Build with MCP feature
-        run: cargo build --features mcp
-      - name: Run MCP tests
-        run: "cargo test --features mcp mcp::"
+      - name: Run semgrep
+        run: semgrep scan --config=p/owasp-top-ten --config=p/rust --error .
