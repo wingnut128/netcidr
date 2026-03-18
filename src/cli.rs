@@ -90,9 +90,13 @@ pub enum Commands {
     /// Start the MCP (Model Context Protocol) server over stdio
     #[cfg(feature = "mcp")]
     McpServe {
-        /// Path to IPAM SQLite database (enables IPAM tools)
-        #[arg(long)]
+        /// Path to IPAM SQLite database (enables IPAM tools via local store)
+        #[arg(long, conflicts_with = "api_url")]
         ipam_db: Option<String>,
+
+        /// URL of a running ipcalc API server (enables IPAM tools via HTTP proxy)
+        #[arg(long, conflicts_with = "ipam_db")]
+        api_url: Option<String>,
     },
 
     /// Start the HTTP API server

@@ -258,7 +258,7 @@ Add to `~/.claude.json`:
 }
 ```
 
-With IPAM enabled:
+With IPAM enabled (local database):
 
 ```json
 {
@@ -270,6 +270,21 @@ With IPAM enabled:
   }
 }
 ```
+
+With IPAM via remote API server (connects to a running `ipcalc serve`):
+
+```json
+{
+  "mcpServers": {
+    "ipcalc": {
+      "command": "/absolute/path/to/ipcalc",
+      "args": ["mcp-serve", "--api-url", "http://localhost:8080"]
+    }
+  }
+}
+```
+
+> **Note:** `--ipam-db` and `--api-url` are mutually exclusive. Use `--api-url` when IPAM state must be shared across multiple MCP clients or when the MCP server runs on a different host.
 
 #### Claude Desktop
 

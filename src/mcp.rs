@@ -9,11 +9,111 @@ use serde::Deserialize;
 
 use crate::contains::{check_ipv4_contains, check_ipv6_contains};
 use crate::from_range::{from_range_ipv4, from_range_ipv6};
+use crate::ipam::models::*;
 use crate::ipam::operations::IpamOps;
 use crate::ipv4::Ipv4Subnet;
 use crate::ipv6::Ipv6Subnet;
+use crate::mcp_client::HttpIpamClient;
 use crate::subnet_generator::{count_subnets, generate_ipv4_subnets, generate_ipv6_subnets};
 use crate::summarize::{summarize_ipv4, summarize_ipv6};
+
+// ---------------------------------------------------------------------------
+// IPAM backend abstraction — local IpamOps or remote HTTP client
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub enum McpIpamBackend {
+    Local(Arc<IpamOps>),
+    Remote(HttpIpamClient),
+}
+
+impl McpIpamBackend {
+    pub async fn create_supernet(&self, input: &CreateSupernet) -> crate::error::Result<Supernet> {
+        match self {
+            Self::Local(ops) => ops.create_supernet(input).await,
+            Self::Remote(client) => client.create_supernet(input).await,
+        }
+    }
+
+    pub async fn list_supernets(&self) -> crate::error::Result<Vec<Supernet>> {
+        match self {
+            Self::Local(ops) => ops.list_supernets().await,
+            Self::Remote(client) => client.list_supernets().await,
+        }
+    }
+
+    pub async fn allocate_auto(
+        &self,
+        request: &AutoAllocateRequest,
+    ) -> crate::error::Result<Vec<Allocation>> {
+        match self {
+            Self::Local(ops) => ops.allocate_auto(request).await,
+            Self::Remote(client) => client.allocate_auto(request).await,
+        }
+    }
+
+    pub async fn allocate_specific(
+        &self,
+        input: &CreateAllocation,
+    ) -> crate::error::Result<Allocation> {
+        match self {
+            Self::Local(ops) => ops.allocate_specific(input).await,
+            Self::Remote(client) => client.allocate_specific(input).await,
+        }
+    }
+
+    pub async fn release_allocation(&self, id: &str) -> crate::error::Result<Allocation> {
+        match self {
+            Self::Local(ops) => ops.release_allocation(id).await,
+            Self::Remote(client) => client.release_allocation(id).await,
+        }
+    }
+
+    pub async fn list_allocations(
+        &self,
+        filter: &AllocationFilter,
+    ) -> crate::error::Result<Vec<Allocation>> {
+        match self {
+            Self::Local(ops) => ops.list_allocations(filter).await,
+            Self::Remote(client) => client.list_allocations(filter).await,
+        }
+    }
+
+    pub async fn free_blocks(
+        &self,
+        supernet_id: &str,
+        prefix: Option<u8>,
+    ) -> crate::error::Result<FreeBlocksReport> {
+        match self {
+            Self::Local(ops) => ops.free_blocks(supernet_id, prefix).await,
+            Self::Remote(client) => client.free_blocks(supernet_id, prefix).await,
+        }
+    }
+
+    pub async fn utilization(&self, supernet_id: &str) -> crate::error::Result<UtilizationReport> {
+        match self {
+            Self::Local(ops) => ops.utilization(supernet_id).await,
+            Self::Remote(client) => client.utilization(supernet_id).await,
+        }
+    }
+
+    pub async fn find_by_ip(&self, address: &str) -> crate::error::Result<Vec<Allocation>> {
+        match self {
+            Self::Local(ops) => ops.find_by_ip(address).await,
+            Self::Remote(client) => client.find_by_ip(address).await,
+        }
+    }
+
+    pub async fn find_by_resource(
+        &self,
+        resource_id: &str,
+    ) -> crate::error::Result<Vec<Allocation>> {
+        match self {
+            Self::Local(ops) => ops.find_by_resource(resource_id).await,
+            Self::Remote(client) => client.find_by_resource(resource_id).await,
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Parameter types — calculator tools
@@ -161,14 +261,14 @@ struct IpamFindResourceParams {
 #[derive(Debug, Clone)]
 pub struct IpCalcMcp {
     tool_router: ToolRouter<Self>,
-    ipam_ops: Option<Arc<IpamOps>>,
+    ipam: Option<McpIpamBackend>,
 }
 
 impl IpCalcMcp {
-    pub fn new(ipam_ops: Option<Arc<IpamOps>>) -> Self {
+    pub fn new(ipam: Option<McpIpamBackend>) -> Self {
         Self {
             tool_router: Self::tool_router(),
-            ipam_ops,
+            ipam,
         }
     }
 }
@@ -184,8 +284,7 @@ fn result_to_string<T: serde::Serialize>(result: crate::error::Result<T>) -> Str
     }
 }
 
-const IPAM_NOT_ENABLED: &str =
-    "Error: IPAM is not enabled. Start the MCP server with --ipam-db <path> to enable IPAM tools.";
+const IPAM_NOT_ENABLED: &str = "Error: IPAM is not enabled. Start the MCP server with --ipam-db <path> or --api-url <url> to enable IPAM tools.";
 
 #[tool_router]
 impl IpCalcMcp {
@@ -294,15 +393,15 @@ impl IpCalcMcp {
         &self,
         Parameters(params): Parameters<IpamCreateSupernetParams>,
     ) -> String {
-        let Some(ops) = &self.ipam_ops else {
+        let Some(backend) = &self.ipam else {
             return IPAM_NOT_ENABLED.to_string();
         };
-        let input = crate::ipam::models::CreateSupernet {
+        let input = CreateSupernet {
             cidr: params.cidr,
             name: params.name,
             description: params.description,
         };
-        result_to_string(ops.create_supernet(&input).await)
+        result_to_string(backend.create_supernet(&input).await)
     }
 
     #[tool(
@@ -313,10 +412,10 @@ impl IpCalcMcp {
         &self,
         Parameters(_params): Parameters<IpamListSupernetsParams>,
     ) -> String {
-        let Some(ops) = &self.ipam_ops else {
+        let Some(backend) = &self.ipam else {
             return IPAM_NOT_ENABLED.to_string();
         };
-        result_to_string(ops.list_supernets().await)
+        result_to_string(backend.list_supernets().await)
     }
 
     #[tool(
@@ -324,10 +423,10 @@ impl IpCalcMcp {
         description = "Auto-allocate the next available CIDR block(s) from a supernet. Specify the desired prefix length and optional count. Returns the created allocation(s)."
     )]
     async fn ipam_allocate(&self, Parameters(params): Parameters<IpamAllocateParams>) -> String {
-        let Some(ops) = &self.ipam_ops else {
+        let Some(backend) = &self.ipam else {
             return IPAM_NOT_ENABLED.to_string();
         };
-        let request = crate::ipam::models::AutoAllocateRequest {
+        let request = AutoAllocateRequest {
             supernet_id: params.supernet_id,
             prefix_length: params.prefix_length,
             count: params.count,
@@ -342,7 +441,7 @@ impl IpCalcMcp {
             tags: None,
             ttl_seconds: None,
         };
-        result_to_string(ops.allocate_auto(&request).await)
+        result_to_string(backend.allocate_auto(&request).await)
     }
 
     #[tool(
@@ -353,10 +452,10 @@ impl IpCalcMcp {
         &self,
         Parameters(params): Parameters<IpamAllocateSpecificParams>,
     ) -> String {
-        let Some(ops) = &self.ipam_ops else {
+        let Some(backend) = &self.ipam else {
             return IPAM_NOT_ENABLED.to_string();
         };
-        let input = crate::ipam::models::CreateAllocation {
+        let input = CreateAllocation {
             supernet_id: params.supernet_id,
             cidr: params.cidr,
             status: None,
@@ -370,7 +469,7 @@ impl IpCalcMcp {
             tags: None,
             ttl_seconds: None,
         };
-        result_to_string(ops.allocate_specific(&input).await)
+        result_to_string(backend.allocate_specific(&input).await)
     }
 
     #[tool(
@@ -378,10 +477,10 @@ impl IpCalcMcp {
         description = "Release an IPAM allocation, marking it as released and freeing the address space for future use."
     )]
     async fn ipam_release(&self, Parameters(params): Parameters<IpamReleaseParams>) -> String {
-        let Some(ops) = &self.ipam_ops else {
+        let Some(backend) = &self.ipam else {
             return IPAM_NOT_ENABLED.to_string();
         };
-        result_to_string(ops.release_allocation(&params.allocation_id).await)
+        result_to_string(backend.release_allocation(&params.allocation_id).await)
     }
 
     #[tool(
@@ -392,11 +491,11 @@ impl IpCalcMcp {
         &self,
         Parameters(params): Parameters<IpamListAllocationsParams>,
     ) -> String {
-        let Some(ops) = &self.ipam_ops else {
+        let Some(backend) = &self.ipam else {
             return IPAM_NOT_ENABLED.to_string();
         };
         let status = params.status.and_then(|s| s.parse().ok());
-        let filter = crate::ipam::models::AllocationFilter {
+        let filter = AllocationFilter {
             supernet_id: Some(params.supernet_id),
             status,
             resource_id: None,
@@ -404,7 +503,7 @@ impl IpCalcMcp {
             environment: params.environment,
             owner: params.owner,
         };
-        result_to_string(ops.list_allocations(&filter).await)
+        result_to_string(backend.list_allocations(&filter).await)
     }
 
     #[tool(
@@ -415,10 +514,14 @@ impl IpCalcMcp {
         &self,
         Parameters(params): Parameters<IpamFreeBlocksParams>,
     ) -> String {
-        let Some(ops) = &self.ipam_ops else {
+        let Some(backend) = &self.ipam else {
             return IPAM_NOT_ENABLED.to_string();
         };
-        result_to_string(ops.free_blocks(&params.supernet_id, params.prefix).await)
+        result_to_string(
+            backend
+                .free_blocks(&params.supernet_id, params.prefix)
+                .await,
+        )
     }
 
     #[tool(
@@ -429,10 +532,10 @@ impl IpCalcMcp {
         &self,
         Parameters(params): Parameters<IpamUtilizationParams>,
     ) -> String {
-        let Some(ops) = &self.ipam_ops else {
+        let Some(backend) = &self.ipam else {
             return IPAM_NOT_ENABLED.to_string();
         };
-        result_to_string(ops.utilization(&params.supernet_id).await)
+        result_to_string(backend.utilization(&params.supernet_id).await)
     }
 
     #[tool(
@@ -440,10 +543,10 @@ impl IpCalcMcp {
         description = "Find all IPAM allocations that contain a given IP address. Returns matching allocations across all supernets."
     )]
     async fn ipam_find_ip(&self, Parameters(params): Parameters<IpamFindIpParams>) -> String {
-        let Some(ops) = &self.ipam_ops else {
+        let Some(backend) = &self.ipam else {
             return IPAM_NOT_ENABLED.to_string();
         };
-        result_to_string(ops.find_by_ip(&params.address).await)
+        result_to_string(backend.find_by_ip(&params.address).await)
     }
 
     #[tool(
@@ -454,10 +557,10 @@ impl IpCalcMcp {
         &self,
         Parameters(params): Parameters<IpamFindResourceParams>,
     ) -> String {
-        let Some(ops) = &self.ipam_ops else {
+        let Some(backend) = &self.ipam else {
             return IPAM_NOT_ENABLED.to_string();
         };
-        result_to_string(ops.find_by_resource(&params.resource_id).await)
+        result_to_string(backend.find_by_resource(&params.resource_id).await)
     }
 }
 
@@ -472,16 +575,29 @@ impl ServerHandler for IpCalcMcp {
     }
 }
 
-pub async fn run_mcp_server(ipam_db: Option<&str>) -> crate::error::Result<()> {
-    let ipam_ops = if let Some(db) = ipam_db {
-        let config = crate::ipam::config::IpamConfig::default();
-        let store = crate::ipam::create_store(&config, Some(db), None).await?;
-        Some(Arc::new(IpamOps::new(store)))
-    } else {
-        None
+pub async fn run_mcp_server(
+    ipam_db: Option<&str>,
+    api_url: Option<&str>,
+) -> crate::error::Result<()> {
+    let ipam = match (ipam_db, api_url) {
+        (Some(_), Some(_)) => {
+            return Err(crate::error::IpCalcError::InvalidInput(
+                "--ipam-db and --api-url are mutually exclusive".to_string(),
+            ));
+        }
+        (Some(db), None) => {
+            let config = crate::ipam::config::IpamConfig::default();
+            let store = crate::ipam::create_store(&config, Some(db), None).await?;
+            Some(McpIpamBackend::Local(Arc::new(IpamOps::new(store))))
+        }
+        (None, Some(url)) => {
+            let client = HttpIpamClient::new(url)?;
+            Some(McpIpamBackend::Remote(client))
+        }
+        (None, None) => None,
     };
 
-    let server = IpCalcMcp::new(ipam_ops);
+    let server = IpCalcMcp::new(ipam);
     let transport = rmcp::transport::io::stdio();
     let service = server
         .serve(transport)
@@ -508,7 +624,7 @@ mod tests {
         store.initialize().await.expect("init");
         store.migrate().await.expect("migrate");
         let ops = Arc::new(IpamOps::new(Arc::new(store)));
-        IpCalcMcp::new(Some(ops))
+        IpCalcMcp::new(Some(McpIpamBackend::Local(ops)))
     }
 
     // -------------------------------------------------------------------
@@ -713,7 +829,7 @@ mod tests {
     }
 
     // -------------------------------------------------------------------
-    // IPAM tool tests — enabled
+    // IPAM tool tests — enabled (local backend)
     // -------------------------------------------------------------------
 
     #[tokio::test]
@@ -969,5 +1085,39 @@ mod tests {
             }))
             .await;
         assert!(result.starts_with("Error"));
+    }
+
+    // -------------------------------------------------------------------
+    // HttpIpamClient unit tests (construction)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_http_client_new() {
+        let client = HttpIpamClient::new("http://localhost:8080").unwrap();
+        assert_eq!(
+            client.url("/supernets"),
+            "http://localhost:8080/ipam/supernets"
+        );
+    }
+
+    #[test]
+    fn test_http_client_strips_trailing_slash() {
+        let client = HttpIpamClient::new("http://localhost:8080/").unwrap();
+        assert_eq!(
+            client.url("/supernets"),
+            "http://localhost:8080/ipam/supernets"
+        );
+    }
+
+    #[test]
+    fn test_mutually_exclusive_options() {
+        // run_mcp_server validates this, but we can test the logic directly
+        let result = tokio_test::block_on(run_mcp_server(
+            Some("test.db"),
+            Some("http://localhost:8080"),
+        ));
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("mutually exclusive"));
     }
 }

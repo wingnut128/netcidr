@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.3] - 2026-03-18
+
+### Added
+
+- MCP server remote backend: `--api-url <url>` flag on `ipcalc mcp-serve` proxies IPAM tool calls to a running `ipcalc serve` HTTP API instead of using a local database (mutually exclusive with `--ipam-db`)
+
 ## [0.13.2] - 2026-03-16
 
 ### Added

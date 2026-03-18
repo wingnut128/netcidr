@@ -20,7 +20,7 @@ pub struct Supernet {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct CreateSupernet {
     /// CIDR notation (e.g., 10.0.0.0/8 or 2001:db8::/32)

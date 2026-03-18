@@ -195,8 +195,10 @@ async fn main() {
             }
         }
         #[cfg(feature = "mcp")]
-        Some(Commands::McpServe { ipam_db }) => {
-            if let Err(e) = ipcalc::mcp::run_mcp_server(ipam_db.as_deref()).await {
+        Some(Commands::McpServe { ipam_db, api_url }) => {
+            if let Err(e) =
+                ipcalc::mcp::run_mcp_server(ipam_db.as_deref(), api_url.as_deref()).await
+            {
                 eprintln!("MCP server error: {}", e);
                 std::process::exit(1);
             }

@@ -33,6 +33,8 @@ pub mod tui;
 
 #[cfg(feature = "mcp")]
 pub mod mcp;
+#[cfg(feature = "mcp")]
+pub mod mcp_client;
 
 // Public API re-exports
 pub use batch::{BatchResult, process_batch, process_batch_with_limit};
