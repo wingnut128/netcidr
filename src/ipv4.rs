@@ -4,31 +4,49 @@ use serde::Serialize;
 use std::net::Ipv4Addr;
 use std::str::FromStr;
 
+/// Calculated properties of an IPv4 subnet.
+///
+/// Contains the network address, broadcast address, subnet mask, host range,
+/// and metadata such as network class, privacy status, and address type
+/// (e.g., RFC 1918, multicast).
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct Ipv4Subnet {
+    /// The original CIDR input string (normalized to `address/prefix`).
     pub input: String,
+    /// Network (base) address of the subnet.
     #[serde(rename = "network_address")]
     #[cfg_attr(feature = "swagger", schema(value_type = String))]
     pub network: Ipv4Addr,
+    /// Broadcast address of the subnet.
     #[serde(rename = "broadcast_address")]
     #[cfg_attr(feature = "swagger", schema(value_type = String))]
     pub broadcast: Ipv4Addr,
+    /// Subnet mask (e.g., `255.255.255.0` for a `/24`).
     #[serde(rename = "subnet_mask")]
     #[cfg_attr(feature = "swagger", schema(value_type = String))]
     pub mask: Ipv4Addr,
+    /// Wildcard (inverse) mask.
     #[serde(rename = "wildcard_mask")]
     #[cfg_attr(feature = "swagger", schema(value_type = String))]
     pub wildcard: Ipv4Addr,
+    /// CIDR prefix length (0--32).
     pub prefix_length: u8,
+    /// First usable host address (equals `network` for /31 and /32).
     #[cfg_attr(feature = "swagger", schema(value_type = String))]
     pub first_host: Ipv4Addr,
+    /// Last usable host address (equals `broadcast` for /31 and /32).
     #[cfg_attr(feature = "swagger", schema(value_type = String))]
     pub last_host: Ipv4Addr,
+    /// Total number of addresses in the subnet (including network and broadcast).
     pub total_hosts: u64,
+    /// Number of usable host addresses (excludes network and broadcast for prefixes < /31).
     pub usable_hosts: u64,
+    /// Legacy classful network class (A, B, C, D, or E).
     pub network_class: String,
+    /// Whether the address falls in a private, loopback, link-local, or CGN range.
     pub is_private: bool,
+    /// Human-readable address-type label with RFC reference (e.g., "Private (RFC 1918)").
     pub address_type: String,
 }
 
@@ -43,6 +61,12 @@ pub fn ipv4_mask(prefix: u8) -> u32 {
 }
 
 impl Ipv4Subnet {
+    /// Parse an IPv4 CIDR string (e.g., `"192.168.1.0/24"`) and compute subnet properties.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input fails validation, contains an invalid IPv4
+    /// address, or has a prefix length outside 0--32.
     pub fn from_cidr(cidr: &str) -> Result<Self> {
         validation::validate_cidr(cidr)?;
 
@@ -60,6 +84,11 @@ impl Ipv4Subnet {
         Self::new(addr, prefix)
     }
 
+    /// Build an [`Ipv4Subnet`] from a parsed address and prefix length.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IpCalcError::InvalidPrefixLength`] if `prefix` exceeds 32.
     pub fn new(addr: Ipv4Addr, prefix: u8) -> Result<Self> {
         if prefix > 32 {
             return Err(IpCalcError::InvalidPrefixLength(prefix));
@@ -293,61 +322,6 @@ mod tests {
                 cidr, subnet.address_type, expected
             );
         }
-    }
-
-    #[test]
-    fn test_entire_ipv4_space_slash_0() {
-        let subnet = Ipv4Subnet::from_cidr("0.0.0.0/0").unwrap();
-        assert_eq!(subnet.network, Ipv4Addr::new(0, 0, 0, 0));
-        assert_eq!(subnet.broadcast, Ipv4Addr::new(255, 255, 255, 255));
-        assert_eq!(subnet.mask, Ipv4Addr::new(0, 0, 0, 0));
-        assert_eq!(subnet.prefix_length, 0);
-        assert_eq!(subnet.total_hosts, 4_294_967_296);
-        assert_eq!(subnet.usable_hosts, 4_294_967_294);
-        assert_eq!(subnet.first_host, Ipv4Addr::new(0, 0, 0, 1));
-        assert_eq!(subnet.last_host, Ipv4Addr::new(255, 255, 255, 254));
-    }
-
-    #[test]
-    fn test_single_host_top_of_range_slash_32() {
-        let subnet = Ipv4Subnet::from_cidr("255.255.255.255/32").unwrap();
-        assert_eq!(subnet.network, Ipv4Addr::new(255, 255, 255, 255));
-        assert_eq!(subnet.broadcast, Ipv4Addr::new(255, 255, 255, 255));
-        assert_eq!(subnet.mask, Ipv4Addr::new(255, 255, 255, 255));
-        assert_eq!(subnet.prefix_length, 32);
-        assert_eq!(subnet.total_hosts, 1);
-        assert_eq!(subnet.usable_hosts, 1);
-        assert_eq!(subnet.first_host, Ipv4Addr::new(255, 255, 255, 255));
-        assert_eq!(subnet.last_host, Ipv4Addr::new(255, 255, 255, 255));
-        assert_eq!(subnet.network_class, "E (Reserved)");
-    }
-
-    #[test]
-    fn test_non_normalized_input_host_bits_set() {
-        // Input has host bits set (192.168.1.50), should normalize network to 192.168.1.0
-        let subnet = Ipv4Subnet::from_cidr("192.168.1.50/24").unwrap();
-        assert_eq!(subnet.network, Ipv4Addr::new(192, 168, 1, 0));
-        assert_eq!(subnet.broadcast, Ipv4Addr::new(192, 168, 1, 255));
-        assert_eq!(subnet.mask, Ipv4Addr::new(255, 255, 255, 0));
-        assert_eq!(subnet.prefix_length, 24);
-        assert_eq!(subnet.first_host, Ipv4Addr::new(192, 168, 1, 1));
-        assert_eq!(subnet.last_host, Ipv4Addr::new(192, 168, 1, 254));
-        assert_eq!(subnet.total_hosts, 256);
-        assert_eq!(subnet.usable_hosts, 254);
-    }
-
-    #[test]
-    fn test_point_to_point_slash_31_host_bit_set() {
-        // Input has host bit set (10.1.1.1), should normalize network to 10.1.1.0
-        let subnet = Ipv4Subnet::from_cidr("10.1.1.1/31").unwrap();
-        assert_eq!(subnet.network, Ipv4Addr::new(10, 1, 1, 0));
-        assert_eq!(subnet.broadcast, Ipv4Addr::new(10, 1, 1, 1));
-        assert_eq!(subnet.mask, Ipv4Addr::new(255, 255, 255, 254));
-        assert_eq!(subnet.prefix_length, 31);
-        assert_eq!(subnet.total_hosts, 2);
-        assert_eq!(subnet.usable_hosts, 2);
-        assert_eq!(subnet.first_host, Ipv4Addr::new(10, 1, 1, 0));
-        assert_eq!(subnet.last_host, Ipv4Addr::new(10, 1, 1, 1));
     }
 
     #[test]

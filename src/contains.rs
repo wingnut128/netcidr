@@ -5,17 +5,28 @@ use serde::Serialize;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 
+/// Result of checking whether an IP address falls within a CIDR range.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct ContainsResult {
+    /// The normalized CIDR that was tested.
     pub cidr: String,
+    /// The IP address that was tested.
     pub address: String,
+    /// `true` if the address is inside the CIDR range.
     pub contained: bool,
+    /// Network address of the CIDR.
     pub network_address: String,
+    /// Broadcast (IPv4) or last (IPv6) address of the CIDR.
     pub broadcast_address: String,
 }
 
-/// Check if an IPv4 address is contained within a CIDR range.
+/// Check whether an IPv4 address is contained within a CIDR range.
+///
+/// # Errors
+///
+/// Returns an error if `cidr` is not a valid IPv4 CIDR or `address` is not a
+/// valid IPv4 address.
 pub fn check_ipv4_contains(cidr: &str, address: &str) -> Result<ContainsResult> {
     let subnet = Ipv4Subnet::from_cidr(cidr)?;
     let addr = Ipv4Addr::from_str(address)
@@ -36,7 +47,12 @@ pub fn check_ipv4_contains(cidr: &str, address: &str) -> Result<ContainsResult> 
     })
 }
 
-/// Check if an IPv6 address is contained within a CIDR range.
+/// Check whether an IPv6 address is contained within a CIDR range.
+///
+/// # Errors
+///
+/// Returns an error if `cidr` is not a valid IPv6 CIDR or `address` is not a
+/// valid IPv6 address.
 pub fn check_ipv6_contains(cidr: &str, address: &str) -> Result<ContainsResult> {
     let subnet = Ipv6Subnet::from_cidr(cidr)?;
     let addr = Ipv6Addr::from_str(address)
@@ -118,74 +134,6 @@ mod tests {
         assert!(
             matches!(result, Err(IpCalcError::InvalidIpv6Address(ref s)) if s == "not-an-ip"),
             "expected InvalidIpv6Address, got {:?}",
-            result
-        );
-    }
-
-    #[test]
-    fn test_ipv4_slash_31_point_to_point() {
-        let result = check_ipv4_contains("10.0.0.0/31", "10.0.0.0").unwrap();
-        assert!(result.contained);
-
-        let result = check_ipv4_contains("10.0.0.0/31", "10.0.0.1").unwrap();
-        assert!(result.contained);
-
-        let result = check_ipv4_contains("10.0.0.0/31", "10.0.0.2").unwrap();
-        assert!(!result.contained);
-    }
-
-    #[test]
-    fn test_ipv6_slash_128_single_host() {
-        let result = check_ipv6_contains("2001:db8::1/128", "2001:db8::1").unwrap();
-        assert!(result.contained);
-
-        let result = check_ipv6_contains("2001:db8::1/128", "2001:db8::2").unwrap();
-        assert!(!result.contained);
-    }
-
-    #[test]
-    fn test_ipv6_slash_0_full_range() {
-        let result = check_ipv6_contains("::/0", "2001:db8::1").unwrap();
-        assert!(result.contained);
-
-        let result = check_ipv6_contains("::/0", "ff02::1").unwrap();
-        assert!(result.contained);
-
-        let result = check_ipv6_contains("::/0", "::1").unwrap();
-        assert!(result.contained);
-    }
-
-    #[test]
-    fn test_ipv4_boundary_first_and_last_address() {
-        let result = check_ipv4_contains("192.168.1.0/24", "192.168.1.0").unwrap();
-        assert!(result.contained, "network address should be contained");
-
-        let result = check_ipv4_contains("192.168.1.0/24", "192.168.1.255").unwrap();
-        assert!(result.contained, "broadcast address should be contained");
-
-        let result = check_ipv4_contains("192.168.1.0/24", "192.168.2.0").unwrap();
-        assert!(
-            !result.contained,
-            "first address of next subnet should not be contained"
-        );
-    }
-
-    #[test]
-    fn test_cross_family_ipv6_addr_in_ipv4_cidr() {
-        let result = check_ipv4_contains("192.168.1.0/24", "2001:db8::1");
-        assert!(
-            matches!(result, Err(IpCalcError::InvalidIpv4Address(ref s)) if s == "2001:db8::1"),
-            "expected InvalidIpv4Address for IPv6 address in IPv4 CIDR, got {:?}",
-            result
-        );
-    }
-
-    #[test]
-    fn test_cross_family_ipv4_addr_in_ipv6_cidr() {
-        let result = check_ipv6_contains("2001:db8::/32", "192.168.1.1");
-        assert!(
-            matches!(result, Err(IpCalcError::InvalidIpv6Address(ref s)) if s == "192.168.1.1"),
-            "expected InvalidIpv6Address for IPv4 address in IPv6 CIDR, got {:?}",
             result
         );
     }

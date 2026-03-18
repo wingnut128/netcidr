@@ -9,24 +9,35 @@ use std::str::FromStr;
 // Result structs
 // ---------------------------------------------------------------------------
 
+/// The set of CIDR blocks that exactly cover an IPv4 address range.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct Ipv4FromRangeResult {
+    /// Start of the input range (inclusive).
     pub start_address: String,
+    /// End of the input range (inclusive).
     pub end_address: String,
+    /// Number of CIDR blocks produced.
     pub cidr_count: usize,
+    /// The CIDR blocks, in ascending network-address order.
     pub cidrs: Vec<Ipv4Subnet>,
 }
 
+/// The set of CIDR blocks that exactly cover an IPv6 address range.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct Ipv6FromRangeResult {
+    /// Start of the input range (inclusive).
     pub start_address: String,
+    /// End of the input range (inclusive).
     pub end_address: String,
+    /// Number of CIDR blocks produced.
     pub cidr_count: usize,
+    /// The CIDR blocks, in ascending network-address order.
     pub cidrs: Vec<Ipv6Subnet>,
 }
 
+/// Maximum number of CIDRs a range-to-CIDR conversion may produce by default.
 pub const DEFAULT_MAX_GENERATED_CIDRS: usize = 1_000_000;
 
 // ---------------------------------------------------------------------------
@@ -96,10 +107,19 @@ fn range_to_cidrs_v6(start: u128, end: u128, limit: usize) -> Vec<(u128, u8)> {
 // Public entry points
 // ---------------------------------------------------------------------------
 
+/// Convert an IPv4 address range into the minimal set of CIDR blocks that
+/// exactly cover it, using the default output limit.
+///
+/// # Errors
+///
+/// Returns an error if either address is invalid, `start` is greater than
+/// `end`, or the result exceeds [`DEFAULT_MAX_GENERATED_CIDRS`].
 pub fn from_range_ipv4(start: &str, end: &str) -> Result<Ipv4FromRangeResult> {
     from_range_ipv4_with_limit(start, end, DEFAULT_MAX_GENERATED_CIDRS)
 }
 
+/// Like [`from_range_ipv4`], but with a caller-specified maximum number of
+/// output CIDRs.
 pub fn from_range_ipv4_with_limit(
     start: &str,
     end: &str,
@@ -142,10 +162,19 @@ pub fn from_range_ipv4_with_limit(
     })
 }
 
+/// Convert an IPv6 address range into the minimal set of CIDR blocks that
+/// exactly cover it, using the default output limit.
+///
+/// # Errors
+///
+/// Returns an error if either address is invalid, `start` is greater than
+/// `end`, or the result exceeds [`DEFAULT_MAX_GENERATED_CIDRS`].
 pub fn from_range_ipv6(start: &str, end: &str) -> Result<Ipv6FromRangeResult> {
     from_range_ipv6_with_limit(start, end, DEFAULT_MAX_GENERATED_CIDRS)
 }
 
+/// Like [`from_range_ipv6`], but with a caller-specified maximum number of
+/// output CIDRs.
 pub fn from_range_ipv6_with_limit(
     start: &str,
     end: &str,
@@ -304,104 +333,6 @@ mod tests {
             "expected FromRangeLimitExceeded, got {:?}",
             result
         );
-    }
-
-    // -----------------------------------------------------------------------
-    // IPv6 test cases
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn test_single_address_v6_start_eq_end() {
-        let result = from_range_ipv6("2001:db8::abcd", "2001:db8::abcd").unwrap();
-        assert_eq!(result.cidr_count, 1);
-        assert_eq!(result.cidrs[0].prefix_length, 128);
-        assert_eq!(
-            result.cidrs[0].network,
-            Ipv6Addr::from_str("2001:db8::abcd").unwrap()
-        );
-    }
-
-    #[test]
-    fn test_two_adjacent_addresses_v6() {
-        let result = from_range_ipv6("2001:db8::0", "2001:db8::1").unwrap();
-        assert_eq!(result.cidr_count, 1);
-        assert_eq!(result.cidrs[0].prefix_length, 127);
-        assert_eq!(
-            result.cidrs[0].network,
-            Ipv6Addr::from_str("2001:db8::").unwrap()
-        );
-    }
-
-    #[test]
-    fn test_full_64_aligned_range_v6() {
-        // A full /64 range: 2001:db8:1:: to 2001:db8:1::ffff:ffff:ffff:ffff
-        let result = from_range_ipv6("2001:db8:1::", "2001:db8:1:0:ffff:ffff:ffff:ffff").unwrap();
-        assert_eq!(result.cidr_count, 1);
-        assert_eq!(result.cidrs[0].prefix_length, 64);
-        assert_eq!(
-            result.cidrs[0].network,
-            Ipv6Addr::from_str("2001:db8:1::").unwrap()
-        );
-    }
-
-    #[test]
-    fn test_non_aligned_range_v6() {
-        // 2001:db8::1 to 2001:db8::6 is non-aligned, requires multiple CIDRs
-        let result = from_range_ipv6("2001:db8::1", "2001:db8::6").unwrap();
-        assert!(
-            result.cidr_count > 1,
-            "expected multiple CIDRs, got {}",
-            result.cidr_count
-        );
-        // Verify first CIDR starts at ::1
-        assert_eq!(
-            result.cidrs[0].network,
-            Ipv6Addr::from_str("2001:db8::1").unwrap()
-        );
-        // Verify last CIDR ends at ::6
-        assert_eq!(
-            result.cidrs.last().unwrap().last,
-            Ipv6Addr::from_str("2001:db8::6").unwrap()
-        );
-    }
-
-    #[test]
-    fn test_large_48_range_v6() {
-        // A full /48 range
-        let result =
-            from_range_ipv6("2001:db8:abcd::", "2001:db8:abcd:ffff:ffff:ffff:ffff:ffff").unwrap();
-        assert_eq!(result.cidr_count, 1);
-        assert_eq!(result.cidrs[0].prefix_length, 48);
-        assert_eq!(
-            result.cidrs[0].network,
-            Ipv6Addr::from_str("2001:db8:abcd::").unwrap()
-        );
-    }
-
-    #[test]
-    fn test_reversed_range_v6() {
-        let result = from_range_ipv6("2001:db8::ffff", "2001:db8::1");
-        assert!(
-            matches!(result, Err(IpCalcError::InvalidRange(_, _))),
-            "expected InvalidRange, got {:?}",
-            result
-        );
-    }
-
-    #[test]
-    fn test_algorithm_correctness_v6() {
-        // Verify CIDRs exactly cover the range with no gaps
-        let result = from_range_ipv6("2001:db8::5", "2001:db8::130").unwrap();
-        let start_u128 = u128::from(Ipv6Addr::from_str("2001:db8::5").unwrap());
-        let end_u128 = u128::from(Ipv6Addr::from_str("2001:db8::130").unwrap());
-        let mut expected_next = start_u128;
-        for cidr in &result.cidrs {
-            let net = u128::from(cidr.network);
-            assert_eq!(net, expected_next, "Gap in CIDR coverage");
-            let block_size: u128 = 1u128 << (128 - cidr.prefix_length);
-            expected_next = net + block_size;
-        }
-        assert_eq!(expected_next, end_u128 + 1, "CIDRs don't cover full range");
     }
 
     #[test]

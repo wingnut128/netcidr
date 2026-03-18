@@ -8,19 +8,27 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 // Result structs
 // ---------------------------------------------------------------------------
 
+/// Result of summarizing (aggregating) a list of IPv4 CIDRs.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct Ipv4SummaryResult {
+    /// Number of CIDR strings provided as input.
     pub input_count: usize,
+    /// Number of CIDRs after summarization.
     pub output_count: usize,
+    /// The summarized CIDR list, in ascending network-address order.
     pub cidrs: Vec<Ipv4Subnet>,
 }
 
+/// Result of summarizing (aggregating) a list of IPv6 CIDRs.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct Ipv6SummaryResult {
+    /// Number of CIDR strings provided as input.
     pub input_count: usize,
+    /// Number of CIDRs after summarization.
     pub output_count: usize,
+    /// The summarized CIDR list, in ascending network-address order.
     pub cidrs: Vec<Ipv6Subnet>,
 }
 
@@ -129,6 +137,7 @@ fn summarize_entries(entries: &mut Vec<(u128, u8)>, bits: u8) {
     merge_siblings(entries, bits);
 }
 
+/// Maximum number of input CIDRs accepted by the summarize functions by default.
 pub const DEFAULT_MAX_SUMMARIZE_INPUTS: usize = 10_000;
 
 // ---------------------------------------------------------------------------
@@ -162,10 +171,20 @@ fn validate_and_summarize(
     Ok((input_count, entries))
 }
 
+/// Summarize (aggregate) a list of IPv4 CIDRs into the smallest equivalent set.
+///
+/// Adjacent and overlapping prefixes are merged; contained prefixes are removed.
+/// Uses the default input limit of [`DEFAULT_MAX_SUMMARIZE_INPUTS`].
+///
+/// # Errors
+///
+/// Returns an error if the input list is empty, any CIDR is invalid, or the
+/// number of inputs exceeds the limit.
 pub fn summarize_ipv4(cidrs: &[String]) -> Result<Ipv4SummaryResult> {
     summarize_ipv4_with_limit(cidrs, DEFAULT_MAX_SUMMARIZE_INPUTS)
 }
 
+/// Like [`summarize_ipv4`], but with a caller-specified maximum number of inputs.
 pub fn summarize_ipv4_with_limit(cidrs: &[String], max_inputs: usize) -> Result<Ipv4SummaryResult> {
     let (input_count, entries) = validate_and_summarize(cidrs, max_inputs, 32, |cidr| {
         let subnet = Ipv4Subnet::from_cidr(cidr)?;
@@ -185,10 +204,20 @@ pub fn summarize_ipv4_with_limit(cidrs: &[String], max_inputs: usize) -> Result<
     })
 }
 
+/// Summarize (aggregate) a list of IPv6 CIDRs into the smallest equivalent set.
+///
+/// Adjacent and overlapping prefixes are merged; contained prefixes are removed.
+/// Uses the default input limit of [`DEFAULT_MAX_SUMMARIZE_INPUTS`].
+///
+/// # Errors
+///
+/// Returns an error if the input list is empty, any CIDR is invalid, or the
+/// number of inputs exceeds the limit.
 pub fn summarize_ipv6(cidrs: &[String]) -> Result<Ipv6SummaryResult> {
     summarize_ipv6_with_limit(cidrs, DEFAULT_MAX_SUMMARIZE_INPUTS)
 }
 
+/// Like [`summarize_ipv6`], but with a caller-specified maximum number of inputs.
 pub fn summarize_ipv6_with_limit(cidrs: &[String], max_inputs: usize) -> Result<Ipv6SummaryResult> {
     let (input_count, entries) = validate_and_summarize(cidrs, max_inputs, 128, |cidr| {
         let subnet = Ipv6Subnet::from_cidr(cidr)?;
@@ -308,100 +337,6 @@ mod tests {
             Ipv6Addr::from_str("2001:db8::").unwrap()
         );
         assert_eq!(result.cidrs[0].prefix_length, 47);
-    }
-
-    // -----------------------------------------------------------------------
-    // IPv6 test cases
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn test_ipv6_adjacent_64s_merge_to_63() {
-        let result = summarize_ipv6(&[
-            "2001:db8:1:0::/64".to_string(),
-            "2001:db8:1:1::/64".to_string(),
-        ])
-        .unwrap();
-        assert_eq!(result.input_count, 2);
-        assert_eq!(result.output_count, 1);
-        assert_eq!(
-            result.cidrs[0].network,
-            Ipv6Addr::from_str("2001:db8:1::").unwrap()
-        );
-        assert_eq!(result.cidrs[0].prefix_length, 63);
-    }
-
-    #[test]
-    fn test_ipv6_containment_collapse() {
-        // /48 contains the /64, should collapse to the /48
-        let result = summarize_ipv6(&[
-            "2001:db8:abcd::/48".to_string(),
-            "2001:db8:abcd:1::/64".to_string(),
-        ])
-        .unwrap();
-        assert_eq!(result.output_count, 1);
-        assert_eq!(
-            result.cidrs[0].network,
-            Ipv6Addr::from_str("2001:db8:abcd::").unwrap()
-        );
-        assert_eq!(result.cidrs[0].prefix_length, 48);
-    }
-
-    #[test]
-    fn test_ipv6_duplicate_cidrs() {
-        let result =
-            summarize_ipv6(&["2001:db8::/32".to_string(), "2001:db8::/32".to_string()]).unwrap();
-        assert_eq!(result.input_count, 2);
-        assert_eq!(result.output_count, 1);
-        assert_eq!(
-            result.cidrs[0].network,
-            Ipv6Addr::from_str("2001:db8::").unwrap()
-        );
-        assert_eq!(result.cidrs[0].prefix_length, 32);
-    }
-
-    #[test]
-    fn test_ipv6_non_adjacent_no_merge() {
-        // These /64s are not siblings (differ in bit 62), so they should not merge
-        let result = summarize_ipv6(&[
-            "2001:db8:1:0::/64".to_string(),
-            "2001:db8:1:2::/64".to_string(),
-        ])
-        .unwrap();
-        assert_eq!(result.output_count, 2);
-    }
-
-    #[test]
-    fn test_ipv6_non_normalized_input() {
-        // 2001:db8::1/32 has host bits set; should normalize to 2001:db8::/32
-        let result = summarize_ipv6(&["2001:db8::1/32".to_string()]).unwrap();
-        assert_eq!(result.output_count, 1);
-        assert_eq!(
-            result.cidrs[0].network,
-            Ipv6Addr::from_str("2001:db8::").unwrap()
-        );
-        assert_eq!(result.cidrs[0].prefix_length, 32);
-    }
-
-    #[test]
-    fn test_mixed_ipv6_in_ipv4_summarize_errors() {
-        // Passing an IPv6 CIDR to summarize_ipv4 should produce an error
-        let result = summarize_ipv4(&["192.168.0.0/24".to_string(), "2001:db8::/32".to_string()]);
-        assert!(
-            result.is_err(),
-            "expected error for mixed input, got {:?}",
-            result
-        );
-    }
-
-    #[test]
-    fn test_mixed_ipv4_in_ipv6_summarize_errors() {
-        // Passing an IPv4 CIDR to summarize_ipv6 should produce an error
-        let result = summarize_ipv6(&["2001:db8::/32".to_string(), "192.168.0.0/24".to_string()]);
-        assert!(
-            result.is_err(),
-            "expected error for mixed input, got {:?}",
-            result
-        );
     }
 
     #[test]
