@@ -1,6 +1,7 @@
 /// Embedded schema migrations for the SQLite IPAM backend.
 /// Each migration is a (version, sql) tuple applied in order.
-pub const MIGRATIONS: &[(u32, &str)] = &[(1, MIGRATION_001), (2, MIGRATION_002)];
+pub const MIGRATIONS: &[(u32, &str)] =
+    &[(1, MIGRATION_001), (2, MIGRATION_002), (3, MIGRATION_003)];
 
 const MIGRATION_001: &str = r#"
 CREATE TABLE IF NOT EXISTS supernets (
@@ -70,4 +71,12 @@ CREATE TABLE IF NOT EXISTS schema_version (
 
 const MIGRATION_002: &str = r#"
 ALTER TABLE allocations ADD COLUMN expires_at TEXT;
+"#;
+
+const MIGRATION_003: &str = r#"
+ALTER TABLE supernets ADD COLUMN total_hosts_text TEXT;
+UPDATE supernets SET total_hosts_text = CAST(total_hosts AS TEXT);
+
+ALTER TABLE allocations ADD COLUMN total_hosts_text TEXT;
+UPDATE allocations SET total_hosts_text = CAST(total_hosts AS TEXT);
 "#;

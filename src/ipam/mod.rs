@@ -55,6 +55,23 @@ pub async fn create_store(
     }
 }
 
+/// Read `total_hosts` from a text column (preferred) with fallback to an i64 column.
+/// Used by all storage backends to handle u128 values that exceed i64 range.
+pub(crate) fn read_total_hosts(text: Option<String>, legacy_i64: i64) -> u128 {
+    text.as_deref()
+        .and_then(|s| s.parse::<u128>().ok())
+        .unwrap_or(legacy_i64 as u128)
+}
+
+/// Clamp a u128 to i64::MAX for the legacy INTEGER column.
+pub(crate) fn total_hosts_as_i64(total: u128) -> i64 {
+    if total > i64::MAX as u128 {
+        i64::MAX
+    } else {
+        total as i64
+    }
+}
+
 /// Parse a CIDR string and return (network_address, broadcast_address, prefix_length, total_hosts, ip_version).
 /// Shared by all storage backends.
 pub(crate) fn parse_cidr_metadata(cidr: &str) -> Result<(String, String, u8, u128, u8)> {
@@ -98,7 +115,13 @@ pub(crate) fn parse_cidr_metadata(cidr: &str) -> Result<(String, String, u8, u12
         };
         let network = addr_u128 & mask;
         let last = network | !mask;
-        let total: u128 = 1u128 << (128 - prefix);
+        let bits = 128 - prefix;
+        // 1 << 128 overflows u128; use checked shift, falling back to u128::MAX
+        let total: u128 = if bits == 128 {
+            u128::MAX
+        } else {
+            1u128 << bits
+        };
         Ok((
             std::net::Ipv6Addr::from(network).to_string(),
             std::net::Ipv6Addr::from(last).to_string(),

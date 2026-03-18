@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.4] - 2026-03-18
+
+### Added
+
+- Schema migration v3: `total_hosts_text` TEXT column on `supernets` and `allocations` tables, enabling correct storage of IPv6 host counts that exceed i64 range (e.g., 2^96 for a /32 supernet)
+
+### Fixed
+
+- IPv6 /0 prefix no longer panics (`1u128 << 128` overflow) in `parse_cidr_metadata`; capped at `u128::MAX`
+
 ## [0.13.3] - 2026-03-18
 
 ### Added

@@ -9,8 +9,8 @@ use std::path::Path;
 
 use crate::error::{IpCalcError, Result};
 use crate::ipam::models::*;
-use crate::ipam::parse_cidr_metadata;
 use crate::ipam::store::IpamStore;
+use crate::ipam::{parse_cidr_metadata, read_total_hosts, total_hosts_as_i64};
 
 type ConnPool = Pool<SqliteConnectionManager>;
 
@@ -89,6 +89,7 @@ impl SqliteStore {
             .parse::<AllocationStatus>()
             .unwrap_or(AllocationStatus::Active);
         let total_hosts_i64: i64 = row.get("total_hosts")?;
+        let total_hosts_text: Option<String> = row.get("total_hosts_text")?;
         Ok(Allocation {
             id: row.get("id")?,
             supernet_id: row.get("supernet_id")?,
@@ -96,7 +97,7 @@ impl SqliteStore {
             network_address: row.get("network_address")?,
             broadcast_address: row.get("broadcast_address")?,
             prefix_length: row.get::<_, u8>("prefix_length")?,
-            total_hosts: total_hosts_i64 as u128,
+            total_hosts: read_total_hosts(total_hosts_text, total_hosts_i64),
             status,
             resource_id: row.get("resource_id")?,
             resource_type: row.get("resource_type")?,
@@ -168,9 +169,9 @@ impl IpamStore for SqliteStore {
         let (network, broadcast, prefix, total, ip_version) = parse_cidr_metadata(&input.cidr)?;
 
         conn.execute(
-            "INSERT INTO supernets (id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            params![id, input.cidr, network, broadcast, prefix, total as i64, input.name, input.description, ip_version, now, now],
+            "INSERT INTO supernets (id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, name, description, ip_version, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![id, input.cidr, network, broadcast, prefix, total_hosts_as_i64(total), total.to_string(), input.name, input.description, ip_version, now, now],
         ).map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
 
         Ok(Supernet {
@@ -191,22 +192,23 @@ impl IpamStore for SqliteStore {
     async fn get_supernet(&self, id: &str) -> Result<Supernet> {
         let conn = self.conn()?;
         conn.query_row(
-            "SELECT id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM supernets WHERE id = ?1",
+            "SELECT id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, name, description, ip_version, created_at, updated_at FROM supernets WHERE id = ?1",
             params![id],
             |row| {
                 let total_hosts_i64: i64 = row.get(5)?;
+                let total_hosts_text: Option<String> = row.get(6)?;
                 Ok(Supernet {
                     id: row.get(0)?,
                     cidr: row.get(1)?,
                     network_address: row.get(2)?,
                     broadcast_address: row.get(3)?,
                     prefix_length: row.get(4)?,
-                    total_hosts: total_hosts_i64 as u128,
-                    name: row.get(6)?,
-                    description: row.get(7)?,
-                    ip_version: row.get(8)?,
-                    created_at: row.get(9)?,
-                    updated_at: row.get(10)?,
+                    total_hosts: read_total_hosts(total_hosts_text, total_hosts_i64),
+                    name: row.get(7)?,
+                    description: row.get(8)?,
+                    ip_version: row.get(9)?,
+                    created_at: row.get(10)?,
+                    updated_at: row.get(11)?,
                 })
             },
         ).map_err(|e| match e {
@@ -218,23 +220,24 @@ impl IpamStore for SqliteStore {
     async fn list_supernets(&self) -> Result<Vec<Supernet>> {
         let conn = self.conn()?;
         let mut stmt = conn
-            .prepare("SELECT id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM supernets ORDER BY created_at")
+            .prepare("SELECT id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, name, description, ip_version, created_at, updated_at FROM supernets ORDER BY created_at")
             .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
         let rows = stmt
             .query_map([], |row| {
                 let total_hosts_i64: i64 = row.get(5)?;
+                let total_hosts_text: Option<String> = row.get(6)?;
                 Ok(Supernet {
                     id: row.get(0)?,
                     cidr: row.get(1)?,
                     network_address: row.get(2)?,
                     broadcast_address: row.get(3)?,
                     prefix_length: row.get(4)?,
-                    total_hosts: total_hosts_i64 as u128,
-                    name: row.get(6)?,
-                    description: row.get(7)?,
-                    ip_version: row.get(8)?,
-                    created_at: row.get(9)?,
-                    updated_at: row.get(10)?,
+                    total_hosts: read_total_hosts(total_hosts_text, total_hosts_i64),
+                    name: row.get(7)?,
+                    description: row.get(8)?,
+                    ip_version: row.get(9)?,
+                    created_at: row.get(10)?,
+                    updated_at: row.get(11)?,
                 })
             })
             .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?
@@ -300,10 +303,11 @@ impl IpamStore for SqliteStore {
             .map(|ttl| (Utc::now() + chrono::Duration::seconds(ttl as i64)).to_rfc3339());
 
         conn.execute(
-            "INSERT INTO allocations (id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, expires_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+            "INSERT INTO allocations (id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, expires_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
-                id, input.supernet_id, input.cidr, network, broadcast, prefix, total as i64,
+                id, input.supernet_id, input.cidr, network, broadcast, prefix,
+                total_hosts_as_i64(total), total.to_string(),
                 input.resource_id, input.resource_type, input.name, input.description,
                 input.environment, input.owner, status, input.parent_allocation_id, now, now,
                 expires_at
@@ -350,7 +354,7 @@ impl IpamStore for SqliteStore {
         let conn = self.conn()?;
         let mut alloc = conn
             .query_row(
-                "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = ?1",
+                "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = ?1",
                 params![id],
                 Self::row_to_allocation,
             )
@@ -365,7 +369,7 @@ impl IpamStore for SqliteStore {
     async fn list_allocations(&self, filter: &AllocationFilter) -> Result<Vec<Allocation>> {
         let conn = self.conn()?;
         let mut sql = String::from(
-            "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE 1=1",
+            "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE 1=1",
         );
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
         let mut idx = 1;
@@ -482,7 +486,7 @@ impl IpamStore for SqliteStore {
         // Fetch updated allocation using same connection
         let mut alloc = conn
             .query_row(
-                "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = ?1",
+                "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = ?1",
                 params![id],
                 Self::row_to_allocation,
             )
@@ -518,7 +522,7 @@ impl IpamStore for SqliteStore {
         // Fetch using same connection to avoid pool exhaustion
         let mut alloc = conn
             .query_row(
-                "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = ?1",
+                "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = ?1",
                 params![id],
                 Self::row_to_allocation,
             )
@@ -539,7 +543,7 @@ impl IpamStore for SqliteStore {
         let placeholders: Vec<String> =
             (0..statuses.len()).map(|i| format!("?{}", i + 2)).collect();
         let sql = format!(
-            "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE supernet_id = ?1 AND status IN ({}) ORDER BY network_address",
+            "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE supernet_id = ?1 AND status IN ({}) ORDER BY network_address",
             placeholders.join(", ")
         );
 
@@ -974,7 +978,116 @@ mod tests {
         let (net, _bcast, prefix, total, ver) = parse_cidr_metadata("2001:db8::/32").unwrap();
         assert_eq!(net, "2001:db8::");
         assert_eq!(prefix, 32);
-        assert!(total > 0);
+        // /32 has 2^96 addresses
+        assert_eq!(total, 1u128 << 96);
         assert_eq!(ver, 6);
+    }
+
+    #[test]
+    fn test_parse_cidr_metadata_v6_prefix_0() {
+        // /0 is the entire IPv6 address space — must not panic
+        let (_net, _bcast, prefix, total, ver) = parse_cidr_metadata("::/0").unwrap();
+        assert_eq!(prefix, 0);
+        assert_eq!(total, u128::MAX);
+        assert_eq!(ver, 6);
+    }
+
+    #[test]
+    fn test_parse_cidr_metadata_v6_prefix_128() {
+        let (net, bcast, prefix, total, ver) = parse_cidr_metadata("2001:db8::1/128").unwrap();
+        assert_eq!(net, "2001:db8::1");
+        assert_eq!(bcast, "2001:db8::1");
+        assert_eq!(prefix, 128);
+        assert_eq!(total, 1);
+        assert_eq!(ver, 6);
+    }
+
+    #[test]
+    fn test_read_total_hosts_prefers_text() {
+        use crate::ipam::read_total_hosts;
+        // Text column present and valid: use it
+        let val = read_total_hosts(Some("79228162514264337593543950336".to_string()), 100);
+        assert_eq!(val, 1u128 << 96);
+    }
+
+    #[test]
+    fn test_read_total_hosts_falls_back_to_i64() {
+        use crate::ipam::read_total_hosts;
+        // Text column absent: fall back to i64
+        let val = read_total_hosts(None, 256);
+        assert_eq!(val, 256);
+    }
+
+    #[test]
+    fn test_total_hosts_as_i64_clamps() {
+        use crate::ipam::total_hosts_as_i64;
+        assert_eq!(total_hosts_as_i64(256), 256);
+        assert_eq!(total_hosts_as_i64(1u128 << 96), i64::MAX);
+    }
+
+    #[tokio::test]
+    async fn test_ipv6_supernet_total_hosts_roundtrip() {
+        let store = test_store().await;
+
+        // Create an IPv6 /32 supernet (2^96 addresses > i64::MAX)
+        let sn = store
+            .create_supernet(&CreateSupernet {
+                cidr: "2001:db8::/32".to_string(),
+                name: Some("IPv6 test".to_string()),
+                description: None,
+            })
+            .await
+            .unwrap();
+
+        let expected = 1u128 << 96;
+        assert_eq!(sn.total_hosts, expected);
+        assert_eq!(sn.ip_version, 6);
+
+        // Verify roundtrip through get
+        let fetched = store.get_supernet(&sn.id).await.unwrap();
+        assert_eq!(fetched.total_hosts, expected);
+
+        // Verify roundtrip through list
+        let all = store.list_supernets().await.unwrap();
+        assert_eq!(all[0].total_hosts, expected);
+    }
+
+    #[tokio::test]
+    async fn test_ipv6_allocation_total_hosts_roundtrip() {
+        let store = test_store().await;
+
+        let sn = store
+            .create_supernet(&CreateSupernet {
+                cidr: "2001:db8::/32".to_string(),
+                name: None,
+                description: None,
+            })
+            .await
+            .unwrap();
+
+        let alloc = store
+            .create_allocation(&CreateAllocation {
+                supernet_id: sn.id.clone(),
+                cidr: "2001:db8::/48".to_string(),
+                status: None,
+                resource_id: None,
+                resource_type: None,
+                name: None,
+                description: None,
+                environment: None,
+                owner: None,
+                parent_allocation_id: None,
+                tags: None,
+                ttl_seconds: None,
+            })
+            .await
+            .unwrap();
+
+        let expected = 1u128 << 80; // /48 has 2^80 addresses
+        assert_eq!(alloc.total_hosts, expected);
+
+        // Verify roundtrip through get
+        let fetched = store.get_allocation(&alloc.id).await.unwrap();
+        assert_eq!(fetched.total_hosts, expected);
     }
 }

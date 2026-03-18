@@ -8,8 +8,8 @@ use sqlx::{PgPool, Row};
 use crate::error::{IpCalcError, Result};
 use crate::ipam::config::PostgresConfig;
 use crate::ipam::models::*;
-use crate::ipam::parse_cidr_metadata;
 use crate::ipam::store::IpamStore;
+use crate::ipam::{parse_cidr_metadata, read_total_hosts, total_hosts_as_i64};
 
 pub struct PostgresStore {
     pool: PgPool,
@@ -53,6 +53,7 @@ impl PostgresStore {
             .parse::<AllocationStatus>()
             .unwrap_or(AllocationStatus::Active);
         let total_hosts_i64: i64 = row.get("total_hosts");
+        let total_hosts_text: Option<String> = row.get("total_hosts_text");
         Allocation {
             id: row.get("id"),
             supernet_id: row.get("supernet_id"),
@@ -63,7 +64,7 @@ impl PostgresStore {
                 let v: i16 = row.get("prefix_length");
                 v as u8
             },
-            total_hosts: total_hosts_i64 as u128,
+            total_hosts: read_total_hosts(total_hosts_text, total_hosts_i64),
             status,
             resource_id: row.get("resource_id"),
             resource_type: row.get("resource_type"),
@@ -140,15 +141,16 @@ impl IpamStore for PostgresStore {
         let (network, broadcast, prefix, total, ip_version) = parse_cidr_metadata(&input.cidr)?;
 
         sqlx::query(
-            "INSERT INTO supernets (id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+            "INSERT INTO supernets (id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, name, description, ip_version, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
         )
         .bind(&id)
         .bind(&input.cidr)
         .bind(&network)
         .bind(&broadcast)
         .bind(prefix as i16)
-        .bind(total as i64)
+        .bind(total_hosts_as_i64(total))
+        .bind(total.to_string())
         .bind(&input.name)
         .bind(&input.description)
         .bind(ip_version as i16)
@@ -175,7 +177,7 @@ impl IpamStore for PostgresStore {
 
     async fn get_supernet(&self, id: &str) -> Result<Supernet> {
         let row = sqlx::query(
-            "SELECT id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM supernets WHERE id = $1",
+            "SELECT id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, name, description, ip_version, created_at, updated_at FROM supernets WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -184,6 +186,7 @@ impl IpamStore for PostgresStore {
         .ok_or_else(|| IpCalcError::SupernetNotFound(id.to_string()))?;
 
         let total_hosts_i64: i64 = row.get("total_hosts");
+        let total_hosts_text: Option<String> = row.get("total_hosts_text");
         let prefix_length: i16 = row.get("prefix_length");
         let ip_version: i16 = row.get("ip_version");
         Ok(Supernet {
@@ -192,7 +195,7 @@ impl IpamStore for PostgresStore {
             network_address: row.get("network_address"),
             broadcast_address: row.get("broadcast_address"),
             prefix_length: prefix_length as u8,
-            total_hosts: total_hosts_i64 as u128,
+            total_hosts: read_total_hosts(total_hosts_text, total_hosts_i64),
             name: row.get("name"),
             description: row.get("description"),
             ip_version: ip_version as u8,
@@ -203,7 +206,7 @@ impl IpamStore for PostgresStore {
 
     async fn list_supernets(&self) -> Result<Vec<Supernet>> {
         let rows = sqlx::query(
-            "SELECT id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM supernets ORDER BY created_at",
+            "SELECT id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, name, description, ip_version, created_at, updated_at FROM supernets ORDER BY created_at",
         )
         .fetch_all(&self.pool)
         .await
@@ -213,6 +216,7 @@ impl IpamStore for PostgresStore {
             .iter()
             .map(|row| {
                 let total_hosts_i64: i64 = row.get("total_hosts");
+                let total_hosts_text: Option<String> = row.get("total_hosts_text");
                 let prefix_length: i16 = row.get("prefix_length");
                 let ip_version: i16 = row.get("ip_version");
                 Supernet {
@@ -221,7 +225,7 @@ impl IpamStore for PostgresStore {
                     network_address: row.get("network_address"),
                     broadcast_address: row.get("broadcast_address"),
                     prefix_length: prefix_length as u8,
-                    total_hosts: total_hosts_i64 as u128,
+                    total_hosts: read_total_hosts(total_hosts_text, total_hosts_i64),
                     name: row.get("name"),
                     description: row.get("description"),
                     ip_version: ip_version as u8,
@@ -290,8 +294,8 @@ impl IpamStore for PostgresStore {
             .map(|ttl| (Utc::now() + chrono::Duration::seconds(ttl as i64)).to_rfc3339());
 
         sqlx::query(
-            "INSERT INTO allocations (id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, expires_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)",
+            "INSERT INTO allocations (id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, expires_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)",
         )
         .bind(&id)
         .bind(&input.supernet_id)
@@ -299,7 +303,8 @@ impl IpamStore for PostgresStore {
         .bind(&network)
         .bind(&broadcast)
         .bind(prefix as i16)
-        .bind(total as i64)
+        .bind(total_hosts_as_i64(total))
+        .bind(total.to_string())
         .bind(&input.resource_id)
         .bind(&input.resource_type)
         .bind(&input.name)
@@ -357,7 +362,7 @@ impl IpamStore for PostgresStore {
 
     async fn get_allocation(&self, id: &str) -> Result<Allocation> {
         let row = sqlx::query(
-            "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = $1",
+            "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -372,7 +377,7 @@ impl IpamStore for PostgresStore {
 
     async fn list_allocations(&self, filter: &AllocationFilter) -> Result<Vec<Allocation>> {
         let mut sql = String::from(
-            "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE true",
+            "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE true",
         );
         let mut param_values: Vec<String> = Vec::new();
         let mut idx = 1;
@@ -531,7 +536,7 @@ impl IpamStore for PostgresStore {
         }
 
         let sql = format!(
-            "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE supernet_id = $1 AND status IN ({}) ORDER BY network_address",
+            "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE supernet_id = $1 AND status IN ({}) ORDER BY network_address",
             placeholders.join(", ")
         );
 
