@@ -952,6 +952,87 @@ fn test_ipam_ipv6_supernet_lifecycle() {
     let _ = std::fs::remove_file(db);
 }
 
+// ==================== Reactivation Tests ====================
+
+#[test]
+fn test_ipam_release_and_reactivate_via_update() {
+    let db = "/tmp/ipcalc-test-reactivate.db";
+    let _ = std::fs::remove_file(db);
+
+    // Create supernet and allocate
+    let (stdout, _, _) = run_ipam(db, &["supernet", "create", "10.0.0.0/16"]);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let sn_id = json["id"].as_str().unwrap().to_string();
+
+    let (stdout, _, success) = run_ipam(db, &["allocate", &sn_id, "10.0.1.0/24", "--name", "Web"]);
+    assert!(success);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let alloc_id = json["id"].as_str().unwrap().to_string();
+
+    // Release it
+    let (stdout, _, success) = run_ipam(db, &["release", &alloc_id]);
+    assert!(success);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(json["status"], "released");
+    assert!(json["released_at"].is_string());
+
+    // Re-activate via allocation update --status active
+    let (stdout, _, success) = run_ipam(
+        db,
+        &["allocation", "update", &alloc_id, "--status", "active"],
+    );
+    assert!(success);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(json["status"], "active");
+    assert!(
+        json["released_at"].is_null(),
+        "released_at should be cleared"
+    );
+
+    let _ = std::fs::remove_file(db);
+}
+
+#[test]
+fn test_ipam_reallocate_released_cidr_reuses_record() {
+    let db = "/tmp/ipcalc-test-realloc-dedup.db";
+    let _ = std::fs::remove_file(db);
+
+    // Create supernet and allocate
+    let (stdout, _, _) = run_ipam(db, &["supernet", "create", "10.0.0.0/16"]);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let sn_id = json["id"].as_str().unwrap().to_string();
+
+    let (stdout, _, success) = run_ipam(db, &["allocate", &sn_id, "10.0.1.0/24", "--name", "Web"]);
+    assert!(success);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let original_id = json["id"].as_str().unwrap().to_string();
+
+    // Release
+    let (_, _, success) = run_ipam(db, &["release", &original_id]);
+    assert!(success);
+
+    // Re-allocate the same CIDR — should reactivate the existing record
+    let (stdout, _, success) =
+        run_ipam(db, &["allocate", &sn_id, "10.0.1.0/24", "--name", "Web-v2"]);
+    assert!(success);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(json["status"], "active");
+    assert_eq!(json["name"], "Web-v2");
+    // Same record reused — ID should match
+    assert_eq!(json["id"].as_str().unwrap(), original_id);
+
+    // Verify no duplicate — listing should show only 1 allocation
+    let (stdout, _, success) = run_ipam(db, &["allocation", "list", "--supernet-id", &sn_id]);
+    assert!(success);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json["count"], 1,
+        "should have 1 allocation, not a duplicate"
+    );
+
+    let _ = std::fs::remove_file(db);
+}
+
 // ==================== Shell Completions Tests ====================
 
 #[test]
