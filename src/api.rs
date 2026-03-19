@@ -330,7 +330,6 @@ pub fn create_router(config: RouterConfig) -> Router {
     let ipam_enabled = config.ipam_ops.is_some();
     let router = router
         .route("/dashboard", get(dashboard))
-        .route("/dashboard/legacy", get(dashboard_legacy))
         .route("/", get(dashboard));
 
     // Conditionally mount IPAM routes
@@ -937,13 +936,5 @@ async fn dashboard() -> impl IntoResponse {
         StatusCode::OK,
         [(header::CONTENT_TYPE, "text/html")],
         include_str!("../dashboard/dist/index.html"),
-    )
-}
-
-async fn dashboard_legacy() -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "text/html")],
-        include_str!("../dashboard.html"),
     )
 }
