@@ -134,6 +134,41 @@ export interface Ipv6Subnet {
 
 export type CalcResult = Ipv4Subnet | Ipv6Subnet;
 
+// Split result types
+
+export interface SplitResult {
+  supernet: Ipv4Subnet | Ipv6Subnet;
+  subnets: (Ipv4Subnet | Ipv6Subnet)[];
+  new_prefix: number;
+}
+
+// Contains result type
+
+export interface ContainsResult {
+  cidr: string;
+  address: string;
+  contained: boolean;
+  network_address: string;
+  broadcast_address?: string;
+}
+
+// Summarize result types
+
+export interface SummarizeResult {
+  input_count: number;
+  output_count: number;
+  cidrs: (Ipv4Subnet | Ipv6Subnet)[];
+}
+
+// From-range result types
+
+export interface FromRangeResult {
+  start_address: string;
+  end_address: string;
+  cidr_count: number;
+  cidrs: (Ipv4Subnet | Ipv6Subnet)[];
+}
+
 export interface FeaturesResponse {
   ipam: boolean;
   swagger: boolean;
