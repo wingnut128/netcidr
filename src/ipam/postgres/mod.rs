@@ -470,6 +470,14 @@ impl IpamStore for PostgresStore {
         set_field!(owner, "owner");
         set_field!(status, "status");
 
+        // Clear released_at when reactivating (status changes to active/reserved)
+        if let Some(ref status) = input.status {
+            let s = status.to_string();
+            if s == "active" || s == "reserved" {
+                sets.push("released_at = NULL".to_string());
+            }
+        }
+
         let sql = format!(
             "UPDATE allocations SET {} WHERE id = ${}",
             sets.join(", "),

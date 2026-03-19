@@ -242,6 +242,16 @@ textarea {
   color: var(--bg);
 }
 
+.btn-success {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.btn-success:hover {
+  background: var(--green);
+  color: var(--bg);
+}
+
 .btn-sm {
   padding: 4px 10px;
   font-size: 10px;
@@ -1406,6 +1416,9 @@ tr:hover td {
                       <template x-if="a.status !== 'released'">
                         <button class="btn btn-danger btn-sm" @click="ipamRelease(a.id)">RELEASE</button>
                       </template>
+                      <template x-if="a.status === 'released'">
+                        <button class="btn btn-success btn-sm" @click="ipamReactivate(a.id)">RE-ACTIVATE</button>
+                      </template>
                     </div>
                   </td>
                 </tr>
@@ -2149,6 +2162,17 @@ function app() {
         this.ipamLoad();
       } catch (e) {
         this.error = 'Release failed: ' + e.message;
+      }
+    },
+
+    async ipamReactivate(id) {
+      if (!confirm('Re-activate this allocation?')) return;
+      try {
+        await this.api('PATCH', '/ipam/allocations/' + id, { status: 'active' });
+        this.ipamLoadAllocations();
+        this.ipamLoad();
+      } catch (e) {
+        this.error = 'Re-activate failed: ' + e.message;
       }
     },
 
