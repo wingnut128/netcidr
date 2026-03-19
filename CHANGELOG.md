@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - React + Vite + TypeScript dashboard scaffolding (`dashboard/` directory) — replaces Alpine.js single-file dashboard
 - Dashboard: Calculator page with bit grid visualization, IPv4/IPv6 results, hextet display
 - Dashboard: Splitter, Contains, Summarize, and FromRange pages
+- Dashboard: Full IPAM page — supernet management, allocation CRUD with filters, search, free blocks, audit log, 4 modals (create supernet, allocate specific, auto-allocate, allocation detail with tags)
+- Dashboard: Visualizer page with address space grid and subnet split distribution chart (recharts)
+
+### Removed
+
+- Old Alpine.js single-file dashboard (`dashboard.html`) — fully replaced by React dashboard
+- Legacy dashboard route (`/dashboard/legacy`)
 - Legacy dashboard remains accessible at `/dashboard/legacy` during transition
 - `make dashboard` and `make dashboard-dev` targets for frontend build and development
 - IP version guard: cross-family allocations rejected (e.g., IPv4 CIDR in IPv6 supernet)

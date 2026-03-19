@@ -14,3 +14,15 @@ export function fmtSize(n: number | string): string {
   if (num >= 1e3) return (num / 1e3).toFixed(1) + "K";
   return String(num);
 }
+
+/** Format an ISO date string to locale date + time. */
+export function fmtDate(s: string | null | undefined): string {
+  if (!s) return "-";
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return s.slice(0, 19);
+  return (
+    d.toLocaleDateString() +
+    " " +
+    d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+  );
+}
