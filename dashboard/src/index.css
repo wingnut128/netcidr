@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+/*
+ * Design system: Brutalist Industrial (dark terminal aesthetic)
+ * Migrated from the original dashboard.html CSS variables.
+ */
+@theme {
+  --color-bg: #0a0a0a;
+  --color-surface: #111111;
+  --color-surface2: #1a1a1a;
+  --color-border: #333333;
+  --color-border-thick: #444444;
+  --color-text: #e8e8e8;
+  --color-text-muted: #777777;
+  --color-cyan: #00ffcc;
+  --color-red: #ff3333;
+  --color-yellow: #ffcc00;
+  --color-green: #33ff33;
+  --color-orange: #ff8800;
+  --color-purple: #cc66ff;
+
+  --font-mono: ui-monospace, "SFMono-Regular", "Cascadia Code",
+    "JetBrains Mono", Menlo, monospace;
+}
+
+/* Base styles */
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-thick);
+}
+
+/* Selection */
+::selection {
+  background: var(--color-cyan);
+  color: var(--color-bg);
+}
