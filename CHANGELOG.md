@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shell completion generation via `ipcalc completions <shell>` (supports bash, zsh, fish, elvish, powershell)
 - IPAM dashboard: RE-ACTIVATE button on released allocations to restore them to active status
 - React + Vite + TypeScript dashboard scaffolding (`dashboard/` directory) — replaces Alpine.js single-file dashboard
+- Dashboard: Calculator page with bit grid visualization, IPv4/IPv6 results, hextet display
 - Legacy dashboard remains accessible at `/dashboard/legacy` during transition
 - `make dashboard` and `make dashboard-dev` targets for frontend build and development
 - IP version guard: cross-family allocations rejected (e.g., IPv4 CIDR in IPv6 supernet)
