@@ -162,5 +162,5 @@ This is a Rust CLI/API/MCP server for IPv4 and IPv6 subnet calculations with IPA
 
 - Error handling: `thiserror` derive macros, all functions return `Result<T>`
 - Logging: `tracing` with `#[instrument]` on API handlers
-- CLI: clap derive with subcommands (`split`, `contains`, `from-range`, `summarize`, `ipam`, `serve`, `mcp-serve`)
+- CLI: clap derive with subcommands (`split`, `contains`, `from-range`, `summarize`, `completions`, `ipam`, `serve`, `mcp-serve`)
 - Tests: Unit tests in modules, integration tests in `tests/` call binary via subprocess

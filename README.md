@@ -206,6 +206,29 @@ The TUI automatically detects IPv4/IPv6 and provides color-coded input fields wi
 
 **Note:** The TUI feature is optional and must be enabled at build time with the `tui` feature flag. It is not included in the default build to keep the binary size smaller.
 
+### Shell Completions
+
+Generate tab-completion scripts for your shell:
+
+```bash
+# Bash (add to ~/.bashrc)
+eval "$(ipcalc completions bash)"
+
+# Zsh (add to ~/.zshrc)
+eval "$(ipcalc completions zsh)"
+
+# Fish (add to ~/.config/fish/config.fish)
+ipcalc completions fish | source
+
+# Elvish
+eval (ipcalc completions elvish | slurp)
+
+# PowerShell (add to $PROFILE)
+ipcalc completions powershell | Out-String | Invoke-Expression
+```
+
+Supported shells: `bash`, `zsh`, `fish`, `elvish`, `powershell`.
+
 ### MCP Server (AI Assistant Integration)
 
 The MCP server lets AI assistants like Claude use ipcalc as a tool for subnet calculations. It communicates over stdio using the [Model Context Protocol](https://modelcontextprotocol.io). Built natively in Rust using the official `rmcp` SDK — no Node.js required.
@@ -457,6 +480,7 @@ Commands:
   contains    Check if an IP address is contained in a subnet
   summarize   Summarize/aggregate CIDRs into the minimal covering set
   ipam        IP Address Management — track allocations, supernets, and free space
+  completions Generate shell completions for the given shell
   serve       Start the HTTP API server
   help        Print help for a command
 
