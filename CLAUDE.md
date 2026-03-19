@@ -158,7 +158,7 @@ This is a Rust CLI/API/MCP server for IPv4 and IPv6 subnet calculations with IPA
 - `error.rs` - Custom `IpCalcError` enum with `Result<T>` type alias used throughout
 - `output.rs` - `TextOutput` / `CsvOutput` traits for JSON/text/CSV/YAML formatting
 
-**Dashboard** (`dashboard/`): React + Vite + TypeScript SPA with Tailwind CSS. Built to a single `dashboard/dist/index.html` via `vite-plugin-singlefile`, embedded in the Rust binary with `include_str!`. The old Alpine.js dashboard (`dashboard.html`) is still served at `/dashboard/legacy` during the transition.
+**Dashboard** (`dashboard/`): React + Vite + TypeScript SPA with Tailwind CSS. Built to a single `dashboard/dist/index.html` via `vite-plugin-singlefile`, embedded in the Rust binary with `include_str!`.
 
 **Data structures** (`Ipv4Subnet`, `Ipv6Subnet`, IPAM models) are serializable and shared between CLI, API, and MCP server.
 
