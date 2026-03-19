@@ -3,6 +3,7 @@
 .PHONY: fuzz semgrep
 .PHONY: install install-tui install-all-features uninstall
 .PHONY: build-mcp test-mcp
+.PHONY: dashboard dashboard-dev
 
 # Variables
 BINARY_NAME := ipcalc
@@ -13,12 +14,20 @@ DOCKER_TAG := $(VERSION)
 # Default target
 all: build
 
+# Build React dashboard (produces dashboard/dist/index.html)
+dashboard:
+	cd dashboard && npm ci --silent && npm run build
+
+# Run dashboard dev server with HMR (proxies API to localhost:8080)
+dashboard-dev:
+	cd dashboard && npm run dev
+
 # Build debug binary (default features: swagger)
-build:
+build: dashboard
 	cargo build
 
 # Build release binary (default features: swagger)
-release:
+release: dashboard
 	cargo build --release
 
 # Build debug binary with TUI feature
@@ -180,6 +189,10 @@ help:
 	@echo ""
 	@echo "Fuzz Targets:"
 	@echo "  fuzz                   Run fuzz testing (FUZZ_TARGET=name FUZZ_DURATION=secs)"
+	@echo ""
+	@echo "Dashboard Targets:"
+	@echo "  dashboard              Build React dashboard (requires Node.js)"
+	@echo "  dashboard-dev          Run dashboard dev server with HMR"
 	@echo ""
 	@echo "Development Targets:"
 	@echo "  serve                  Run API server locally"
