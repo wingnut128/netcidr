@@ -186,6 +186,9 @@ async fn main() {
                 handle_result(&writer, summarize_ipv4(&cidrs), &cli.output);
             }
         }
+        Some(Commands::Completions { shell }) => {
+            clap_complete::generate(shell, &mut Cli::command(), "ipcalc", &mut io::stdout());
+        }
         Some(Commands::Ipam { db, command }) => {
             if let Err(e) =
                 ipam_cli::handle_ipam_command(&writer, &cli.output, db.as_deref(), command).await

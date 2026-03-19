@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand, ValueEnum};
+use clap_complete::Shell;
 
 #[derive(Parser)]
 #[command(name = "ipcalc")]
@@ -97,6 +98,12 @@ pub enum Commands {
         /// URL of a running ipcalc API server (enables IPAM tools via HTTP proxy)
         #[arg(long, conflicts_with = "ipam_db")]
         api_url: Option<String>,
+    },
+
+    /// Generate shell completions for the given shell
+    Completions {
+        /// Shell to generate completions for
+        shell: Shell,
     },
 
     /// Start the HTTP API server

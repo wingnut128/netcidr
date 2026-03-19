@@ -951,3 +951,33 @@ fn test_ipam_ipv6_supernet_lifecycle() {
 
     let _ = std::fs::remove_file(db);
 }
+
+// ==================== Shell Completions Tests ====================
+
+#[test]
+fn test_completions_bash() {
+    let (stdout, _, success) = run_ipcalc(&["completions", "bash"]);
+    assert!(success);
+    assert!(stdout.contains("_ipcalc"));
+}
+
+#[test]
+fn test_completions_zsh() {
+    let (stdout, _, success) = run_ipcalc(&["completions", "zsh"]);
+    assert!(success);
+    assert!(stdout.contains("#compdef ipcalc"));
+}
+
+#[test]
+fn test_completions_fish() {
+    let (stdout, _, success) = run_ipcalc(&["completions", "fish"]);
+    assert!(success);
+    assert!(stdout.contains("complete -c ipcalc"));
+}
+
+#[test]
+fn test_completions_invalid_shell() {
+    let (_, stderr, success) = run_ipcalc(&["completions", "nushell"]);
+    assert!(!success);
+    assert!(stderr.contains("invalid value"));
+}
