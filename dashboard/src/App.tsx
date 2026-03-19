@@ -6,6 +6,7 @@ import { Contains } from "./pages/Contains";
 import { Summarize } from "./pages/Summarize";
 import { FromRange } from "./pages/FromRange";
 import { Ipam } from "./pages/Ipam";
+import { Visualizer } from "./pages/Visualizer";
 
 export function App() {
   return (
@@ -17,6 +18,7 @@ export function App() {
           <Route path="contains" element={<Contains />} />
           <Route path="summarize" element={<Summarize />} />
           <Route path="from-range" element={<FromRange />} />
+          <Route path="visualizer" element={<Visualizer />} />
           <Route path="ipam" element={<Ipam />} />
         </Route>
       </Routes>

@@ -6,6 +6,7 @@ const navItems = [
   { to: "/contains", label: "CONTAINS" },
   { to: "/summarize", label: "SUMMARIZE" },
   { to: "/from-range", label: "RANGE" },
+  { to: "/visualizer", label: "VISUALIZE" },
   { to: "/ipam", label: "IPAM" },
 ];
 
