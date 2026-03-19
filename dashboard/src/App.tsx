@@ -1,5 +1,6 @@
 import { HashRouter, Routes, Route } from "react-router-dom";
 import { MainLayout } from "./components/layout/MainLayout";
+import { Calculator } from "./pages/Calculator";
 import { Placeholder } from "./pages/Placeholder";
 
 export function App() {
@@ -7,7 +8,7 @@ export function App() {
     <HashRouter>
       <Routes>
         <Route element={<MainLayout />}>
-          <Route index element={<Placeholder name="Calculator" />} />
+          <Route index element={<Calculator />} />
           <Route path="split" element={<Placeholder name="Splitter" />} />
           <Route path="contains" element={<Placeholder name="Contains" />} />
           <Route path="summarize" element={<Placeholder name="Summarize" />} />

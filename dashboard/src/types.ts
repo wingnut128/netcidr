@@ -100,38 +100,39 @@ export interface FreeBlocksReport {
   total_free: number;
 }
 
-// Calculator types
+// Calculator types — mirrors src/ipv4.rs Ipv4Subnet
 
 export interface Ipv4Subnet {
-  cidr: string;
-  ip_address: string;
+  input: string;
   network_address: string;
   broadcast_address: string;
   subnet_mask: string;
   wildcard_mask: string;
   prefix_length: number;
+  first_host: string;
+  last_host: string;
   total_hosts: number;
   usable_hosts: number;
-  first_usable: string;
-  last_usable: string;
   network_class: string;
   is_private: boolean;
-  binary_mask: string;
-  hex_mask: string;
+  address_type: string;
 }
 
+// Mirrors src/ipv6.rs Ipv6Subnet
+
 export interface Ipv6Subnet {
-  cidr: string;
-  ip_address: string;
+  input: string;
   network_address: string;
+  network_address_full: string;
+  last_address: string;
+  last_address_full: string;
   prefix_length: number;
   total_addresses: string;
-  first_address: string;
-  last_address: string;
-  address_type: string;
-  scope: string;
   hextets: string[];
+  address_type: string;
 }
+
+export type CalcResult = Ipv4Subnet | Ipv6Subnet;
 
 export interface FeaturesResponse {
   ipam: boolean;
