@@ -10,7 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Shell completion generation via `ipcalc completions <shell>` (supports bash, zsh, fish, elvish, powershell)
+- IPAM dashboard: RE-ACTIVATE button on released allocations to restore them to active status
 - IP version guard: cross-family allocations rejected (e.g., IPv4 CIDR in IPv6 supernet)
+
+### Fixed
+
+- IPAM: re-allocating a previously released CIDR no longer creates duplicate records; the existing released allocation is reactivated with updated metadata
+- IPAM: `released_at` timestamp is now cleared when an allocation transitions back to active or reserved status
+- IPAM: reactivating a released allocation via status update now checks for overlap with other active/reserved allocations
 - Prefix length validation in auto-allocate (rejects prefix > 32 for IPv4, > 128 for IPv6)
 - IPv6 unit tests for range arithmetic: `parse_range`, `ranges_overlap`, `range_contains`, `find_gaps`, `find_free_blocks`, `range_to_cidrs`, `split_cidr_to_prefix`
 - IPv6 IPAM integration tests: supernet CRUD, allocate specific, auto-allocate, overlap rejection, utilization, free blocks, find-by-IP, release/re-allocate
