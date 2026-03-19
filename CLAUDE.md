@@ -100,8 +100,10 @@ make lint           # Run clippy with -D warnings
 make fmt            # Format code
 
 # Build
-make build          # Debug build
-make release        # Release build
+make build          # Debug build (builds dashboard first)
+make release        # Release build (builds dashboard first)
+make dashboard      # Build React dashboard only (requires Node.js)
+make dashboard-dev  # Run dashboard dev server with HMR
 cargo install --path .  # Install binary locally
 
 # Run single test
@@ -155,6 +157,8 @@ This is a Rust CLI/API/MCP server for IPv4 and IPv6 subnet calculations with IPA
 - `mcp_client.rs` - HTTP client that proxies IPAM operations to a remote `ipcalc serve` API (feature-gated: `mcp`)
 - `error.rs` - Custom `IpCalcError` enum with `Result<T>` type alias used throughout
 - `output.rs` - `TextOutput` / `CsvOutput` traits for JSON/text/CSV/YAML formatting
+
+**Dashboard** (`dashboard/`): React + Vite + TypeScript SPA with Tailwind CSS. Built to a single `dashboard/dist/index.html` via `vite-plugin-singlefile`, embedded in the Rust binary with `include_str!`. The old Alpine.js dashboard (`dashboard.html`) is still served at `/dashboard/legacy` during the transition.
 
 **Data structures** (`Ipv4Subnet`, `Ipv6Subnet`, IPAM models) are serializable and shared between CLI, API, and MCP server.
 
