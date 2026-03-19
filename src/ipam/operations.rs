@@ -121,6 +121,31 @@ impl IpamOps {
         self.check_overlap(&input.supernet_id, &candidate_range, &input.cidr)
             .await?;
 
+        // If a released allocation exists with the exact same CIDR, reactivate
+        // it instead of creating a duplicate record.
+        let released = self
+            .store
+            .find_allocations_in_supernet(&input.supernet_id, &[AllocationStatus::Released])
+            .await?;
+        if let Some(existing) = released.iter().find(|a| a.cidr == input.cidr) {
+            let update = UpdateAllocation {
+                name: input.name.clone().or(existing.name.clone()),
+                description: input.description.clone().or(existing.description.clone()),
+                resource_id: input.resource_id.clone().or(existing.resource_id.clone()),
+                resource_type: input
+                    .resource_type
+                    .clone()
+                    .or(existing.resource_type.clone()),
+                environment: input.environment.clone().or(existing.environment.clone()),
+                owner: input.owner.clone().or(existing.owner.clone()),
+                status: Some(input.status.clone().unwrap_or(AllocationStatus::Active)),
+            };
+            let alloc = self.store.update_allocation(&existing.id, &update).await?;
+            self.audit("reactivate", "allocation", &alloc.id, Some(&alloc.cidr))
+                .await?;
+            return Ok(alloc);
+        }
+
         let alloc = self.store.create_allocation(input).await?;
         self.audit("allocate", "allocation", &alloc.id, Some(&alloc.cidr))
             .await?;
@@ -225,6 +250,19 @@ impl IpamOps {
         validation::validate_optional_text(&input.owner, 0)?;
         validation::validate_optional_text(&input.environment, 0)?;
         validation::validate_optional_identifier(&input.resource_id)?;
+
+        // When reactivating a released allocation, check for overlap
+        if let Some(ref new_status) = input.status
+            && (*new_status == AllocationStatus::Active
+                || *new_status == AllocationStatus::Reserved)
+        {
+            let existing = self.store.get_allocation(id).await?;
+            if existing.status == AllocationStatus::Released {
+                let candidate_range = parse_range(&existing.cidr)?;
+                self.check_overlap(&existing.supernet_id, &candidate_range, &existing.cidr)
+                    .await?;
+            }
+        }
 
         let alloc = self.store.update_allocation(id, input).await?;
         self.audit("update", "allocation", id, None).await?;
