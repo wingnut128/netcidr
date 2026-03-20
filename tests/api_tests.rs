@@ -3,10 +3,22 @@ use axum::http::{Request, StatusCode, header};
 use axum::response::Response;
 use http_body_util::BodyExt;
 use ipcalc::api::{RouterConfig, create_router};
+use ipcalc::config::ServerConfig;
 use tower::ServiceExt;
 
+/// Default config with rate limiting disabled (oneshot tests lack ConnectInfo).
+fn test_config() -> RouterConfig {
+    RouterConfig {
+        server: ServerConfig {
+            rate_limit_per_second: 0,
+            ..ServerConfig::default()
+        },
+        ..RouterConfig::default()
+    }
+}
+
 async fn get(uri: &str) -> (StatusCode, String) {
-    let app = create_router(RouterConfig::default());
+    let app = create_router(test_config());
     let req = Request::builder().uri(uri).body(Body::empty()).unwrap();
     let resp: Response = app.oneshot(req).await.unwrap();
     let status = resp.status();
@@ -15,7 +27,7 @@ async fn get(uri: &str) -> (StatusCode, String) {
 }
 
 async fn get_with_headers(uri: &str) -> (StatusCode, String, axum::http::HeaderMap) {
-    let app = create_router(RouterConfig::default());
+    let app = create_router(test_config());
     let req = Request::builder().uri(uri).body(Body::empty()).unwrap();
     let resp: Response = app.oneshot(req).await.unwrap();
     let status = resp.status();
@@ -25,7 +37,7 @@ async fn get_with_headers(uri: &str) -> (StatusCode, String, axum::http::HeaderM
 }
 
 async fn post_json(uri: &str, json_body: &str) -> (StatusCode, String) {
-    let app = create_router(RouterConfig::default());
+    let app = create_router(test_config());
     let req = Request::builder()
         .method("POST")
         .uri(uri)
@@ -371,10 +383,10 @@ async fn test_security_headers_present() {
 
 #[tokio::test]
 async fn test_batch_size_exceeded() {
-    use ipcalc::config::ServerConfig;
     let config = RouterConfig {
         server: ServerConfig {
             max_batch_size: 2,
+            rate_limit_per_second: 0,
             ..Default::default()
         },
         ..Default::default()
@@ -394,7 +406,7 @@ async fn test_batch_size_exceeded() {
 
 #[tokio::test]
 async fn test_swagger_disabled_by_default() {
-    let app = create_router(RouterConfig::default());
+    let app = create_router(test_config());
     let req = Request::builder()
         .uri("/swagger-ui")
         .body(Body::empty())
@@ -421,10 +433,10 @@ async fn test_input_too_long_rejected() {
 
 #[tokio::test]
 async fn test_body_size_limit() {
-    use ipcalc::config::ServerConfig;
     let config = RouterConfig {
         server: ServerConfig {
             max_body_size: 64,
+            rate_limit_per_second: 0,
             ..Default::default()
         },
         ..Default::default()
@@ -464,7 +476,7 @@ async fn test_version_matches_cargo_toml() {
 
 #[tokio::test]
 async fn test_cors_preflight_options_request() {
-    let app = create_router(RouterConfig::default());
+    let app = create_router(test_config());
     let req = Request::builder()
         .method("OPTIONS")
         .uri("/batch")
@@ -493,7 +505,7 @@ async fn test_cors_get_request_no_origin_header() {
 
 #[tokio::test]
 async fn test_post_with_wrong_content_type() {
-    let app = create_router(RouterConfig::default());
+    let app = create_router(test_config());
     let req = Request::builder()
         .method("POST")
         .uri("/batch")
@@ -507,7 +519,7 @@ async fn test_post_with_wrong_content_type() {
 
 #[tokio::test]
 async fn test_post_with_no_content_type() {
-    let app = create_router(RouterConfig::default());
+    let app = create_router(test_config());
     let req = Request::builder()
         .method("POST")
         .uri("/batch")
@@ -550,10 +562,10 @@ async fn test_timeout_config_applied() {
     // We can't easily trigger a real timeout in a unit test, but we verify
     // that a custom timeout config doesn't break router creation and normal
     // requests still succeed.
-    use ipcalc::config::ServerConfig;
     let config = RouterConfig {
         server: ServerConfig {
             timeout_seconds: 1,
+            rate_limit_per_second: 0,
             ..Default::default()
         },
         ..Default::default()
@@ -590,7 +602,7 @@ async fn test_unknown_route_returns_404() {
 
 #[tokio::test]
 async fn test_post_to_get_only_endpoint() {
-    let app = create_router(RouterConfig::default());
+    let app = create_router(test_config());
     let req = Request::builder()
         .method("POST")
         .uri("/v4?cidr=192.168.1.0/24")
@@ -600,4 +612,124 @@ async fn test_post_to_get_only_endpoint() {
     let resp: Response = app.oneshot(req).await.unwrap();
     // POST to a GET-only route should return 405 Method Not Allowed
     assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+}
+
+// ── Rate Limiting ───────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_rate_limit_returns_429() {
+    use std::net::SocketAddr;
+    use tokio::net::TcpListener;
+
+    // Tight limit: burst of 1, replenish every 10 seconds
+    let config = RouterConfig {
+        server: ServerConfig {
+            rate_limit_per_second: 1,
+            rate_limit_burst: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let app = create_router(config);
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+
+    let client = reqwest::Client::new();
+    let url = format!("http://{}/health", addr);
+
+    // First request should succeed
+    let resp = client.get(&url).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Burst is 1, so the second request should be rate limited
+    let resp = client.get(&url).send().await.unwrap();
+    assert_eq!(resp.status(), 429);
+}
+
+#[tokio::test]
+async fn test_rate_limit_disabled_when_zero() {
+    use std::net::SocketAddr;
+    use tokio::net::TcpListener;
+
+    let config = RouterConfig {
+        server: ServerConfig {
+            rate_limit_per_second: 0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let app = create_router(config);
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+
+    let client = reqwest::Client::new();
+    let url = format!("http://{}/health", addr);
+
+    // All requests should succeed with rate limiting disabled
+    for _ in 0..10 {
+        let resp = client.get(&url).send().await.unwrap();
+        assert_eq!(resp.status(), 200);
+    }
+}
+
+#[tokio::test]
+async fn test_rate_limit_allows_burst() {
+    use std::net::SocketAddr;
+    use tokio::net::TcpListener;
+
+    // Allow burst of 3, slow replenish
+    let config = RouterConfig {
+        server: ServerConfig {
+            rate_limit_per_second: 1,
+            rate_limit_burst: 3,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let app = create_router(config);
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+
+    let client = reqwest::Client::new();
+    let url = format!("http://{}/health", addr);
+
+    // First 3 requests within the burst should succeed
+    for _ in 0..3 {
+        let resp = client.get(&url).send().await.unwrap();
+        assert_eq!(resp.status(), 200);
+    }
+
+    // 4th request should be rate limited
+    let resp = client.get(&url).send().await.unwrap();
+    assert_eq!(resp.status(), 429);
 }

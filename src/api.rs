@@ -9,6 +9,8 @@ use axum::{
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
+use tower_governor::GovernorLayer;
+use tower_governor::governor::GovernorConfigBuilder;
 use tower_http::cors::CorsLayer;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
@@ -369,14 +371,31 @@ pub fn create_router(config: RouterConfig) -> Router {
         .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
         .allow_headers([header::CONTENT_TYPE]);
 
-    router
+    let router = router
         .layer(Extension(config_ext))
         .layer(TraceLayer::new_for_http())
         .layer(RequestBodyLimitLayer::new(config.server.max_body_size))
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
             Duration::from_secs(config.server.timeout_seconds),
-        ))
+        ));
+
+    // Per-IP rate limiting via tower-governor (disabled when rate_limit_per_second == 0).
+    // Requires ConnectInfo<SocketAddr> — the server must use
+    // `into_make_service_with_connect_info::<SocketAddr>()`.
+    let router = if config.server.rate_limit_per_second > 0 {
+        let replenish_ms = 1000u64 / config.server.rate_limit_per_second;
+        let governor_config = GovernorConfigBuilder::default()
+            .per_millisecond(replenish_ms)
+            .burst_size(config.server.rate_limit_burst)
+            .finish()
+            .unwrap();
+        router.layer(GovernorLayer::new(governor_config))
+    } else {
+        router
+    };
+
+    router
         .layer(cors)
         .layer(SetResponseHeaderLayer::overriding(
             header::X_CONTENT_TYPE_OPTIONS,

@@ -1,6 +1,6 @@
 [package]
 name = "ipcalc"
-version = "0.13.4"
+version = "0.14.0"
 edition = "2024"
 license = "MIT"
 description = "A fast IPv4 and IPv6 subnet calculator CLI and API"
@@ -20,6 +20,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-appender = "0.2"
 tower-http = { version = "0.6", features = ["trace", "timeout", "cors", "set-header", "limit"] }
+tower_governor = "0.8"
 toml = "1.0"
 csv = "1"
 serde-saphyr = "0.0"
@@ -48,6 +49,7 @@ tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 proptest = "1"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 
 [features]
 default = ["swagger"]

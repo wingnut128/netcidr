@@ -345,10 +345,13 @@ async fn main() {
             let router = create_router(router_config);
 
             let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-            axum::serve(listener, router)
-                .with_graceful_shutdown(shutdown_signal())
-                .await
-                .unwrap();
+            axum::serve(
+                listener,
+                router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .with_graceful_shutdown(shutdown_signal())
+            .await
+            .unwrap();
 
             info!("Server shut down gracefully");
         }

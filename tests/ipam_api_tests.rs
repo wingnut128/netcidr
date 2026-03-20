@@ -5,6 +5,7 @@ use axum::http::{Request, StatusCode, header};
 use axum::response::Response;
 use http_body_util::BodyExt;
 use ipcalc::api::{RouterConfig, create_router};
+use ipcalc::config::ServerConfig;
 use ipcalc::ipam::operations::IpamOps;
 use ipcalc::ipam::sqlite::SqliteStore;
 use ipcalc::ipam::store::IpamStore;
@@ -16,8 +17,11 @@ async fn ipam_app() -> axum::Router {
     store.migrate().await.unwrap();
     let ops = Arc::new(IpamOps::new(Arc::new(store)));
     create_router(RouterConfig {
+        server: ServerConfig {
+            rate_limit_per_second: 0,
+            ..Default::default()
+        },
         ipam_ops: Some(ops),
-        ..Default::default()
     })
 }
 
@@ -431,7 +435,13 @@ async fn test_ipam_tags() {
 
 #[tokio::test]
 async fn test_ipam_disabled_returns_404() {
-    let app = create_router(RouterConfig::default());
+    let app = create_router(RouterConfig {
+        server: ServerConfig {
+            rate_limit_per_second: 0,
+            ..Default::default()
+        },
+        ..Default::default()
+    });
     let (status, _) = req(app, "GET", "/ipam/supernets", None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }

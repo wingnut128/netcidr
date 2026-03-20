@@ -5,10 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.14.0] - 2026-03-20
 
 ### Added
 
+- Per-IP rate limiting on the API server via `tower-governor` — uses existing `rate_limit_per_second` and `rate_limit_burst` config fields; set `rate_limit_per_second = 0` to disable
 - Shell completion generation via `ipcalc completions <shell>` (supports bash, zsh, fish, elvish, powershell)
 - IPAM dashboard: RE-ACTIVATE button on released allocations to restore them to active status
 - React + Vite + TypeScript dashboard scaffolding (`dashboard/` directory) — replaces Alpine.js single-file dashboard
