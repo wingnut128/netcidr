@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - DNS management module (`src/dns/`) with `DnsService` for allocation binding, auto-PTR generation, and BIND zone file export
 
+### Fixed
+
+- Dashboard: IPAM modal errors (e.g., allocation overlap conflicts) now display inline instead of being hidden behind the modal overlay
+
 ## [0.14.0] - 2026-03-20
 
 ### Added

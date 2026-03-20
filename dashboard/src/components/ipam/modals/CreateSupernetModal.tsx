@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Modal } from "./Modal";
+import { getErrorMessage } from "../../../lib/errors";
 import { FORM_LABEL, INPUT, BTN_PRIMARY } from "../../../lib/styles";
 
 interface CreateSupernetModalProps {
@@ -20,23 +21,35 @@ export function CreateSupernetModal({
   const [cidr, setCidr] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
       setCidr("");
       setName("");
       setDescription("");
+      setError(null);
     }
   }, [open]);
 
   const handleSubmit = async () => {
     if (!cidr.trim()) return;
-    await onSubmit({ cidr: cidr.trim(), name: name.trim(), description: description.trim() });
+    setError(null);
+    try {
+      await onSubmit({ cidr: cidr.trim(), name: name.trim(), description: description.trim() });
+    } catch (e) {
+      setError(getErrorMessage(e, "Create failed"));
+    }
   };
 
   return (
     <Modal open={open} onClose={onClose} title="Create Supernet">
       <div className="space-y-3">
+        {error && (
+          <div className="bg-red/10 border-2 border-red text-red px-3 py-2 text-xs">
+            {error}
+          </div>
+        )}
         <div>
           <label className={FORM_LABEL}>
             CIDR

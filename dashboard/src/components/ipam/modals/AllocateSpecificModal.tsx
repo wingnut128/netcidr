@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Modal } from "./Modal";
 import type { Supernet } from "../../../types";
+import { getErrorMessage } from "../../../lib/errors";
 import { FORM_LABEL, INPUT, BTN_PRIMARY } from "../../../lib/styles";
 
 interface AllocateSpecificModalProps {
@@ -31,6 +32,7 @@ export function AllocateSpecificModal({
   const [environment, setEnvironment] = useState("");
   const [owner, setOwner] = useState("");
   const [resourceId, setResourceId] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -40,20 +42,26 @@ export function AllocateSpecificModal({
       setEnvironment("");
       setOwner("");
       setResourceId("");
+      setError(null);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- only reset when modal opens
   }, [open, defaultSupernetId]);
 
   const handleSubmit = async () => {
     if (!supernetId || !cidr.trim()) return;
-    await onSubmit({
-      supernetId,
-      cidr: cidr.trim(),
-      name: name.trim(),
-      environment: environment.trim(),
-      owner: owner.trim(),
-      resourceId: resourceId.trim(),
-    });
+    setError(null);
+    try {
+      await onSubmit({
+        supernetId,
+        cidr: cidr.trim(),
+        name: name.trim(),
+        environment: environment.trim(),
+        owner: owner.trim(),
+        resourceId: resourceId.trim(),
+      });
+    } catch (e) {
+      setError(getErrorMessage(e, "Allocation failed"));
+    }
   };
 
   const field = (
@@ -77,6 +85,11 @@ export function AllocateSpecificModal({
   return (
     <Modal open={open} onClose={onClose} title="Allocate Specific">
       <div className="space-y-3">
+        {error && (
+          <div className="bg-red/10 border-2 border-red text-red px-3 py-2 text-xs">
+            {error}
+          </div>
+        )}
         <div>
           <label className={FORM_LABEL}>Supernet</label>
           <select

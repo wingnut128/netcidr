@@ -149,6 +149,7 @@ export function useIpam() {
         await loadAll();
       } catch (e) {
         setError(getErrorMessage(e, "Create failed"));
+        throw e;
       }
     },
     [loadAll],
@@ -191,6 +192,7 @@ export function useIpam() {
         await Promise.all([loadAll(), loadAllocations()]);
       } catch (e) {
         setError(getErrorMessage(e, "Allocation failed"));
+        throw e;
       }
     },
     [loadAll, loadAllocations],
@@ -217,6 +219,7 @@ export function useIpam() {
         await Promise.all([loadAll(), loadAllocations()]);
       } catch (e) {
         setError(getErrorMessage(e, "Auto-allocate failed"));
+        throw e;
       }
     },
     [loadAll, loadAllocations],

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Modal } from "./Modal";
 import type { Supernet } from "../../../types";
+import { getErrorMessage } from "../../../lib/errors";
 import { FORM_LABEL, INPUT, BTN_PRIMARY } from "../../../lib/styles";
 
 interface AutoAllocateModalProps {
@@ -31,6 +32,7 @@ export function AutoAllocateModal({
   const [name, setName] = useState("");
   const [environment, setEnvironment] = useState("");
   const [owner, setOwner] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -40,25 +42,36 @@ export function AutoAllocateModal({
       setName("");
       setEnvironment("");
       setOwner("");
+      setError(null);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- only reset when modal opens
   }, [open, defaultSupernetId]);
 
   const handleSubmit = async () => {
     if (!supernetId || !prefix) return;
-    await onSubmit({
-      supernetId,
-      prefix: Number(prefix),
-      count: Number(count) || 1,
-      name: name.trim(),
-      environment: environment.trim(),
-      owner: owner.trim(),
-    });
+    setError(null);
+    try {
+      await onSubmit({
+        supernetId,
+        prefix: Number(prefix),
+        count: Number(count) || 1,
+        name: name.trim(),
+        environment: environment.trim(),
+        owner: owner.trim(),
+      });
+    } catch (e) {
+      setError(getErrorMessage(e, "Auto-allocate failed"));
+    }
   };
 
   return (
     <Modal open={open} onClose={onClose} title="Auto-Allocate">
       <div className="space-y-3">
+        {error && (
+          <div className="bg-red/10 border-2 border-red text-red px-3 py-2 text-xs">
+            {error}
+          </div>
+        )}
         <div>
           <label className={FORM_LABEL}>
             Supernet
