@@ -1,6 +1,7 @@
 import { Panel } from "../ui/Panel";
 import type { Supernet } from "../../types";
 import { fmtNum } from "../../lib/format";
+import { TABLE_HEADER } from "../../lib/styles";
 
 interface SupernetTableProps {
   supernets: Supernet[];
@@ -41,10 +42,7 @@ export function SupernetTable({
             <tr>
               {["CIDR", "Name", "Prefix", "Total Hosts", "Utilization", "Actions"].map(
                 (h) => (
-                  <th
-                    key={h}
-                    className="text-left px-3 py-2 font-bold text-[10px] uppercase tracking-[0.1em] text-text-muted bg-surface2 border-b-2 border-border"
-                  >
+                  <th key={h} className={TABLE_HEADER}>
                     {h}
                   </th>
                 ),

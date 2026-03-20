@@ -2,6 +2,7 @@ import { Panel } from "../ui/Panel";
 import { StatusBadge } from "./StatusBadge";
 import type { Allocation, Supernet } from "../../types";
 import { fmtDate } from "../../lib/format";
+import { TABLE_HEADER } from "../../lib/styles";
 
 export interface AllocationFilters {
   supernetId: string;
@@ -119,10 +120,7 @@ export function AllocationTable({
                   "Created",
                   "Actions",
                 ].map((h) => (
-                  <th
-                    key={h}
-                    className="text-left px-3 py-2 font-bold text-[10px] uppercase tracking-[0.1em] text-text-muted bg-surface2 border-b-2 border-border"
-                  >
+                  <th key={h} className={TABLE_HEADER}>
                     {h}
                   </th>
                 ))}

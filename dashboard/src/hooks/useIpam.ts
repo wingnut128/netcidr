@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { get, post, patch, put, del } from "../api";
 import type {
   Supernet,
@@ -12,6 +12,7 @@ import type {
   UtilizationReport,
 } from "../types";
 import type { AllocationFilters } from "../components/ipam/AllocationTable";
+import { getErrorMessage } from "../lib/errors";
 
 type ModalType =
   | "create-supernet"
@@ -41,11 +42,14 @@ export function useIpam() {
   );
   const [error, setError] = useState<string | null>(null);
 
-  // Derived
-  const snMap: Record<string, string> = {};
-  for (const sn of supernets) {
-    snMap[sn.id] = sn.cidr;
-  }
+  // Derived (memoized to preserve referential identity)
+  const snMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const sn of supernets) {
+      map[sn.id] = sn.cidr;
+    }
+    return map;
+  }, [supernets]);
 
   // --- Data loading ---
 
@@ -55,7 +59,7 @@ export function useIpam() {
       setSupernets(data.supernets);
       return data.supernets;
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load supernets");
+      setError(getErrorMessage(e, "Failed to load supernets"));
       return [];
     }
   }, []);
@@ -103,7 +107,7 @@ export function useIpam() {
       setAllocations(allocs.allocations);
       setFreeBlocks(free.blocks);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load allocations");
+      setError(getErrorMessage(e, "Failed to load allocations"));
     }
   }, [filters]);
 
@@ -144,7 +148,7 @@ export function useIpam() {
         setActiveModal(null);
         await loadAll();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Create failed");
+        setError(getErrorMessage(e, "Create failed"));
       }
     },
     [loadAll],
@@ -160,7 +164,7 @@ export function useIpam() {
           setFiltersState((f) => ({ ...f, supernetId: "" }));
         }
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Delete failed");
+        setError(getErrorMessage(e, "Delete failed"));
       }
     },
     [loadAll, filters.supernetId],
@@ -184,10 +188,9 @@ export function useIpam() {
           resource_id: form.resourceId || undefined,
         });
         setActiveModal(null);
-        await loadAll();
-        await loadAllocations();
+        await Promise.all([loadAll(), loadAllocations()]);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Allocation failed");
+        setError(getErrorMessage(e, "Allocation failed"));
       }
     },
     [loadAll, loadAllocations],
@@ -211,10 +214,9 @@ export function useIpam() {
           owner: form.owner || undefined,
         });
         setActiveModal(null);
-        await loadAll();
-        await loadAllocations();
+        await Promise.all([loadAll(), loadAllocations()]);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Auto-allocate failed");
+        setError(getErrorMessage(e, "Auto-allocate failed"));
       }
     },
     [loadAll, loadAllocations],
@@ -225,10 +227,9 @@ export function useIpam() {
       if (!confirm("Release this allocation?")) return;
       try {
         await post(`/ipam/allocations/${id}/release`);
-        await loadAll();
-        await loadAllocations();
+        await Promise.all([loadAll(), loadAllocations()]);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Release failed");
+        setError(getErrorMessage(e, "Release failed"));
       }
     },
     [loadAll, loadAllocations],
@@ -239,10 +240,9 @@ export function useIpam() {
       if (!confirm("Re-activate this allocation?")) return;
       try {
         await patch(`/ipam/allocations/${id}`, { status: "active" });
-        await loadAll();
-        await loadAllocations();
+        await Promise.all([loadAll(), loadAllocations()]);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Re-activate failed");
+        setError(getErrorMessage(e, "Re-activate failed"));
       }
     },
     [loadAll, loadAllocations],
@@ -255,14 +255,14 @@ export function useIpam() {
         const existing = alloc?.tags ?? [];
         const tags = [...existing, { key, value }];
         await put(`/ipam/allocations/${allocationId}/tags`, { tags });
-        // Refresh the detail allocation
-        const updated = await get<Allocation>(
-          `/ipam/allocations/${allocationId}`,
-        );
+        // Refresh detail and allocation list concurrently
+        const [updated] = await Promise.all([
+          get<Allocation>(`/ipam/allocations/${allocationId}`),
+          loadAllocations(),
+        ]);
         setDetailAllocation(updated);
-        await loadAllocations();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Add tag failed");
+        setError(getErrorMessage(e, "Add tag failed"));
       }
     },
     [allocations, loadAllocations],
@@ -276,7 +276,7 @@ export function useIpam() {
       );
       setSearchResults(data.allocations);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Find IP failed");
+      setError(getErrorMessage(e, "Find IP failed"));
       setSearchResults([]);
     }
   }, []);
@@ -289,25 +289,32 @@ export function useIpam() {
       );
       setSearchResults(data.allocations);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Find resource failed");
+      setError(getErrorMessage(e, "Find resource failed"));
       setSearchResults([]);
     }
   }, []);
 
-  // --- Computed stats ---
+  // --- Computed stats (memoized) ---
 
-  const totalAllocations = Object.values(utilization).reduce(
-    (a, u) => a + u.count,
-    0,
-  );
-  const avgUtil =
-    supernets.length > 0
-      ? (
-          Object.values(utilization).reduce((a, u) => a + u.pct, 0) /
-          supernets.length
-        ).toFixed(1) + "%"
-      : "0%";
-  const totalFree = freeBlocks.length;
+  const stats = useMemo(() => {
+    const totalAllocations = Object.values(utilization).reduce(
+      (a, u) => a + u.count,
+      0,
+    );
+    const avgUtil =
+      supernets.length > 0
+        ? (
+            Object.values(utilization).reduce((a, u) => a + u.pct, 0) /
+            supernets.length
+          ).toFixed(1) + "%"
+        : "0%";
+    return {
+      supernets: supernets.length,
+      allocations: totalAllocations,
+      utilization: avgUtil,
+      freeBlocks: freeBlocks.length,
+    };
+  }, [utilization, supernets, freeBlocks.length]);
 
   // --- Actions ---
 
@@ -336,12 +343,7 @@ export function useIpam() {
     activeModal,
     detailAllocation,
     error,
-    stats: {
-      supernets: supernets.length,
-      allocations: totalAllocations,
-      utilization: avgUtil,
-      freeBlocks: totalFree,
-    },
+    stats,
     // Actions
     loadAll,
     createSupernet,

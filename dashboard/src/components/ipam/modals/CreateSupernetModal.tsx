@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Modal } from "./Modal";
+import { FORM_LABEL, INPUT, BTN_PRIMARY } from "../../../lib/styles";
 
 interface CreateSupernetModalProps {
   open: boolean;
@@ -37,12 +38,12 @@ export function CreateSupernetModal({
     <Modal open={open} onClose={onClose} title="Create Supernet">
       <div className="space-y-3">
         <div>
-          <label className="block text-[10px] font-bold uppercase tracking-[0.1em] text-text-muted mb-1">
+          <label className={FORM_LABEL}>
             CIDR
           </label>
           <input
             type="text"
-            className="w-full font-mono text-[13px] px-3 py-2 bg-bg border-2 border-border text-text outline-none focus:border-cyan"
+            className={INPUT}
             placeholder="e.g. 10.0.0.0/8"
             value={cidr}
             onChange={(e) => setCidr(e.target.value)}
@@ -50,32 +51,29 @@ export function CreateSupernetModal({
           />
         </div>
         <div>
-          <label className="block text-[10px] font-bold uppercase tracking-[0.1em] text-text-muted mb-1">
+          <label className={FORM_LABEL}>
             Name
           </label>
           <input
             type="text"
-            className="w-full font-mono text-[13px] px-3 py-2 bg-bg border-2 border-border text-text outline-none focus:border-cyan"
+            className={INPUT}
             placeholder="Optional"
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
         </div>
         <div>
-          <label className="block text-[10px] font-bold uppercase tracking-[0.1em] text-text-muted mb-1">
+          <label className={FORM_LABEL}>
             Description
           </label>
           <textarea
-            className="w-full min-h-[60px] font-mono text-[13px] px-3 py-2 bg-bg border-2 border-border text-text outline-none focus:border-cyan resize-y"
+            className={`${INPUT} min-h-[60px] resize-y`}
             placeholder="Optional"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
           />
         </div>
-        <button
-          className="w-full font-mono text-[11px] font-bold uppercase tracking-[0.1em] px-4 py-2 border-2 border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
-          onClick={handleSubmit}
-        >
+        <button className={BTN_PRIMARY} onClick={handleSubmit}>
           CREATE
         </button>
       </div>

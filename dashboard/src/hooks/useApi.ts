@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { getErrorMessage } from "../lib/errors";
 
 interface UseApiState<T> {
   data: T | null;
@@ -23,7 +24,7 @@ export function useApi<T>() {
       setState({ data, loading: false, error: null });
       return data;
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
+      const message = getErrorMessage(err);
       setState({ data: null, loading: false, error: message });
       return null;
     }

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Panel } from "../ui/Panel";
 import { StatusBadge } from "./StatusBadge";
 import type { Allocation } from "../../types";
+import { TABLE_HEADER, FORM_LABEL, INPUT } from "../../lib/styles";
 
 interface IpamSearchProps {
   onFindIp: (address: string) => Promise<void>;
@@ -21,13 +22,13 @@ export function IpamSearch({
     <Panel title="Search">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
         <div>
-          <label className="block text-[10px] font-bold uppercase tracking-[0.1em] text-text-muted mb-1">
+          <label className={FORM_LABEL}>
             Find IP
           </label>
           <div className="flex gap-2">
             <input
               type="text"
-              className="flex-1 font-mono text-[13px] px-3 py-2 bg-bg border-2 border-border text-text outline-none focus:border-cyan"
+              className={`flex-1 ${INPUT}`}
               placeholder="e.g. 10.0.1.50"
               value={ip}
               onChange={(e) => setIp(e.target.value)}
@@ -42,13 +43,13 @@ export function IpamSearch({
           </div>
         </div>
         <div>
-          <label className="block text-[10px] font-bold uppercase tracking-[0.1em] text-text-muted mb-1">
+          <label className={FORM_LABEL}>
             Find Resource
           </label>
           <div className="flex gap-2">
             <input
               type="text"
-              className="flex-1 font-mono text-[13px] px-3 py-2 bg-bg border-2 border-border text-text outline-none focus:border-cyan"
+              className={`flex-1 ${INPUT}`}
               placeholder="e.g. vpc-123"
               value={resource}
               onChange={(e) => setResource(e.target.value)}
@@ -75,10 +76,7 @@ export function IpamSearch({
             <thead>
               <tr>
                 {["CIDR", "Name", "Status", "Owner"].map((h) => (
-                  <th
-                    key={h}
-                    className="text-left px-3 py-2 font-bold text-[10px] uppercase tracking-[0.1em] text-text-muted bg-surface2 border-b-2 border-border"
-                  >
+                  <th key={h} className={TABLE_HEADER}>
                     {h}
                   </th>
                 ))}

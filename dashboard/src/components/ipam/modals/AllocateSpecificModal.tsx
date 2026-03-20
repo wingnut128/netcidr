@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Modal } from "./Modal";
 import type { Supernet } from "../../../types";
+import { FORM_LABEL, INPUT, BTN_PRIMARY } from "../../../lib/styles";
 
 interface AllocateSpecificModalProps {
   open: boolean;
@@ -40,7 +41,8 @@ export function AllocateSpecificModal({
       setOwner("");
       setResourceId("");
     }
-  }, [open, defaultSupernetId, supernets]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- only reset when modal opens
+  }, [open, defaultSupernetId]);
 
   const handleSubmit = async () => {
     if (!supernetId || !cidr.trim()) return;
@@ -61,12 +63,10 @@ export function AllocateSpecificModal({
     placeholder: string,
   ) => (
     <div>
-      <label className="block text-[10px] font-bold uppercase tracking-[0.1em] text-text-muted mb-1">
-        {label}
-      </label>
+      <label className={FORM_LABEL}>{label}</label>
       <input
         type="text"
-        className="w-full font-mono text-[13px] px-3 py-2 bg-bg border-2 border-border text-text outline-none focus:border-cyan"
+        className={INPUT}
         placeholder={placeholder}
         value={value}
         onChange={(e) => setter(e.target.value)}
@@ -78,11 +78,9 @@ export function AllocateSpecificModal({
     <Modal open={open} onClose={onClose} title="Allocate Specific">
       <div className="space-y-3">
         <div>
-          <label className="block text-[10px] font-bold uppercase tracking-[0.1em] text-text-muted mb-1">
-            Supernet
-          </label>
+          <label className={FORM_LABEL}>Supernet</label>
           <select
-            className="w-full font-mono text-[13px] px-3 py-2 bg-bg border-2 border-border text-text outline-none focus:border-cyan"
+            className={INPUT}
             value={supernetId}
             onChange={(e) => setSupernetId(e.target.value)}
           >
@@ -98,10 +96,7 @@ export function AllocateSpecificModal({
         {field("Environment", environment, setEnvironment, "e.g. production")}
         {field("Owner", owner, setOwner, "Optional")}
         {field("Resource ID", resourceId, setResourceId, "e.g. vpc-12345")}
-        <button
-          className="w-full font-mono text-[11px] font-bold uppercase tracking-[0.1em] px-4 py-2 border-2 border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
-          onClick={handleSubmit}
-        >
+        <button className={BTN_PRIMARY} onClick={handleSubmit}>
           ALLOCATE
         </button>
       </div>
