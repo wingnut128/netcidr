@@ -27,8 +27,9 @@ serde-saphyr = "0.0"
 rusqlite = { version = "0.39", features = ["bundled"] }
 r2d2 = "0.8"
 r2d2_sqlite = "0.33"
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1"
 async-trait = "0.1"
 dirs = "6"
 rmcp = { version = "1.1", features = ["server", "transport-io", "macros"], optional = true }

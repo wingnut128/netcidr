@@ -1572,6 +1572,7 @@ dependencies = [
 name = "ipcalc"
 version = "0.14.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "axum",
  "chrono",
@@ -4104,6 +4105,7 @@ dependencies = [
  "getrandom 0.4.2",
  "js-sys",
  "rand 0.10.0",
+ "serde_core",
  "wasm-bindgen",
 ]
 

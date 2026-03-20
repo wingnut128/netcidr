@@ -22,6 +22,9 @@ pub mod output;
 // IPAM persistence layer
 pub mod ipam;
 
+// DNS management layer
+pub mod dns;
+
 // Infrastructure
 pub mod config;
 pub mod error;
