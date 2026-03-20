@@ -53,7 +53,7 @@ When working on a Linear ticket:
 4. Update `CHANGELOG.md` with the changes (add to `[Unreleased]`)
 5. Update `README.md` when changes affect user-facing behavior: new features, changed commands, new build targets, deprecations, or removed functionality
 6. Create a PR — branch protection requires CI to pass before merge (no review required for solo maintainer)
-7. After CI passes, merge the PR and clean up the branch (local + remote, prune stale refs)
+7. After creating the PR, poll CI status with `gh pr checks <pr-number> --watch`. Once all checks pass, merge immediately with `gh pr merge <pr-number> --squash --delete-branch` and prune local refs. Do not wait for manual approval.
 
 ### Post-commit documentation rules
 
