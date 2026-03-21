@@ -27,6 +27,7 @@ export function SupernetTable({
   return (
     <Panel
       title="Supernets"
+      collapsible
       actions={
         <button
           className="font-mono text-[10px] font-bold uppercase tracking-[0.1em] px-3 py-1 border-2 border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"

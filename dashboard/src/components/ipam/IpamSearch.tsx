@@ -19,7 +19,7 @@ export function IpamSearch({
   const [resource, setResource] = useState("");
 
   return (
-    <Panel title="Search">
+    <Panel title="Search" collapsible defaultOpen={false}>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
         <div>
           <label className={FORM_LABEL}>

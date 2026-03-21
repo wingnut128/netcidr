@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Dashboard: IPAM modal errors (e.g., allocation overlap conflicts) now display inline instead of being hidden behind the modal overlay
+- Dashboard: IPAM sections (Supernets, Allocations, Search, Free Blocks, Audit Log) are now collapsible via header toggle
 
 ## [0.14.0] - 2026-03-20
 

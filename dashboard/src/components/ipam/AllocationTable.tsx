@@ -42,6 +42,7 @@ export function AllocationTable({
   return (
     <Panel
       title="Allocations"
+      collapsible
       actions={
         <div className="flex gap-2">
           <button
