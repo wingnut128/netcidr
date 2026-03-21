@@ -1,6 +1,6 @@
 [package]
 name = "ipcalc"
-version = "0.14.0"
+version = "0.15.0"
 edition = "2024"
 license = "MIT"
 description = "A fast IPv4 and IPv6 subnet calculator CLI and API"
