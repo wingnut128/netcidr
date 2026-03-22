@@ -1,4 +1,4 @@
-use crate::error::{IpCalcError, Result};
+use crate::error::{NetcidrError, Result};
 use crate::ipv4::Ipv4Subnet;
 use crate::ipv6::Ipv6Subnet;
 use serde::Serialize;
@@ -53,10 +53,10 @@ pub fn process_batch(cidrs: &[String]) -> Result<BatchResult> {
 /// Process a batch of CIDR strings with a configurable size limit.
 pub fn process_batch_with_limit(cidrs: &[String], max_batch_size: usize) -> Result<BatchResult> {
     if cidrs.is_empty() {
-        return Err(IpCalcError::EmptyCidrList);
+        return Err(NetcidrError::EmptyCidrList);
     }
     if cidrs.len() > max_batch_size {
-        return Err(IpCalcError::BatchSizeExceeded {
+        return Err(NetcidrError::BatchSizeExceeded {
             count: cidrs.len(),
             limit: max_batch_size,
         });
@@ -183,7 +183,7 @@ mod tests {
         let cidrs: Vec<String> = vec![];
         let result = process_batch(&cidrs);
         assert!(
-            matches!(result, Err(IpCalcError::EmptyCidrList)),
+            matches!(result, Err(NetcidrError::EmptyCidrList)),
             "expected EmptyCidrList, got {:?}",
             result
         );
@@ -196,7 +196,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(IpCalcError::BatchSizeExceeded { count: 5, limit: 3 })
+                Err(NetcidrError::BatchSizeExceeded { count: 5, limit: 3 })
             ),
             "expected BatchSizeExceeded, got {:?}",
             result

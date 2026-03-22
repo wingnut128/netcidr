@@ -2,8 +2,8 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use axum::response::Response;
 use http_body_util::BodyExt;
-use ipcalc::api::{RouterConfig, create_router};
-use ipcalc::config::ServerConfig;
+use netcidr::api::{RouterConfig, create_router};
+use netcidr::config::ServerConfig;
 use tower::ServiceExt;
 
 /// Default config with rate limiting disabled (oneshot tests lack ConnectInfo).
@@ -82,7 +82,7 @@ async fn test_version() {
     let (status, body) = get("/version").await;
     assert_eq!(status, 200);
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(json["name"], "ipcalc");
+    assert_eq!(json["name"], "netcidr");
     assert!(json["version"].is_string());
 }
 
@@ -468,7 +468,7 @@ async fn test_version_matches_cargo_toml() {
     let (status, body) = get("/version").await;
     assert_eq!(status, 200);
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(json["name"], "ipcalc");
+    assert_eq!(json["name"], "netcidr");
     assert_eq!(json["version"], env!("CARGO_PKG_VERSION"));
 }
 

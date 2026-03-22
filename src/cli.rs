@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 
 #[derive(Parser)]
-#[command(name = "ipcalc")]
+#[command(name = "netcidr")]
 #[command(version)]
 #[command(about = "IP subnet calculator for IPv4 and IPv6", long_about = None)]
 pub struct Cli {
@@ -80,7 +80,7 @@ pub enum Commands {
 
     /// IP Address Management — track allocations, supernets, and free space
     Ipam {
-        /// Path to SQLite database (overrides IPCALC_DB env and config file)
+        /// Path to SQLite database (overrides NETCIDR_DB env and config file)
         #[arg(long)]
         db: Option<String>,
 
@@ -95,7 +95,7 @@ pub enum Commands {
         #[arg(long, conflicts_with = "api_url")]
         ipam_db: Option<String>,
 
-        /// URL of a running ipcalc API server (enables IPAM tools via HTTP proxy)
+        /// URL of a running netcidr API server (enables IPAM tools via HTTP proxy)
         #[arg(long, conflicts_with = "ipam_db")]
         api_url: Option<String>,
     },
@@ -172,11 +172,11 @@ pub enum Commands {
         #[arg(long, default_value = "sqlite")]
         ipam_backend: Option<String>,
 
-        /// IPAM database path (overrides IPCALC_DB env and config file)
+        /// IPAM database path (overrides NETCIDR_DB env and config file)
         #[arg(long)]
         ipam_db: Option<String>,
 
-        /// IPAM PostgreSQL connection URL (overrides IPCALC_IPAM_DB_URL env and config file)
+        /// IPAM PostgreSQL connection URL (overrides NETCIDR_IPAM_DB_URL env and config file)
         #[arg(long)]
         ipam_db_url: Option<String>,
     },

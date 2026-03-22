@@ -7,7 +7,7 @@ pub mod postgres;
 pub mod sqlite;
 pub mod store;
 
-use crate::error::{IpCalcError, Result};
+use crate::error::{NetcidrError, Result};
 use config::IpamConfig;
 use std::sync::Arc;
 use store::IpamStore;
@@ -34,8 +34,8 @@ pub async fn create_store(
             {
                 let url = config::resolve_postgres_url(cli_db_url, &config.postgres)
                     .ok_or_else(|| {
-                        IpCalcError::DatabaseError(
-                            "PostgreSQL URL not configured. Set --ipam-db-url, IPCALC_IPAM_DB_URL, or [ipam.postgres] url in config.".to_string(),
+                        NetcidrError::DatabaseError(
+                            "PostgreSQL URL not configured. Set --ipam-db-url, NETCIDR_IPAM_DB_URL, or [ipam.postgres] url in config.".to_string(),
                         )
                     })?;
                 let store = postgres::PostgresStore::new(&url, &config.postgres).await?;
@@ -46,7 +46,7 @@ pub async fn create_store(
             #[cfg(not(feature = "ipam-postgres"))]
             {
                 let _ = cli_db_url;
-                Err(IpCalcError::DatabaseError(
+                Err(NetcidrError::DatabaseError(
                     "PostgreSQL backend not available. Rebuild with --features ipam-postgres"
                         .to_string(),
                 ))
@@ -77,15 +77,15 @@ pub(crate) fn total_hosts_as_i64(total: u128) -> i64 {
 pub(crate) fn parse_cidr_metadata(cidr: &str) -> Result<(String, String, u8, u128, u8)> {
     let (addr_str, prefix_str) = cidr
         .split_once('/')
-        .ok_or_else(|| IpCalcError::InvalidCidr(cidr.to_string()))?;
+        .ok_or_else(|| NetcidrError::InvalidCidr(cidr.to_string()))?;
 
     let prefix: u8 = prefix_str
         .parse()
-        .map_err(|_| IpCalcError::InvalidCidr(cidr.to_string()))?;
+        .map_err(|_| NetcidrError::InvalidCidr(cidr.to_string()))?;
 
     if let Ok(addr) = addr_str.parse::<std::net::Ipv4Addr>() {
         if prefix > 32 {
-            return Err(IpCalcError::InvalidPrefixLength(prefix));
+            return Err(NetcidrError::InvalidPrefixLength(prefix));
         }
         let addr_u32 = u32::from(addr);
         let mask = if prefix == 0 {
@@ -105,7 +105,7 @@ pub(crate) fn parse_cidr_metadata(cidr: &str) -> Result<(String, String, u8, u12
         ))
     } else if let Ok(addr) = addr_str.parse::<std::net::Ipv6Addr>() {
         if prefix > 128 {
-            return Err(IpCalcError::InvalidPrefixLength(prefix));
+            return Err(NetcidrError::InvalidPrefixLength(prefix));
         }
         let addr_u128 = u128::from(addr);
         let mask = if prefix == 0 {
@@ -130,6 +130,6 @@ pub(crate) fn parse_cidr_metadata(cidr: &str) -> Result<(String, String, u8, u12
             6,
         ))
     } else {
-        Err(IpCalcError::InvalidCidr(cidr.to_string()))
+        Err(NetcidrError::InvalidCidr(cidr.to_string()))
     }
 }

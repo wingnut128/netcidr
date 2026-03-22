@@ -1,4 +1,4 @@
-use crate::error::{IpCalcError, Result};
+use crate::error::{NetcidrError, Result};
 use crate::ipv4::Ipv4Subnet;
 use crate::ipv6::Ipv6Subnet;
 use serde::Serialize;
@@ -152,10 +152,10 @@ fn validate_and_summarize(
     parse: impl Fn(&str) -> Result<(u128, u8)>,
 ) -> Result<(usize, Vec<(u128, u8)>)> {
     if cidrs.is_empty() {
-        return Err(IpCalcError::EmptyCidrList);
+        return Err(NetcidrError::EmptyCidrList);
     }
     if cidrs.len() > max_inputs {
-        return Err(IpCalcError::SummarizeInputLimitExceeded {
+        return Err(NetcidrError::SummarizeInputLimitExceeded {
             count: cidrs.len(),
             limit: max_inputs,
         });
@@ -343,7 +343,7 @@ mod tests {
     fn test_empty_input() {
         let result = summarize_ipv4(&[]);
         assert!(
-            matches!(result, Err(IpCalcError::EmptyCidrList)),
+            matches!(result, Err(NetcidrError::EmptyCidrList)),
             "expected EmptyCidrList, got {:?}",
             result
         );
@@ -356,7 +356,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(IpCalcError::SummarizeInputLimitExceeded { count: 5, limit: 3 })
+                Err(NetcidrError::SummarizeInputLimitExceeded { count: 5, limit: 3 })
             ),
             "expected SummarizeInputLimitExceeded, got {:?}",
             result

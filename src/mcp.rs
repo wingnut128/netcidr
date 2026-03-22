@@ -259,12 +259,12 @@ struct IpamFindResourceParams {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
-pub struct IpCalcMcp {
+pub struct NetcidrMcp {
     tool_router: ToolRouter<Self>,
     ipam: Option<McpIpamBackend>,
 }
 
-impl IpCalcMcp {
+impl NetcidrMcp {
     pub fn new(ipam: Option<McpIpamBackend>) -> Self {
         Self {
             tool_router: Self::tool_router(),
@@ -287,7 +287,7 @@ fn result_to_string<T: serde::Serialize>(result: crate::error::Result<T>) -> Str
 const IPAM_NOT_ENABLED: &str = "Error: IPAM is not enabled. Start the MCP server with --ipam-db <path> or --api-url <url> to enable IPAM tools.";
 
 #[tool_router]
-impl IpCalcMcp {
+impl NetcidrMcp {
     // -------------------------------------------------------------------
     // Calculator tools
     // -------------------------------------------------------------------
@@ -565,11 +565,11 @@ impl IpCalcMcp {
 }
 
 #[tool_handler]
-impl ServerHandler for IpCalcMcp {
+impl ServerHandler for NetcidrMcp {
     fn get_info(&self) -> rmcp::model::ServerInfo {
         rmcp::model::ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(rmcp::model::Implementation::new(
-                "ipcalc",
+                "netcidr",
                 env!("CARGO_PKG_VERSION"),
             ))
     }
@@ -581,7 +581,7 @@ pub async fn run_mcp_server(
 ) -> crate::error::Result<()> {
     let ipam = match (ipam_db, api_url) {
         (Some(_), Some(_)) => {
-            return Err(crate::error::IpCalcError::InvalidInput(
+            return Err(crate::error::NetcidrError::InvalidInput(
                 "--ipam-db and --api-url are mutually exclusive".to_string(),
             ));
         }
@@ -597,16 +597,16 @@ pub async fn run_mcp_server(
         (None, None) => None,
     };
 
-    let server = IpCalcMcp::new(ipam);
+    let server = NetcidrMcp::new(ipam);
     let transport = rmcp::transport::io::stdio();
     let service = server
         .serve(transport)
         .await
-        .map_err(|e| crate::error::IpCalcError::InvalidInput(format!("MCP server error: {e}")))?;
+        .map_err(|e| crate::error::NetcidrError::InvalidInput(format!("MCP server error: {e}")))?;
     service
         .waiting()
         .await
-        .map_err(|e| crate::error::IpCalcError::InvalidInput(format!("MCP server error: {e}")))?;
+        .map_err(|e| crate::error::NetcidrError::InvalidInput(format!("MCP server error: {e}")))?;
     Ok(())
 }
 
@@ -614,17 +614,17 @@ pub async fn run_mcp_server(
 mod tests {
     use super::*;
 
-    fn calc_server() -> IpCalcMcp {
-        IpCalcMcp::new(None)
+    fn calc_server() -> NetcidrMcp {
+        NetcidrMcp::new(None)
     }
 
-    async fn ipam_server() -> IpCalcMcp {
+    async fn ipam_server() -> NetcidrMcp {
         use crate::ipam::store::IpamStore;
         let store = crate::ipam::sqlite::SqliteStore::in_memory().expect("in-memory store");
         store.initialize().await.expect("init");
         store.migrate().await.expect("migrate");
         let ops = Arc::new(IpamOps::new(Arc::new(store)));
-        IpCalcMcp::new(Some(McpIpamBackend::Local(ops)))
+        NetcidrMcp::new(Some(McpIpamBackend::Local(ops)))
     }
 
     // -------------------------------------------------------------------

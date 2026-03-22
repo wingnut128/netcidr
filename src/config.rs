@@ -1,4 +1,4 @@
-use crate::error::{IpCalcError, Result};
+use crate::error::{NetcidrError, Result};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -70,7 +70,7 @@ impl ServerConfig {
         // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path — CLI-only startup config, not reachable from HTTP input
         let contents = std::fs::read_to_string(path)?;
         let config: ServerConfig =
-            toml::from_str(&contents).map_err(|e| IpCalcError::ConfigParse(e.to_string()))?;
+            toml::from_str(&contents).map_err(|e| NetcidrError::ConfigParse(e.to_string()))?;
         Ok(config)
     }
 
@@ -261,11 +261,11 @@ mod tests {
 
     #[test]
     fn test_load_nonexistent_file_returns_io_error() {
-        let result = ServerConfig::load("/tmp/nonexistent_ipcalc_config_test.toml");
+        let result = ServerConfig::load("/tmp/nonexistent_netcidr_config_test.toml");
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
-            matches!(err, IpCalcError::Io(_)),
+            matches!(err, NetcidrError::Io(_)),
             "expected Io error, got: {err:?}"
         );
     }
@@ -279,7 +279,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
-            matches!(err, IpCalcError::ConfigParse(_)),
+            matches!(err, NetcidrError::ConfigParse(_)),
             "expected ConfigParse error, got: {err:?}"
         );
     }

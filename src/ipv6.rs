@@ -1,4 +1,4 @@
-use crate::error::{IpCalcError, Result};
+use crate::error::{NetcidrError, Result};
 use crate::validation;
 use serde::Serialize;
 use std::net::Ipv6Addr;
@@ -57,14 +57,14 @@ impl Ipv6Subnet {
 
         let (addr_str, prefix_str) = cidr
             .split_once('/')
-            .ok_or_else(|| IpCalcError::InvalidCidr(cidr.to_string()))?;
+            .ok_or_else(|| NetcidrError::InvalidCidr(cidr.to_string()))?;
 
         let addr = Ipv6Addr::from_str(addr_str)
-            .map_err(|_| IpCalcError::InvalidIpv6Address(addr_str.to_string()))?;
+            .map_err(|_| NetcidrError::InvalidIpv6Address(addr_str.to_string()))?;
 
         let prefix: u8 = prefix_str
             .parse()
-            .map_err(|_| IpCalcError::InvalidCidr(cidr.to_string()))?;
+            .map_err(|_| NetcidrError::InvalidCidr(cidr.to_string()))?;
 
         Self::new(addr, prefix)
     }
@@ -73,10 +73,10 @@ impl Ipv6Subnet {
     ///
     /// # Errors
     ///
-    /// Returns [`IpCalcError::InvalidPrefixLength`] if `prefix` exceeds 128.
+    /// Returns [`NetcidrError::InvalidPrefixLength`] if `prefix` exceeds 128.
     pub fn new(addr: Ipv6Addr, prefix: u8) -> Result<Self> {
         if prefix > 128 {
-            return Err(IpCalcError::InvalidPrefixLength(prefix));
+            return Err(NetcidrError::InvalidPrefixLength(prefix));
         }
 
         let addr_u128 = u128::from(addr);
@@ -221,7 +221,7 @@ mod tests {
     fn test_invalid_prefix() {
         let result = Ipv6Subnet::from_cidr("2001:db8::/129");
         assert!(
-            matches!(result, Err(IpCalcError::InvalidPrefixLength(129))),
+            matches!(result, Err(NetcidrError::InvalidPrefixLength(129))),
             "expected InvalidPrefixLength(129), got {:?}",
             result
         );
@@ -231,7 +231,7 @@ mod tests {
     fn test_invalid_cidr_no_slash() {
         let result = Ipv6Subnet::from_cidr("2001:db8::");
         assert!(
-            matches!(result, Err(IpCalcError::InvalidCidr(_))),
+            matches!(result, Err(NetcidrError::InvalidCidr(_))),
             "expected InvalidCidr, got {:?}",
             result
         );
@@ -244,7 +244,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(IpCalcError::InputTooLong {
+                Err(NetcidrError::InputTooLong {
                     length: 300,
                     limit: 256
                 })

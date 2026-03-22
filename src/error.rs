@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum IpCalcError {
+pub enum NetcidrError {
     #[error("Invalid IPv4 address: {0}")]
     InvalidIpv4Address(String),
 
@@ -89,4 +89,4 @@ pub enum IpCalcError {
     InvalidInput(String),
 }
 
-pub type Result<T> = std::result::Result<T, IpCalcError>;
+pub type Result<T> = std::result::Result<T, NetcidrError>;

@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Pre-commit hook for ipcalc
+# Pre-commit hook for netcidr
 # Runs formatting check and linting before commit
 
 set -e

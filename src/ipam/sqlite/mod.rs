@@ -7,7 +7,7 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::params;
 use std::path::Path;
 
-use crate::error::{IpCalcError, Result};
+use crate::error::{NetcidrError, Result};
 use crate::ipam::models::*;
 use crate::ipam::store::IpamStore;
 use crate::ipam::{parse_cidr_metadata, read_total_hosts, total_hosts_as_i64};
@@ -26,7 +26,7 @@ impl SqliteStore {
             && !parent.exists()
         {
             std::fs::create_dir_all(parent).map_err(|e| {
-                IpCalcError::DatabaseError(format!(
+                NetcidrError::DatabaseError(format!(
                     "failed to create database directory {}: {}",
                     parent.display(),
                     e
@@ -38,7 +38,7 @@ impl SqliteStore {
         let pool = Pool::builder()
             .max_size(8)
             .build(manager)
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         Ok(Self { pool })
     }
@@ -49,14 +49,14 @@ impl SqliteStore {
         let pool = Pool::builder()
             .max_size(1) // single connection for in-memory DB
             .build(manager)
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         Ok(Self { pool })
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
         self.pool
             .get()
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))
     }
 
     fn now() -> String {
@@ -69,7 +69,7 @@ impl SqliteStore {
     ) -> Result<Vec<Tag>> {
         let mut stmt = conn
             .prepare("SELECT key, value FROM allocation_tags WHERE allocation_id = ?1")
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         let tags = stmt
             .query_map(params![allocation_id], |row| {
                 Ok(Tag {
@@ -77,9 +77,9 @@ impl SqliteStore {
                     value: row.get(1)?,
                 })
             })
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
             .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         Ok(tags)
     }
 
@@ -120,7 +120,7 @@ impl IpamStore for SqliteStore {
     async fn initialize(&self) -> Result<()> {
         let conn = self.conn()?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         Ok(())
     }
 
@@ -134,7 +134,7 @@ impl IpamStore for SqliteStore {
                 applied_at TEXT NOT NULL
             )",
         )
-        .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         let current: u32 = conn
             .query_row(
@@ -142,17 +142,17 @@ impl IpamStore for SqliteStore {
                 [],
                 |row| row.get(0),
             )
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         for &(version, sql) in migrations::MIGRATIONS {
             if version > current {
                 conn.execute_batch(sql)
-                    .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+                    .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
                 conn.execute(
                     "INSERT INTO schema_version (version, applied_at) VALUES (?1, ?2)",
                     params![version, Self::now()],
                 )
-                .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
             }
         }
         Ok(())
@@ -172,7 +172,7 @@ impl IpamStore for SqliteStore {
             "INSERT INTO supernets (id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, name, description, ip_version, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![id, input.cidr, network, broadcast, prefix, total_hosts_as_i64(total), total.to_string(), input.name, input.description, ip_version, now, now],
-        ).map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+        ).map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         Ok(Supernet {
             id,
@@ -212,8 +212,8 @@ impl IpamStore for SqliteStore {
                 })
             },
         ).map_err(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => IpCalcError::SupernetNotFound(id.to_string()),
-            _ => IpCalcError::DatabaseError(e.to_string()),
+            rusqlite::Error::QueryReturnedNoRows => NetcidrError::SupernetNotFound(id.to_string()),
+            _ => NetcidrError::DatabaseError(e.to_string()),
         })
     }
 
@@ -221,7 +221,7 @@ impl IpamStore for SqliteStore {
         let conn = self.conn()?;
         let mut stmt = conn
             .prepare("SELECT id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, name, description, ip_version, created_at, updated_at FROM supernets ORDER BY created_at")
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         let rows = stmt
             .query_map([], |row| {
                 let total_hosts_i64: i64 = row.get(5)?;
@@ -240,9 +240,9 @@ impl IpamStore for SqliteStore {
                     updated_at: row.get(11)?,
                 })
             })
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
             .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         Ok(rows)
     }
 
@@ -256,30 +256,30 @@ impl IpamStore for SqliteStore {
                 params![id],
                 |row| row.get(0),
             )
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         if active_count > 0 {
-            return Err(IpCalcError::SupernetHasActiveAllocations(id.to_string()));
+            return Err(NetcidrError::SupernetHasActiveAllocations(id.to_string()));
         }
 
         // Delete released allocations' tags, then allocations, then supernet
         conn.execute(
             "DELETE FROM allocation_tags WHERE allocation_id IN (SELECT id FROM allocations WHERE supernet_id = ?1)",
             params![id],
-        ).map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+        ).map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         conn.execute(
             "DELETE FROM allocations WHERE supernet_id = ?1",
             params![id],
         )
-        .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         let deleted = conn
             .execute("DELETE FROM supernets WHERE id = ?1", params![id])
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         if deleted == 0 {
-            return Err(IpCalcError::SupernetNotFound(id.to_string()));
+            return Err(NetcidrError::SupernetNotFound(id.to_string()));
         }
         Ok(())
     }
@@ -312,7 +312,7 @@ impl IpamStore for SqliteStore {
                 input.environment, input.owner, status, input.parent_allocation_id, now, now,
                 expires_at
             ],
-        ).map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+        ).map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         // Insert tags
         if let Some(ref tags) = input.tags {
@@ -321,7 +321,7 @@ impl IpamStore for SqliteStore {
                     "INSERT INTO allocation_tags (allocation_id, key, value) VALUES (?1, ?2, ?3)",
                     params![id, tag.key, tag.value],
                 )
-                .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
             }
         }
 
@@ -359,8 +359,8 @@ impl IpamStore for SqliteStore {
                 Self::row_to_allocation,
             )
             .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => IpCalcError::AllocationNotFound(id.to_string()),
-                _ => IpCalcError::DatabaseError(e.to_string()),
+                rusqlite::Error::QueryReturnedNoRows => NetcidrError::AllocationNotFound(id.to_string()),
+                _ => NetcidrError::DatabaseError(e.to_string()),
             })?;
         alloc.tags = Self::load_tags_for_allocation(&conn, id)?;
         Ok(alloc)
@@ -415,12 +415,12 @@ impl IpamStore for SqliteStore {
 
         let mut stmt = conn
             .prepare(&sql)
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         let rows = stmt
             .query_map(params_refs.as_slice(), Self::row_to_allocation)
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
             .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         // Load tags for each allocation
         let mut allocations = rows;
@@ -441,8 +441,8 @@ impl IpamStore for SqliteStore {
             |_| Ok(()),
         )
         .map_err(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => IpCalcError::AllocationNotFound(id.to_string()),
-            _ => IpCalcError::DatabaseError(e.to_string()),
+            rusqlite::Error::QueryReturnedNoRows => NetcidrError::AllocationNotFound(id.to_string()),
+            _ => NetcidrError::DatabaseError(e.to_string()),
         })?;
 
         let mut sets = vec!["updated_at = ?1".to_string()];
@@ -489,7 +489,7 @@ impl IpamStore for SqliteStore {
             param_values.iter().map(|p| p.as_ref()).collect();
 
         conn.execute(&sql, params_refs.as_slice())
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         // Fetch updated allocation using same connection
         let mut alloc = conn
@@ -498,7 +498,7 @@ impl IpamStore for SqliteStore {
                 params![id],
                 Self::row_to_allocation,
             )
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         alloc.tags = Self::load_tags_for_allocation(&conn, id)?;
         Ok(alloc)
     }
@@ -512,7 +512,7 @@ impl IpamStore for SqliteStore {
                 "UPDATE allocations SET status = 'released', released_at = ?1, updated_at = ?1 WHERE id = ?2 AND status != 'released'",
                 params![now, id],
             )
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         if updated == 0 {
             let exists: bool = conn
@@ -521,9 +521,9 @@ impl IpamStore for SqliteStore {
                     params![id],
                     |row| row.get(0),
                 )
-                .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
             if !exists {
-                return Err(IpCalcError::AllocationNotFound(id.to_string()));
+                return Err(NetcidrError::AllocationNotFound(id.to_string()));
             }
         }
 
@@ -534,7 +534,7 @@ impl IpamStore for SqliteStore {
                 params![id],
                 Self::row_to_allocation,
             )
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         alloc.tags = Self::load_tags_for_allocation(&conn, id)?;
         Ok(alloc)
     }
@@ -565,12 +565,12 @@ impl IpamStore for SqliteStore {
 
         let mut stmt = conn
             .prepare(&sql)
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         let rows = stmt
             .query_map(params_refs.as_slice(), Self::row_to_allocation)
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
             .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         let mut allocations = rows;
         for alloc in &mut allocations {
@@ -587,14 +587,14 @@ impl IpamStore for SqliteStore {
             "DELETE FROM allocation_tags WHERE allocation_id = ?1",
             params![allocation_id],
         )
-        .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         for tag in tags {
             conn.execute(
                 "INSERT INTO allocation_tags (allocation_id, key, value) VALUES (?1, ?2, ?3)",
                 params![allocation_id, tag.key, tag.value],
             )
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         }
         Ok(())
     }
@@ -611,7 +611,7 @@ impl IpamStore for SqliteStore {
         conn.execute(
             "INSERT INTO audit_log (timestamp, action, entity_type, entity_id, details) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![entry.timestamp, entry.action, entry.entity_type, entry.entity_id, entry.details],
-        ).map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+        ).map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         Ok(())
     }
 
@@ -653,7 +653,7 @@ impl IpamStore for SqliteStore {
 
         let mut stmt = conn
             .prepare(&sql)
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         let rows = stmt
             .query_map(params_refs.as_slice(), |row| {
                 let id_int: i64 = row.get(0)?;
@@ -666,9 +666,9 @@ impl IpamStore for SqliteStore {
                     details: row.get(5)?,
                 })
             })
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
             .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         Ok(rows)
     }
 }
@@ -812,7 +812,7 @@ mod tests {
             .unwrap();
 
         let err = store.delete_supernet(&sn.id).await.unwrap_err();
-        assert!(matches!(err, IpCalcError::SupernetHasActiveAllocations(_)));
+        assert!(matches!(err, NetcidrError::SupernetHasActiveAllocations(_)));
     }
 
     #[tokio::test]

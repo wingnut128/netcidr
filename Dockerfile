@@ -29,16 +29,16 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates
 
 # Create non-root user
-RUN addgroup -g 1000 ipcalc && \
-    adduser -u 1000 -G ipcalc -s /bin/sh -D ipcalc
+RUN addgroup -g 1000 netcidr && \
+    adduser -u 1000 -G netcidr -s /bin/sh -D netcidr
 
 WORKDIR /app
 
 # Copy binary from builder
-COPY --from=builder /app/target/release/ipcalc /usr/local/bin/ipcalc
+COPY --from=builder /app/target/release/netcidr /usr/local/bin/netcidr
 
 # Switch to non-root user
-USER ipcalc
+USER netcidr
 
 # Default port for API server
 EXPOSE 8080
@@ -47,5 +47,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD wget -qO- http://localhost:8080/health || exit 1
 
 # Default command
-ENTRYPOINT ["ipcalc"]
+ENTRYPOINT ["netcidr"]
 CMD ["--help"]

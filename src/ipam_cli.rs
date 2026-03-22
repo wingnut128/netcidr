@@ -1,10 +1,10 @@
-use ipcalc::cli::{AllocationCommands, IpamCommands, SupernetCommands, TagCommands};
-use ipcalc::error::Result;
-use ipcalc::ipam::config::IpamConfig;
-use ipcalc::ipam::models::*;
-use ipcalc::ipam::operations::IpamOps;
-use ipcalc::output::{CsvOutput, OutputWriter, TextOutput};
-use ipcalc::validation;
+use netcidr::cli::{AllocationCommands, IpamCommands, SupernetCommands, TagCommands};
+use netcidr::error::Result;
+use netcidr::ipam::config::IpamConfig;
+use netcidr::ipam::models::*;
+use netcidr::ipam::operations::IpamOps;
+use netcidr::output::{CsvOutput, OutputWriter, TextOutput};
+use netcidr::validation;
 use serde::Serialize;
 
 use crate::print_stdout;
@@ -22,7 +22,7 @@ fn output_result<T: Serialize + TextOutput + CsvOutput>(
 
 async fn create_ops(db: Option<&str>) -> Result<IpamOps> {
     let config = IpamConfig::default();
-    let store = ipcalc::ipam::create_store(&config, db, None).await?;
+    let store = netcidr::ipam::create_store(&config, db, None).await?;
     Ok(IpamOps::new(store))
 }
 
@@ -37,7 +37,7 @@ fn parse_tags(tags: &[String]) -> Result<Vec<Tag>> {
     let mut result = Vec::with_capacity(tags.len());
     for tag in tags {
         let (key, value) = tag.split_once('=').ok_or_else(|| {
-            ipcalc::error::IpCalcError::InvalidInput(format!(
+            netcidr::error::NetcidrError::InvalidInput(format!(
                 "tag '{}' must be in key=value format",
                 tag
             ))
@@ -291,7 +291,7 @@ pub async fn handle_ipam_command(
         IpamCommands::Load { file } => {
             let json = match file {
                 Some(path) => std::fs::read_to_string(&path).map_err(|e| {
-                    ipcalc::error::IpCalcError::InvalidInput(format!(
+                    netcidr::error::NetcidrError::InvalidInput(format!(
                         "failed to read {}: {}",
                         path, e
                     ))
@@ -300,7 +300,7 @@ pub async fn handle_ipam_command(
                     use std::io::Read;
                     let mut buf = String::new();
                     std::io::stdin().read_to_string(&mut buf).map_err(|e| {
-                        ipcalc::error::IpCalcError::InvalidInput(format!(
+                        netcidr::error::NetcidrError::InvalidInput(format!(
                             "failed to read stdin: {}",
                             e
                         ))
@@ -309,9 +309,9 @@ pub async fn handle_ipam_command(
                 }
             };
 
-            let dump: ipcalc::ipam::models::IpamDump =
+            let dump: netcidr::ipam::models::IpamDump =
                 serde_json::from_str(&json).map_err(|e| {
-                    ipcalc::error::IpCalcError::InvalidInput(format!("invalid JSON: {}", e))
+                    netcidr::error::NetcidrError::InvalidInput(format!("invalid JSON: {}", e))
                 })?;
 
             let (sn_count, alloc_count) = ops.load(&dump).await?;

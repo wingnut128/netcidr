@@ -29,7 +29,7 @@ use crate::config::ServerConfig;
 #[cfg(feature = "swagger")]
 use crate::contains::ContainsResult;
 use crate::contains::{check_ipv4_contains, check_ipv6_contains};
-use crate::error::IpCalcError;
+use crate::error::NetcidrError;
 #[cfg(feature = "swagger")]
 use crate::from_range::{Ipv4FromRangeResult, Ipv6FromRangeResult};
 use crate::from_range::{from_range_ipv4_with_limit, from_range_ipv6_with_limit};
@@ -98,11 +98,11 @@ use crate::ipam_api::{AllocateSpecificRequest, AutoAllocateBody, IpamErrorRespon
         )
     ),
     tags(
-        (name = "ipcalc", description = "IP subnet calculator API"),
+        (name = "netcidr", description = "IP subnet calculator API"),
         (name = "ipam", description = "IP Address Management API"),
     ),
     info(
-        title = "ipcalc API",
+        title = "netcidr API",
         version = env!("CARGO_PKG_VERSION"),
         description = "A fast IPv4 and IPv6 subnet calculator API with IP address management",
     )
@@ -301,7 +301,7 @@ fn format_response<T: Serialize + TextOutput + CsvOutput>(
             Ok(body) => build_response(status, "application/yaml", body),
             Err(e) => json_response(
                 ErrorResponse {
-                    error: IpCalcError::Yaml(e.to_string()).to_string(),
+                    error: NetcidrError::Yaml(e.to_string()).to_string(),
                 },
                 false,
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -417,7 +417,7 @@ pub fn create_router(config: RouterConfig) -> Router {
     responses(
         (status = 200, description = "Service is healthy", body = String)
     ),
-    tag = "ipcalc"
+    tag = "netcidr"
 ))]
 async fn health() -> &'static str {
     "OK"
@@ -429,7 +429,7 @@ async fn health() -> &'static str {
     responses(
         (status = 200, description = "Version information", body = VersionResponse)
     ),
-    tag = "ipcalc"
+    tag = "netcidr"
 ))]
 async fn version() -> Json<VersionResponse> {
     Json(VersionResponse {
@@ -466,7 +466,7 @@ fn json_response<T: Serialize>(value: T, pretty: bool, status: StatusCode) -> Re
         (status = 200, description = "IPv4 subnet information", body = Ipv4Subnet),
         (status = 400, description = "Invalid CIDR notation", body = ErrorResponse)
     ),
-    tag = "ipcalc"
+    tag = "netcidr"
 ))]
 #[instrument(skip_all, fields(cidr = %params.cidr))]
 async fn calculate_ipv4(Query(params): Query<SubnetQuery>) -> impl IntoResponse {
@@ -499,7 +499,7 @@ async fn calculate_ipv4(Query(params): Query<SubnetQuery>) -> impl IntoResponse 
         (status = 200, description = "IPv6 subnet information", body = Ipv6Subnet),
         (status = 400, description = "Invalid CIDR notation", body = ErrorResponse)
     ),
-    tag = "ipcalc"
+    tag = "netcidr"
 ))]
 #[instrument(skip_all, fields(cidr = %params.cidr))]
 async fn calculate_ipv6(Query(params): Query<SubnetQuery>) -> impl IntoResponse {
@@ -532,7 +532,7 @@ async fn calculate_ipv6(Query(params): Query<SubnetQuery>) -> impl IntoResponse 
         (status = 200, description = "Generated IPv4 subnets", body = Ipv4SubnetList),
         (status = 400, description = "Invalid parameters", body = ErrorResponse)
     ),
-    tag = "ipcalc"
+    tag = "netcidr"
 ))]
 #[instrument(skip_all, fields(cidr = %params.cidr, prefix = params.prefix, count = ?params.count, max = params.max))]
 async fn split_ipv4(Query(params): Query<SplitQuery>) -> impl IntoResponse {
@@ -607,7 +607,7 @@ async fn split_ipv4(Query(params): Query<SplitQuery>) -> impl IntoResponse {
         (status = 200, description = "Generated IPv6 subnets", body = Ipv6SubnetList),
         (status = 400, description = "Invalid parameters", body = ErrorResponse)
     ),
-    tag = "ipcalc"
+    tag = "netcidr"
 ))]
 #[instrument(skip_all, fields(cidr = %params.cidr, prefix = params.prefix, count = ?params.count, max = params.max))]
 async fn split_ipv6(Query(params): Query<SplitQuery>) -> impl IntoResponse {
@@ -682,7 +682,7 @@ async fn split_ipv6(Query(params): Query<SplitQuery>) -> impl IntoResponse {
         (status = 200, description = "IPv4 containment check result", body = ContainsResult),
         (status = 400, description = "Invalid parameters", body = ErrorResponse)
     ),
-    tag = "ipcalc"
+    tag = "netcidr"
 ))]
 #[instrument(skip_all, fields(cidr = %params.cidr, address = %params.address))]
 async fn contains_ipv4(Query(params): Query<ContainsQuery>) -> impl IntoResponse {
@@ -718,7 +718,7 @@ async fn contains_ipv4(Query(params): Query<ContainsQuery>) -> impl IntoResponse
         (status = 200, description = "IPv6 containment check result", body = ContainsResult),
         (status = 400, description = "Invalid parameters", body = ErrorResponse)
     ),
-    tag = "ipcalc"
+    tag = "netcidr"
 ))]
 #[instrument(skip_all, fields(cidr = %params.cidr, address = %params.address))]
 async fn contains_ipv6(Query(params): Query<ContainsQuery>) -> impl IntoResponse {
@@ -754,7 +754,7 @@ async fn contains_ipv6(Query(params): Query<ContainsQuery>) -> impl IntoResponse
         (status = 200, description = "Summarized IPv4 CIDRs", body = Ipv4SummaryResult),
         (status = 400, description = "Invalid parameters", body = ErrorResponse)
     ),
-    tag = "ipcalc"
+    tag = "netcidr"
 ))]
 #[instrument(skip_all, fields(cidrs = %params.cidrs))]
 async fn summarize_ipv4_handler(
@@ -801,7 +801,7 @@ async fn summarize_ipv4_handler(
         (status = 200, description = "Summarized IPv6 CIDRs", body = Ipv6SummaryResult),
         (status = 400, description = "Invalid parameters", body = ErrorResponse)
     ),
-    tag = "ipcalc"
+    tag = "netcidr"
 ))]
 #[instrument(skip_all, fields(cidrs = %params.cidrs))]
 async fn summarize_ipv6_handler(
@@ -848,7 +848,7 @@ async fn summarize_ipv6_handler(
         (status = 200, description = "CIDR blocks covering the IPv4 range", body = Ipv4FromRangeResult),
         (status = 400, description = "Invalid parameters", body = ErrorResponse)
     ),
-    tag = "ipcalc"
+    tag = "netcidr"
 ))]
 #[instrument(skip_all, fields(start = %params.start, end = %params.end))]
 async fn from_range_ipv4_handler(
@@ -884,7 +884,7 @@ async fn from_range_ipv4_handler(
         (status = 200, description = "CIDR blocks covering the IPv6 range", body = Ipv6FromRangeResult),
         (status = 400, description = "Invalid parameters", body = ErrorResponse)
     ),
-    tag = "ipcalc"
+    tag = "netcidr"
 ))]
 #[instrument(skip_all, fields(start = %params.start, end = %params.end))]
 async fn from_range_ipv6_handler(
@@ -918,7 +918,7 @@ async fn from_range_ipv6_handler(
         (status = 200, description = "Batch CIDR processing results", body = BatchResult),
         (status = 400, description = "Invalid request (e.g., empty CIDR list)", body = ErrorResponse)
     ),
-    tag = "ipcalc"
+    tag = "netcidr"
 ))]
 #[instrument(skip_all, fields(count = params.cidrs.len()))]
 async fn batch_handler(

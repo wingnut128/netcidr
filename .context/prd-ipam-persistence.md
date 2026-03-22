@@ -8,7 +8,7 @@
 
 ## 1. Problem Statement
 
-ipcalc currently operates as a stateless calculator — it computes subnet details, splits, containment checks, and summarizations on demand but retains no knowledge of prior allocations. The VPC allocation trial against `100.64.0.0/10` demonstrated that while the MCP server can generate allocation plans, there is no mechanism to:
+netcidr currently operates as a stateless calculator — it computes subnet details, splits, containment checks, and summarizations on demand but retains no knowledge of prior allocations. The VPC allocation trial against `100.64.0.0/10` demonstrated that while the MCP server can generate allocation plans, there is no mechanism to:
 
 - Track which blocks have been allocated vs. free
 - Prevent overlapping or conflicting allocations
@@ -16,7 +16,7 @@ ipcalc currently operates as a stateless calculator — it computes subnet detai
 - Audit allocation history over time
 - Reclaim deallocated space
 
-Without persistence, every planning session starts from scratch and relies on the operator to maintain external records. This limits ipcalc's usefulness as a lightweight IPAM tool.
+Without persistence, every planning session starts from scratch and relies on the operator to maintain external records. This limits netcidr's usefulness as a lightweight IPAM tool.
 
 ## 2. Goals
 
@@ -87,9 +87,9 @@ The existing stateless calculation modules remain untouched. A new `ipam` module
 
 **SQLite database location (precedence order):**
 1. `--db <path>` CLI flag
-2. `IPCALC_DB` environment variable
-3. `db_path` in `ipcalc.toml` config
-4. Default: `$XDG_DATA_HOME/ipcalc/ipcalc.db` (or `~/.local/share/ipcalc/ipcalc.db`)
+2. `NETCIDR_DB` environment variable
+3. `db_path` in `netcidr.toml` config
+4. Default: `$XDG_DATA_HOME/netcidr/netcidr.db` (or `~/.local/share/netcidr/netcidr.db`)
 
 ### Backend: PostgreSQL (Optional)
 
@@ -291,29 +291,29 @@ For `allocate` (auto-assign), the algorithm walks the supernet's address space, 
 
 ### 8.1 CLI
 
-New subcommand: `ipcalc ipam <action>`
+New subcommand: `netcidr ipam <action>`
 
 ```
-ipcalc ipam init                                 # Initialize DB (auto on first use)
-ipcalc ipam supernet add 100.64.0.0/10 --name "CGN Pool"
-ipcalc ipam supernet list
-ipcalc ipam supernet show <id>
-ipcalc ipam supernet remove <id>
+netcidr ipam init                                 # Initialize DB (auto on first use)
+netcidr ipam supernet add 100.64.0.0/10 --name "CGN Pool"
+netcidr ipam supernet list
+netcidr ipam supernet show <id>
+netcidr ipam supernet remove <id>
 
-ipcalc ipam allocate <supernet-id> --prefix 20 --count 10 \
+netcidr ipam allocate <supernet-id> --prefix 20 --count 10 \
     --resource-type vpc --env production --owner platform-team
-ipcalc ipam allocate-specific <supernet-id> --cidr 100.64.0.0/20 \
+netcidr ipam allocate-specific <supernet-id> --cidr 100.64.0.0/20 \
     --resource-id vpc-a1f04e01 --resource-type vpc
-ipcalc ipam release <allocation-id>
-ipcalc ipam list [--supernet <id>] [--status active] [--env production]
-ipcalc ipam show <allocation-id>
-ipcalc ipam update <allocation-id> --owner new-team --env staging
+netcidr ipam release <allocation-id>
+netcidr ipam list [--supernet <id>] [--status active] [--env production]
+netcidr ipam show <allocation-id>
+netcidr ipam update <allocation-id> --owner new-team --env staging
 
-ipcalc ipam free <supernet-id> [--prefix 20]
-ipcalc ipam utilization <supernet-id>
-ipcalc ipam find-ip 100.64.5.42
-ipcalc ipam find-resource vpc-a1f04e01
-ipcalc ipam audit [--entity <id>] [--action allocate] [--limit 50]
+netcidr ipam free <supernet-id> [--prefix 20]
+netcidr ipam utilization <supernet-id>
+netcidr ipam find-ip 100.64.5.42
+netcidr ipam find-resource vpc-a1f04e01
+netcidr ipam audit [--entity <id>] [--action allocate] [--limit 50]
 ```
 
 All commands respect `--format json|text|csv|yaml` and `--output <file>`.
@@ -441,7 +441,7 @@ Use `sqlx::migrate!()` macro with SQL files in `migrations/postgres/`. The macro
 
 ## 11. Configuration Additions
 
-New fields in `ipcalc.toml`:
+New fields in `netcidr.toml`:
 
 ```toml
 [ipam]
@@ -450,17 +450,17 @@ backend = "sqlite"                 # "sqlite" | "postgres"
 auto_init = true                   # create/migrate DB on first use
 
 [ipam.sqlite]
-db_path = "/path/to/ipcalc.db"    # optional; default: $XDG_DATA_HOME/ipcalc/ipcalc.db
+db_path = "/path/to/netcidr.db"    # optional; default: $XDG_DATA_HOME/netcidr/netcidr.db
 wal_mode = true                    # WAL for read concurrency
 
 [ipam.postgres]
-url = "postgresql://user:pass@host:5432/ipcalc"
+url = "postgresql://user:pass@host:5432/netcidr"
 max_connections = 10
 min_connections = 2
 
 ```
 
-New CLI flags on `ipcalc serve`:
+New CLI flags on `netcidr serve`:
 
 ```
 --ipam-backend <name>  Storage backend: sqlite, postgres (default: sqlite)
@@ -472,9 +472,9 @@ New CLI flags on `ipcalc serve`:
 Environment variables (override config file, overridden by CLI flags):
 
 ```
-IPCALC_IPAM_BACKEND=sqlite|postgres
-IPCALC_IPAM_DB=/path/to/ipcalc.db          # sqlite
-IPCALC_IPAM_DB_URL=postgresql://...         # postgres
+NETCIDR_IPAM_BACKEND=sqlite|postgres
+NETCIDR_IPAM_DB=/path/to/netcidr.db          # sqlite
+NETCIDR_IPAM_DB_URL=postgresql://...         # postgres
 ```
 
 ## 12. Observability
@@ -482,12 +482,12 @@ IPCALC_IPAM_DB_URL=postgresql://...         # postgres
 - All IPAM operations logged via `tracing` with `#[instrument]`
 - Audit log queryable via CLI, API, and MCP
 - Utilization endpoint provides at-a-glance health metrics
-- Structured error responses consistent with existing `IpCalcError` pattern
+- Structured error responses consistent with existing `NetcidrError` pattern
 
 New error variants:
 
 ```rust
-pub enum IpCalcError {
+pub enum NetcidrError {
     // ... existing variants ...
     DatabaseError(String),
     AllocationConflict { existing: String, candidate: String },
@@ -507,7 +507,7 @@ pub enum IpCalcError {
 | Integration | Temp-file DB, exercise CLI subcommands via subprocess |
 | Conflict detection | Property-based tests: random CIDR pairs, verify no false negatives |
 | Migration | Test upgrade path from v0 → vN with sample data, per backend |
-| MCP | TypeScript integration tests mirroring existing `ipcalc.test.ts` pattern |
+| MCP | TypeScript integration tests mirroring existing `netcidr.test.ts` pattern |
 | Fuzz | Fuzz CIDR inputs to allocation functions |
 
 ## 14. Success Criteria
@@ -517,7 +517,7 @@ pub enum IpCalcError {
 - [ ] `free_blocks` accurately reflects remaining space after allocations and releases
 - [ ] Full VPC trial (as performed on 2026-03-02) can be reproduced via MCP with persistent state
 - [ ] Audit log captures every mutation with timestamps
-- [ ] Database survives `ipcalc` process restarts — state is durable
+- [ ] Database survives `netcidr` process restarts — state is durable
 - [ ] All three interfaces (CLI, API, MCP) can perform the same operations
 - [ ] Switching `backend = "postgres"` produces identical behavior to SQLite (trait contract tests pass on both)
 - [ ] `make check` passes with IPAM module included (SQLite default, additional backends with feature flags)

@@ -5,7 +5,7 @@ use chrono::Utc;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Row};
 
-use crate::error::{IpCalcError, Result};
+use crate::error::{NetcidrError, Result};
 use crate::ipam::config::PostgresConfig;
 use crate::ipam::models::*;
 use crate::ipam::store::IpamStore;
@@ -23,7 +23,7 @@ impl PostgresStore {
             .connect(url)
             .await
             .map_err(|e| {
-                IpCalcError::DatabaseError(format!("PostgreSQL connection failed: {e}"))
+                NetcidrError::DatabaseError(format!("PostgreSQL connection failed: {e}"))
             })?;
         Ok(Self { pool })
     }
@@ -37,7 +37,7 @@ impl PostgresStore {
             .bind(allocation_id)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         Ok(rows
             .iter()
             .map(|row| Tag {
@@ -99,12 +99,12 @@ impl IpamStore for PostgresStore {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         let row = sqlx::query("SELECT COALESCE(MAX(version), 0) as v FROM schema_version")
             .fetch_one(&self.pool)
             .await
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         let current: i32 = row.get("v");
         let current = current as u32;
 
@@ -120,14 +120,14 @@ impl IpamStore for PostgresStore {
                     sqlx::query(stmt)
                         .execute(&self.pool)
                         .await
-                        .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+                        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
                 }
                 sqlx::query("INSERT INTO schema_version (version, applied_at) VALUES ($1, $2)")
                     .bind(version as i32)
                     .bind(Self::now())
                     .execute(&self.pool)
                     .await
-                    .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+                    .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
             }
         }
         Ok(())
@@ -158,7 +158,7 @@ impl IpamStore for PostgresStore {
         .bind(&now)
         .execute(&self.pool)
         .await
-        .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         Ok(Supernet {
             id,
@@ -182,8 +182,8 @@ impl IpamStore for PostgresStore {
         .bind(id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?
-        .ok_or_else(|| IpCalcError::SupernetNotFound(id.to_string()))?;
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
+        .ok_or_else(|| NetcidrError::SupernetNotFound(id.to_string()))?;
 
         let total_hosts_i64: i64 = row.get("total_hosts");
         let total_hosts_text: Option<String> = row.get("total_hosts_text");
@@ -210,7 +210,7 @@ impl IpamStore for PostgresStore {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         Ok(rows
             .iter()
@@ -243,11 +243,11 @@ impl IpamStore for PostgresStore {
         .bind(id)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         let active_count: i64 = row.get("cnt");
 
         if active_count > 0 {
-            return Err(IpCalcError::SupernetHasActiveAllocations(id.to_string()));
+            return Err(NetcidrError::SupernetHasActiveAllocations(id.to_string()));
         }
 
         // Delete released allocations' tags, then allocations, then supernet
@@ -257,22 +257,22 @@ impl IpamStore for PostgresStore {
         .bind(id)
         .execute(&self.pool)
         .await
-        .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         sqlx::query("DELETE FROM allocations WHERE supernet_id = $1")
             .bind(id)
             .execute(&self.pool)
             .await
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         let result = sqlx::query("DELETE FROM supernets WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
             .await
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         if result.rows_affected() == 0 {
-            return Err(IpCalcError::SupernetNotFound(id.to_string()));
+            return Err(NetcidrError::SupernetNotFound(id.to_string()));
         }
         Ok(())
     }
@@ -318,7 +318,7 @@ impl IpamStore for PostgresStore {
         .bind(&expires_at)
         .execute(&self.pool)
         .await
-        .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         // Insert tags
         if let Some(ref tags) = input.tags {
@@ -331,7 +331,7 @@ impl IpamStore for PostgresStore {
                 .bind(&tag.value)
                 .execute(&self.pool)
                 .await
-                .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
             }
         }
 
@@ -367,8 +367,8 @@ impl IpamStore for PostgresStore {
         .bind(id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?
-        .ok_or_else(|| IpCalcError::AllocationNotFound(id.to_string()))?;
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
+        .ok_or_else(|| NetcidrError::AllocationNotFound(id.to_string()))?;
 
         let mut alloc = Self::row_to_allocation(&row);
         alloc.tags = self.load_tags_for_allocation(id).await?;
@@ -426,7 +426,7 @@ impl IpamStore for PostgresStore {
         let rows = query
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         let mut allocations: Vec<Allocation> = rows.iter().map(Self::row_to_allocation).collect();
         for alloc in &mut allocations {
@@ -443,10 +443,10 @@ impl IpamStore for PostgresStore {
             .bind(id)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         if exists.is_none() {
-            return Err(IpCalcError::AllocationNotFound(id.to_string()));
+            return Err(NetcidrError::AllocationNotFound(id.to_string()));
         }
 
         let mut sets = vec!["updated_at = $1".to_string()];
@@ -496,7 +496,7 @@ impl IpamStore for PostgresStore {
         query
             .execute(&self.pool)
             .await
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         self.get_allocation(id).await
     }
@@ -511,17 +511,17 @@ impl IpamStore for PostgresStore {
         .bind(id)
         .execute(&self.pool)
         .await
-        .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         if result.rows_affected() == 0 {
             let exists = sqlx::query("SELECT COUNT(*) as cnt FROM allocations WHERE id = $1")
                 .bind(id)
                 .fetch_one(&self.pool)
                 .await
-                .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
             let cnt: i64 = exists.get("cnt");
             if cnt == 0 {
-                return Err(IpCalcError::AllocationNotFound(id.to_string()));
+                return Err(NetcidrError::AllocationNotFound(id.to_string()));
             }
         }
 
@@ -556,7 +556,7 @@ impl IpamStore for PostgresStore {
         let rows = query
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         let mut allocations: Vec<Allocation> = rows.iter().map(Self::row_to_allocation).collect();
         for alloc in &mut allocations {
@@ -572,7 +572,7 @@ impl IpamStore for PostgresStore {
             .bind(allocation_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         for tag in tags {
             sqlx::query(
@@ -583,7 +583,7 @@ impl IpamStore for PostgresStore {
             .bind(&tag.value)
             .execute(&self.pool)
             .await
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         }
         Ok(())
     }
@@ -605,7 +605,7 @@ impl IpamStore for PostgresStore {
         .bind(&entry.details)
         .execute(&self.pool)
         .await
-        .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         Ok(())
     }
 
@@ -649,7 +649,7 @@ impl IpamStore for PostgresStore {
         let rows = query
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         Ok(rows
             .iter()

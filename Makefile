@@ -6,9 +6,9 @@
 .PHONY: dashboard dashboard-dev
 
 # Variables
-BINARY_NAME := ipcalc
+BINARY_NAME := netcidr
 VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-DOCKER_IMAGE := ipcalc
+DOCKER_IMAGE := netcidr
 DOCKER_TAG := $(VERSION)
 
 # Default target
@@ -151,7 +151,7 @@ version:
 
 # Help
 help:
-	@echo "ipcalc Makefile"
+	@echo "netcidr Makefile"
 	@echo ""
 	@echo "Usage: make [target]"
 	@echo ""

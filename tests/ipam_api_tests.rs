@@ -4,11 +4,11 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use axum::response::Response;
 use http_body_util::BodyExt;
-use ipcalc::api::{RouterConfig, create_router};
-use ipcalc::config::ServerConfig;
-use ipcalc::ipam::operations::IpamOps;
-use ipcalc::ipam::sqlite::SqliteStore;
-use ipcalc::ipam::store::IpamStore;
+use netcidr::api::{RouterConfig, create_router};
+use netcidr::config::ServerConfig;
+use netcidr::ipam::operations::IpamOps;
+use netcidr::ipam::sqlite::SqliteStore;
+use netcidr::ipam::store::IpamStore;
 use tower::ServiceExt;
 
 async fn ipam_app() -> axum::Router {

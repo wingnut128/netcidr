@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 
-use crate::error::{IpCalcError, Result};
+use crate::error::{NetcidrError, Result};
 use crate::ipam::models::*;
 use crate::ipam::store::IpamStore;
 use crate::validation;
@@ -46,7 +46,7 @@ impl IpamOps {
         for sn in &existing {
             let existing_range = parse_range(&sn.cidr)?;
             if ranges_overlap(&candidate, &existing_range) {
-                return Err(IpCalcError::AllocationConflict {
+                return Err(NetcidrError::AllocationConflict {
                     existing: sn.cidr.clone(),
                     candidate: input.cidr.clone(),
                 });
@@ -99,7 +99,7 @@ impl IpamOps {
 
         // Verify the candidate falls within the supernet
         if !range_contains(&supernet_range, &candidate_range) {
-            return Err(IpCalcError::AllocationConflict {
+            return Err(NetcidrError::AllocationConflict {
                 existing: supernet.cidr.clone(),
                 candidate: format!("{} is outside supernet", input.cidr),
             });
@@ -110,7 +110,7 @@ impl IpamOps {
             let parent = self.store.get_allocation(parent_id).await?;
             let parent_range = parse_range(&parent.cidr)?;
             if !range_contains(&parent_range, &candidate_range) {
-                return Err(IpCalcError::AllocationConflict {
+                return Err(NetcidrError::AllocationConflict {
                     existing: parent.cidr.clone(),
                     candidate: format!("{} does not fit within parent allocation", input.cidr),
                 });
@@ -169,7 +169,7 @@ impl IpamOps {
         // Validate prefix length is within range for the IP version
         let max_prefix: u8 = if supernet_range.is_v4 { 32 } else { 128 };
         if request.prefix_length > max_prefix {
-            return Err(IpCalcError::InvalidInput(format!(
+            return Err(NetcidrError::InvalidInput(format!(
                 "prefix length {} exceeds maximum {} for IPv{}",
                 request.prefix_length,
                 max_prefix,
@@ -198,7 +198,7 @@ impl IpamOps {
         )?;
 
         if blocks.is_empty() {
-            return Err(IpCalcError::NoFreeSpace {
+            return Err(NetcidrError::NoFreeSpace {
                 supernet: supernet.cidr.clone(),
                 prefix: request.prefix_length,
             });
@@ -532,7 +532,7 @@ impl IpamOps {
         // Check for existing data
         let existing = self.store.list_supernets().await?;
         if !existing.is_empty() {
-            return Err(IpCalcError::InvalidInput(
+            return Err(NetcidrError::InvalidInput(
                 "cannot import into a non-empty store — existing supernets found".to_string(),
             ));
         }
@@ -569,14 +569,14 @@ impl IpamOps {
                         .find(|sn| sn.id == alloc.supernet_id)
                         .map(|sn| sn.cidr.as_str())
                         .ok_or_else(|| {
-                            IpCalcError::InvalidInput(format!(
+                            NetcidrError::InvalidInput(format!(
                                 "allocation {} references unknown supernet {}",
                                 alloc.cidr, alloc.supernet_id
                             ))
                         })?,
                 )
                 .ok_or_else(|| {
-                    IpCalcError::InvalidInput(format!(
+                    NetcidrError::InvalidInput(format!(
                         "failed to map supernet for allocation {}",
                         alloc.cidr
                     ))
@@ -664,7 +664,7 @@ impl IpamOps {
             if let Ok(range) = parse_range(&alloc.cidr)
                 && ranges_overlap(candidate, &range)
             {
-                return Err(IpCalcError::AllocationConflict {
+                return Err(NetcidrError::AllocationConflict {
                     existing: alloc.cidr.clone(),
                     candidate: candidate_cidr.to_string(),
                 });
@@ -707,10 +707,10 @@ pub struct IpRange {
 fn parse_range(cidr: &str) -> Result<IpRange> {
     let (addr_str, prefix_str) = cidr
         .split_once('/')
-        .ok_or_else(|| IpCalcError::InvalidCidr(cidr.to_string()))?;
+        .ok_or_else(|| NetcidrError::InvalidCidr(cidr.to_string()))?;
     let prefix: u8 = prefix_str
         .parse()
-        .map_err(|_| IpCalcError::InvalidCidr(cidr.to_string()))?;
+        .map_err(|_| NetcidrError::InvalidCidr(cidr.to_string()))?;
 
     if let Ok(addr) = addr_str.parse::<Ipv4Addr>() {
         let addr_u32 = u32::from(addr);
@@ -741,7 +741,7 @@ fn parse_range(cidr: &str) -> Result<IpRange> {
             is_v4: false,
         })
     } else {
-        Err(IpCalcError::InvalidCidr(cidr.to_string()))
+        Err(NetcidrError::InvalidCidr(cidr.to_string()))
     }
 }
 
@@ -751,7 +751,7 @@ fn parse_ip(address: &str) -> Result<u128> {
     } else if let Ok(v6) = address.parse::<Ipv6Addr>() {
         Ok(u128::from(v6))
     } else {
-        Err(IpCalcError::InvalidCidr(address.to_string()))
+        Err(NetcidrError::InvalidCidr(address.to_string()))
     }
 }
 
@@ -772,7 +772,7 @@ fn validate_same_ip_version(
     if supernet.is_v4 != candidate.is_v4 {
         let sn_ver = if supernet.is_v4 { "IPv4" } else { "IPv6" };
         let cand_ver = if candidate.is_v4 { "IPv4" } else { "IPv6" };
-        return Err(IpCalcError::InvalidInput(format!(
+        return Err(NetcidrError::InvalidInput(format!(
             "cannot allocate {cand_ver} CIDR {candidate_cidr} in {sn_ver} supernet"
         )));
     }
@@ -812,7 +812,7 @@ fn find_free_blocks(
 ) -> Result<Vec<String>> {
     let bits = if supernet.is_v4 { 32 } else { 128 };
     if prefix > bits {
-        return Err(IpCalcError::InvalidPrefixLength(prefix));
+        return Err(NetcidrError::InvalidPrefixLength(prefix));
     }
     let block_size: u128 = 1u128 << (bits - prefix);
 
@@ -942,7 +942,7 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(err, IpCalcError::AllocationConflict { .. }));
+        assert!(matches!(err, NetcidrError::AllocationConflict { .. }));
     }
 
     #[tokio::test]
@@ -997,7 +997,7 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(err, IpCalcError::AllocationConflict { .. }));
+        assert!(matches!(err, NetcidrError::AllocationConflict { .. }));
     }
 
     #[tokio::test]
@@ -1445,7 +1445,7 @@ mod tests {
         };
 
         let err = ops.load(&dump).await.unwrap_err();
-        assert!(matches!(err, IpCalcError::InvalidInput(_)));
+        assert!(matches!(err, NetcidrError::InvalidInput(_)));
     }
 
     #[test]
@@ -1539,7 +1539,7 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(err, IpCalcError::InvalidInput(_)));
+        assert!(matches!(err, NetcidrError::InvalidInput(_)));
         assert!(err.to_string().contains("IPv4"));
         assert!(err.to_string().contains("IPv6"));
     }
@@ -1575,7 +1575,7 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(err, IpCalcError::InvalidInput(_)));
+        assert!(matches!(err, NetcidrError::InvalidInput(_)));
     }
 
     #[tokio::test]
@@ -1610,7 +1610,7 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(err, IpCalcError::InvalidInput(_)));
+        assert!(matches!(err, NetcidrError::InvalidInput(_)));
         assert!(err.to_string().contains("prefix length 33"));
     }
 
@@ -1658,7 +1658,7 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(err, IpCalcError::AllocationConflict { .. }));
+        assert!(matches!(err, NetcidrError::AllocationConflict { .. }));
     }
 
     #[tokio::test]
@@ -1746,7 +1746,7 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(err, IpCalcError::AllocationConflict { .. }));
+        assert!(matches!(err, NetcidrError::AllocationConflict { .. }));
     }
 
     #[tokio::test]
@@ -2559,7 +2559,7 @@ mod tests {
         for handle in handles {
             match handle.await.unwrap() {
                 Ok(_) => success_count += 1,
-                Err(IpCalcError::AllocationConflict { .. }) => conflict_count += 1,
+                Err(NetcidrError::AllocationConflict { .. }) => conflict_count += 1,
                 Err(e) => panic!("unexpected error: {e}"),
             }
         }
@@ -2742,7 +2742,7 @@ mod tests {
         for handle in handles {
             match handle.await.unwrap() {
                 Ok(_) => success_count += 1,
-                Err(IpCalcError::AllocationConflict { .. }) => conflict_count += 1,
+                Err(NetcidrError::AllocationConflict { .. }) => conflict_count += 1,
                 Err(e) => panic!("unexpected error: {e}"),
             }
         }

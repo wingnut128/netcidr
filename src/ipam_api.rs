@@ -11,7 +11,7 @@ use serde::Deserialize;
 #[cfg(feature = "swagger")]
 use utoipa::{IntoParams, ToSchema};
 
-use crate::error::IpCalcError;
+use crate::error::NetcidrError;
 use crate::ipam::models::*;
 use crate::ipam::operations::IpamOps;
 
@@ -19,32 +19,32 @@ use crate::ipam::operations::IpamOps;
 // Error mapping
 // ---------------------------------------------------------------------------
 
-fn ipam_error_response(err: IpCalcError) -> Response {
+fn ipam_error_response(err: NetcidrError) -> Response {
     let status = match &err {
-        IpCalcError::InvalidCidr(_)
-        | IpCalcError::InvalidPrefixLength { .. }
-        | IpCalcError::InvalidInput(_)
-        | IpCalcError::InvalidSubnetSplit { .. }
-        | IpCalcError::InvalidIpv4Address(_)
-        | IpCalcError::InvalidIpv6Address(_) => StatusCode::BAD_REQUEST,
+        NetcidrError::InvalidCidr(_)
+        | NetcidrError::InvalidPrefixLength { .. }
+        | NetcidrError::InvalidInput(_)
+        | NetcidrError::InvalidSubnetSplit { .. }
+        | NetcidrError::InvalidIpv4Address(_)
+        | NetcidrError::InvalidIpv6Address(_) => StatusCode::BAD_REQUEST,
 
-        IpCalcError::SupernetNotFound(_) | IpCalcError::AllocationNotFound(_) => {
+        NetcidrError::SupernetNotFound(_) | NetcidrError::AllocationNotFound(_) => {
             StatusCode::NOT_FOUND
         }
 
-        IpCalcError::AllocationConflict { .. } | IpCalcError::SupernetHasActiveAllocations(_) => {
+        NetcidrError::AllocationConflict { .. } | NetcidrError::SupernetHasActiveAllocations(_) => {
             StatusCode::CONFLICT
         }
 
-        IpCalcError::NoFreeSpace { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+        NetcidrError::NoFreeSpace { .. } => StatusCode::UNPROCESSABLE_ENTITY,
 
-        IpCalcError::DatabaseError(msg)
+        NetcidrError::DatabaseError(msg)
             if msg.contains("not found") || msg.contains("No supernet") =>
         {
             StatusCode::NOT_FOUND
         }
 
-        IpCalcError::DatabaseError(msg) if msg.contains("overlap") || msg.contains("conflict") => {
+        NetcidrError::DatabaseError(msg) if msg.contains("overlap") || msg.contains("conflict") => {
             StatusCode::CONFLICT
         }
 

@@ -1,6 +1,6 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use crate::error::{IpCalcError, Result};
+use crate::error::{NetcidrError, Result};
 use crate::ipam::models::AllocationStatus;
 
 /// Maximum length for CIDR and IP address input strings.
@@ -26,32 +26,32 @@ fn has_path_traversal(s: &str) -> bool {
 /// Validate a CIDR string: length, no control chars, valid format (addr/prefix).
 pub fn validate_cidr(s: &str) -> Result<()> {
     if s.len() > MAX_INPUT_LENGTH {
-        return Err(IpCalcError::InputTooLong {
+        return Err(NetcidrError::InputTooLong {
             length: s.len(),
             limit: MAX_INPUT_LENGTH,
         });
     }
 
     if has_control_chars(s) {
-        return Err(IpCalcError::InvalidInput(
+        return Err(NetcidrError::InvalidInput(
             "CIDR contains control characters".to_string(),
         ));
     }
 
     let (addr_str, prefix_str) = s
         .split_once('/')
-        .ok_or_else(|| IpCalcError::InvalidCidr(s.to_string()))?;
+        .ok_or_else(|| NetcidrError::InvalidCidr(s.to_string()))?;
 
     let _prefix: u8 = prefix_str
         .parse()
-        .map_err(|_| IpCalcError::InvalidCidr(s.to_string()))?;
+        .map_err(|_| NetcidrError::InvalidCidr(s.to_string()))?;
 
     // Must parse as either IPv4 or IPv6
     let is_v4 = addr_str.parse::<Ipv4Addr>().is_ok();
     let is_v6 = addr_str.parse::<Ipv6Addr>().is_ok();
 
     if !is_v4 && !is_v6 {
-        return Err(IpCalcError::InvalidCidr(s.to_string()));
+        return Err(NetcidrError::InvalidCidr(s.to_string()));
     }
 
     // Validate prefix range
@@ -67,14 +67,14 @@ pub fn validate_cidr(s: &str) -> Result<()> {
 /// Validate an IP address string: length, no control chars, parseable.
 pub fn validate_ip_address(s: &str) -> Result<()> {
     if s.len() > MAX_INPUT_LENGTH {
-        return Err(IpCalcError::InputTooLong {
+        return Err(NetcidrError::InputTooLong {
             length: s.len(),
             limit: MAX_INPUT_LENGTH,
         });
     }
 
     if has_control_chars(s) {
-        return Err(IpCalcError::InvalidInput(
+        return Err(NetcidrError::InvalidInput(
             "IP address contains control characters".to_string(),
         ));
     }
@@ -83,7 +83,7 @@ pub fn validate_ip_address(s: &str) -> Result<()> {
     let is_v6 = s.parse::<Ipv6Addr>().is_ok();
 
     if !is_v4 && !is_v6 {
-        return Err(IpCalcError::InvalidInput(format!(
+        return Err(NetcidrError::InvalidInput(format!(
             "not a valid IPv4 or IPv6 address: {}",
             s
         )));
@@ -96,7 +96,7 @@ pub fn validate_ip_address(s: &str) -> Result<()> {
 pub fn validate_prefix_length(prefix: u8, ip_version: u8) -> Result<()> {
     let max = if ip_version == 4 { 32 } else { 128 };
     if prefix > max {
-        return Err(IpCalcError::InvalidPrefixLength(prefix));
+        return Err(NetcidrError::InvalidPrefixLength(prefix));
     }
     Ok(())
 }
@@ -110,14 +110,14 @@ pub fn validate_text_field(s: &str, max_len: usize) -> Result<()> {
     };
 
     if s.len() > limit {
-        return Err(IpCalcError::InputTooLong {
+        return Err(NetcidrError::InputTooLong {
             length: s.len(),
             limit,
         });
     }
 
     if has_control_chars(s) {
-        return Err(IpCalcError::InvalidInput(
+        return Err(NetcidrError::InvalidInput(
             "text field contains control characters".to_string(),
         ));
     }
@@ -128,26 +128,26 @@ pub fn validate_text_field(s: &str, max_len: usize) -> Result<()> {
 /// Validate an identifier (UUID, resource ID): reject path traversal, null bytes, control chars.
 pub fn validate_identifier(s: &str) -> Result<()> {
     if s.is_empty() {
-        return Err(IpCalcError::InvalidInput(
+        return Err(NetcidrError::InvalidInput(
             "identifier cannot be empty".to_string(),
         ));
     }
 
     if s.len() > MAX_IDENTIFIER_LENGTH {
-        return Err(IpCalcError::InputTooLong {
+        return Err(NetcidrError::InputTooLong {
             length: s.len(),
             limit: MAX_IDENTIFIER_LENGTH,
         });
     }
 
     if has_control_chars(s) {
-        return Err(IpCalcError::InvalidInput(
+        return Err(NetcidrError::InvalidInput(
             "identifier contains control characters".to_string(),
         ));
     }
 
     if has_path_traversal(s) {
-        return Err(IpCalcError::InvalidInput(
+        return Err(NetcidrError::InvalidInput(
             "identifier contains path traversal sequence".to_string(),
         ));
     }
@@ -161,7 +161,7 @@ pub fn sanitize_status(s: &str) -> Result<AllocationStatus> {
         "active" => Ok(AllocationStatus::Active),
         "reserved" => Ok(AllocationStatus::Reserved),
         "released" => Ok(AllocationStatus::Released),
-        _ => Err(IpCalcError::InvalidInput(format!(
+        _ => Err(NetcidrError::InvalidInput(format!(
             "invalid status '{}': must be one of: active, reserved, released",
             s
         ))),
@@ -211,43 +211,43 @@ mod tests {
     fn cidr_too_long() {
         let long = format!("{}192.168.1.0/24", "x".repeat(300));
         let err = validate_cidr(&long).unwrap_err();
-        assert!(matches!(err, IpCalcError::InputTooLong { .. }));
+        assert!(matches!(err, NetcidrError::InputTooLong { .. }));
     }
 
     #[test]
     fn cidr_with_control_chars() {
         let err = validate_cidr("192.168.1.0\x00/24").unwrap_err();
-        assert!(matches!(err, IpCalcError::InvalidInput(_)));
+        assert!(matches!(err, NetcidrError::InvalidInput(_)));
     }
 
     #[test]
     fn cidr_missing_slash() {
         let err = validate_cidr("192.168.1.0").unwrap_err();
-        assert!(matches!(err, IpCalcError::InvalidCidr(_)));
+        assert!(matches!(err, NetcidrError::InvalidCidr(_)));
     }
 
     #[test]
     fn cidr_invalid_prefix() {
         let err = validate_cidr("192.168.1.0/33").unwrap_err();
-        assert!(matches!(err, IpCalcError::InvalidPrefixLength(33)));
+        assert!(matches!(err, NetcidrError::InvalidPrefixLength(33)));
     }
 
     #[test]
     fn cidr_invalid_address() {
         let err = validate_cidr("999.999.999.999/24").unwrap_err();
-        assert!(matches!(err, IpCalcError::InvalidCidr(_)));
+        assert!(matches!(err, NetcidrError::InvalidCidr(_)));
     }
 
     #[test]
     fn cidr_non_numeric_prefix() {
         let err = validate_cidr("10.0.0.0/abc").unwrap_err();
-        assert!(matches!(err, IpCalcError::InvalidCidr(_)));
+        assert!(matches!(err, NetcidrError::InvalidCidr(_)));
     }
 
     #[test]
     fn cidr_empty_string() {
         let err = validate_cidr("").unwrap_err();
-        assert!(matches!(err, IpCalcError::InvalidCidr(_)));
+        assert!(matches!(err, NetcidrError::InvalidCidr(_)));
     }
 
     // -----------------------------------------------------------------------
@@ -269,20 +269,20 @@ mod tests {
     #[test]
     fn ip_address_invalid() {
         let err = validate_ip_address("not-an-ip").unwrap_err();
-        assert!(matches!(err, IpCalcError::InvalidInput(_)));
+        assert!(matches!(err, NetcidrError::InvalidInput(_)));
     }
 
     #[test]
     fn ip_address_too_long() {
         let long = "a".repeat(300);
         let err = validate_ip_address(&long).unwrap_err();
-        assert!(matches!(err, IpCalcError::InputTooLong { .. }));
+        assert!(matches!(err, NetcidrError::InputTooLong { .. }));
     }
 
     #[test]
     fn ip_address_with_null_byte() {
         let err = validate_ip_address("10.0.0\x001").unwrap_err();
-        assert!(matches!(err, IpCalcError::InvalidInput(_)));
+        assert!(matches!(err, NetcidrError::InvalidInput(_)));
     }
 
     // -----------------------------------------------------------------------
@@ -299,7 +299,7 @@ mod tests {
     #[test]
     fn prefix_v4_out_of_range() {
         let err = validate_prefix_length(33, 4).unwrap_err();
-        assert!(matches!(err, IpCalcError::InvalidPrefixLength(33)));
+        assert!(matches!(err, NetcidrError::InvalidPrefixLength(33)));
     }
 
     #[test]
@@ -312,7 +312,7 @@ mod tests {
     #[test]
     fn prefix_v6_out_of_range() {
         let err = validate_prefix_length(129, 6).unwrap_err();
-        assert!(matches!(err, IpCalcError::InvalidPrefixLength(129)));
+        assert!(matches!(err, NetcidrError::InvalidPrefixLength(129)));
     }
 
     // -----------------------------------------------------------------------
@@ -334,19 +334,19 @@ mod tests {
     fn text_field_too_long() {
         let long = "x".repeat(1025);
         let err = validate_text_field(&long, 0).unwrap_err();
-        assert!(matches!(err, IpCalcError::InputTooLong { .. }));
+        assert!(matches!(err, NetcidrError::InputTooLong { .. }));
     }
 
     #[test]
     fn text_field_custom_max() {
         let err = validate_text_field("hello", 3).unwrap_err();
-        assert!(matches!(err, IpCalcError::InputTooLong { .. }));
+        assert!(matches!(err, NetcidrError::InputTooLong { .. }));
     }
 
     #[test]
     fn text_field_with_control_char() {
         let err = validate_text_field("bad\x01value", 0).unwrap_err();
-        assert!(matches!(err, IpCalcError::InvalidInput(_)));
+        assert!(matches!(err, NetcidrError::InvalidInput(_)));
     }
 
     #[test]
@@ -372,32 +372,32 @@ mod tests {
     #[test]
     fn identifier_empty() {
         let err = validate_identifier("").unwrap_err();
-        assert!(matches!(err, IpCalcError::InvalidInput(_)));
+        assert!(matches!(err, NetcidrError::InvalidInput(_)));
     }
 
     #[test]
     fn identifier_with_path_traversal() {
         let err = validate_identifier("../etc/passwd").unwrap_err();
-        assert!(matches!(err, IpCalcError::InvalidInput(_)));
+        assert!(matches!(err, NetcidrError::InvalidInput(_)));
     }
 
     #[test]
     fn identifier_with_null_byte() {
         let err = validate_identifier("id\x00injected").unwrap_err();
-        assert!(matches!(err, IpCalcError::InvalidInput(_)));
+        assert!(matches!(err, NetcidrError::InvalidInput(_)));
     }
 
     #[test]
     fn identifier_too_long() {
         let long = "a".repeat(257);
         let err = validate_identifier(&long).unwrap_err();
-        assert!(matches!(err, IpCalcError::InputTooLong { .. }));
+        assert!(matches!(err, NetcidrError::InputTooLong { .. }));
     }
 
     #[test]
     fn identifier_with_control_char() {
         let err = validate_identifier("id\x07bell").unwrap_err();
-        assert!(matches!(err, IpCalcError::InvalidInput(_)));
+        assert!(matches!(err, NetcidrError::InvalidInput(_)));
     }
 
     // -----------------------------------------------------------------------
@@ -429,12 +429,12 @@ mod tests {
     #[test]
     fn status_invalid() {
         let err = sanitize_status("deleted").unwrap_err();
-        assert!(matches!(err, IpCalcError::InvalidInput(_)));
+        assert!(matches!(err, NetcidrError::InvalidInput(_)));
     }
 
     #[test]
     fn status_empty() {
         let err = sanitize_status("").unwrap_err();
-        assert!(matches!(err, IpCalcError::InvalidInput(_)));
+        assert!(matches!(err, NetcidrError::InvalidInput(_)));
     }
 }

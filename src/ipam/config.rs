@@ -87,10 +87,10 @@ impl Default for PostgresConfig {
 
 /// Resolve the PostgreSQL connection URL using the following precedence:
 /// 1. CLI `--ipam-db-url <url>` flag (passed as `cli_url`)
-/// 2. `IPCALC_IPAM_DB_URL` environment variable
+/// 2. `NETCIDR_IPAM_DB_URL` environment variable
 /// 3. `url` in config file (via `PostgresConfig`)
 pub fn resolve_postgres_url(cli_url: Option<&str>, config: &PostgresConfig) -> Option<String> {
-    let env_val = std::env::var("IPCALC_IPAM_DB_URL").ok();
+    let env_val = std::env::var("NETCIDR_IPAM_DB_URL").ok();
     resolve_postgres_url_inner(cli_url, env_val.as_deref(), config)
 }
 
@@ -112,11 +112,11 @@ fn resolve_postgres_url_inner(
 
 /// Resolve the SQLite database path using the following precedence:
 /// 1. CLI `--db <path>` flag (passed as `cli_db`)
-/// 2. `IPCALC_DB` environment variable
+/// 2. `NETCIDR_DB` environment variable
 /// 3. `db_path` in config file (via `SqliteConfig`)
-/// 4. Default: `$XDG_DATA_HOME/ipcalc/ipcalc.db` (or `~/.local/share/ipcalc/ipcalc.db`)
+/// 4. Default: `$XDG_DATA_HOME/netcidr/netcidr.db` (or `~/.local/share/netcidr/netcidr.db`)
 pub fn resolve_db_path(cli_db: Option<&str>, config: &SqliteConfig) -> String {
-    let env_val = std::env::var("IPCALC_DB").ok();
+    let env_val = std::env::var("NETCIDR_DB").ok();
     resolve_db_path_inner(cli_db, env_val.as_deref(), config)
 }
 
@@ -146,8 +146,8 @@ fn resolve_db_path_inner(
 fn default_db_path() -> String {
     let data_dir = dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("ipcalc");
-    data_dir.join("ipcalc.db").to_string_lossy().to_string()
+        .join("netcidr");
+    data_dir.join("netcidr.db").to_string_lossy().to_string()
 }
 
 #[cfg(test)]
@@ -187,18 +187,18 @@ mod tests {
     #[test]
     fn test_config_path_used_when_no_cli_or_env() {
         let config = SqliteConfig {
-            db_path: Some("/etc/ipcalc/data.db".to_string()),
+            db_path: Some("/etc/netcidr/data.db".to_string()),
             wal_mode: true,
         };
         let path = resolve_db_path_inner(None, None, &config);
-        assert_eq!(path, "/etc/ipcalc/data.db");
+        assert_eq!(path, "/etc/netcidr/data.db");
     }
 
     #[test]
     fn test_default_path_fallback() {
         let config = SqliteConfig::default();
         let path = resolve_db_path_inner(None, None, &config);
-        assert!(path.ends_with("ipcalc/ipcalc.db"));
+        assert!(path.ends_with("netcidr/netcidr.db"));
     }
 
     #[test]
@@ -328,12 +328,12 @@ mod tests {
     fn test_sqlite_config_with_special_chars_in_path() {
         let toml_str = r#"
             [sqlite]
-            db_path = "/tmp/my data/ipcalc (copy).db"
+            db_path = "/tmp/my data/netcidr (copy).db"
         "#;
         let config: IpamConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(
             config.sqlite.db_path,
-            Some("/tmp/my data/ipcalc (copy).db".to_string())
+            Some("/tmp/my data/netcidr (copy).db".to_string())
         );
     }
 
@@ -341,12 +341,12 @@ mod tests {
     fn test_sqlite_config_with_unicode_path() {
         let toml_str = r#"
             [sqlite]
-            db_path = "/tmp/données/ipcalc.db"
+            db_path = "/tmp/données/netcidr.db"
         "#;
         let config: IpamConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(
             config.sqlite.db_path,
-            Some("/tmp/données/ipcalc.db".to_string())
+            Some("/tmp/données/netcidr.db".to_string())
         );
     }
 

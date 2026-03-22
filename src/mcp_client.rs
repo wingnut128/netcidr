@@ -1,13 +1,13 @@
-//! HTTP client that proxies IPAM operations to a remote `ipcalc serve` API.
+//! HTTP client that proxies IPAM operations to a remote `netcidr serve` API.
 //!
 //! Used by the MCP server when started with `--api-url` instead of `--ipam-db`.
 
 use reqwest::Client;
 
-use crate::error::{IpCalcError, Result};
+use crate::error::{NetcidrError, Result};
 use crate::ipam::models::*;
 
-/// HTTP client for a remote ipcalc API server.
+/// HTTP client for a remote netcidr API server.
 #[derive(Debug, Clone)]
 pub struct HttpIpamClient {
     client: Client,
@@ -26,7 +26,7 @@ impl HttpIpamClient {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
-            .map_err(|e| IpCalcError::InvalidInput(format!("HTTP client error: {e}")))?;
+            .map_err(|e| NetcidrError::InvalidInput(format!("HTTP client error: {e}")))?;
         Ok(Self { client, base_url })
     }
 
@@ -34,8 +34,8 @@ impl HttpIpamClient {
         format!("{}/ipam{}", self.base_url, path)
     }
 
-    /// Map a non-success HTTP response to an `IpCalcError`.
-    async fn map_error(resp: reqwest::Response) -> IpCalcError {
+    /// Map a non-success HTTP response to an `NetcidrError`.
+    async fn map_error(resp: reqwest::Response) -> NetcidrError {
         let status = resp.status().as_u16();
         let body = resp
             .json::<ApiError>()
@@ -45,14 +45,14 @@ impl HttpIpamClient {
         match status {
             404 => {
                 if body.contains("upernet") {
-                    IpCalcError::SupernetNotFound(body)
+                    NetcidrError::SupernetNotFound(body)
                 } else {
-                    IpCalcError::AllocationNotFound(body)
+                    NetcidrError::AllocationNotFound(body)
                 }
             }
-            409 => IpCalcError::InvalidInput(body),
-            422 => IpCalcError::InvalidInput(body),
-            _ => IpCalcError::DatabaseError(body),
+            409 => NetcidrError::InvalidInput(body),
+            422 => NetcidrError::InvalidInput(body),
+            _ => NetcidrError::DatabaseError(body),
         }
     }
 
@@ -67,11 +67,11 @@ impl HttpIpamClient {
             .json(input)
             .send()
             .await
-            .map_err(|e| IpCalcError::DatabaseError(format!("HTTP request failed: {e}")))?;
+            .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
         if resp.status().is_success() {
             resp.json()
                 .await
-                .map_err(|e| IpCalcError::DatabaseError(e.to_string()))
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))
         } else {
             Err(Self::map_error(resp).await)
         }
@@ -83,12 +83,12 @@ impl HttpIpamClient {
             .get(self.url("/supernets"))
             .send()
             .await
-            .map_err(|e| IpCalcError::DatabaseError(format!("HTTP request failed: {e}")))?;
+            .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
         if resp.status().is_success() {
             let list: SupernetList = resp
                 .json()
                 .await
-                .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
             Ok(list.supernets)
         } else {
             Err(Self::map_error(resp).await)
@@ -120,12 +120,12 @@ impl HttpIpamClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| IpCalcError::DatabaseError(format!("HTTP request failed: {e}")))?;
+            .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
         if resp.status().is_success() {
             let list: AllocationList = resp
                 .json()
                 .await
-                .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
             Ok(list.allocations)
         } else {
             Err(Self::map_error(resp).await)
@@ -155,11 +155,11 @@ impl HttpIpamClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| IpCalcError::DatabaseError(format!("HTTP request failed: {e}")))?;
+            .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
         if resp.status().is_success() {
             resp.json()
                 .await
-                .map_err(|e| IpCalcError::DatabaseError(e.to_string()))
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))
         } else {
             Err(Self::map_error(resp).await)
         }
@@ -171,11 +171,11 @@ impl HttpIpamClient {
             .post(self.url(&format!("/allocations/{id}/release")))
             .send()
             .await
-            .map_err(|e| IpCalcError::DatabaseError(format!("HTTP request failed: {e}")))?;
+            .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
         if resp.status().is_success() {
             resp.json()
                 .await
-                .map_err(|e| IpCalcError::DatabaseError(e.to_string()))
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))
         } else {
             Err(Self::map_error(resp).await)
         }
@@ -205,12 +205,12 @@ impl HttpIpamClient {
             .query(&query_params)
             .send()
             .await
-            .map_err(|e| IpCalcError::DatabaseError(format!("HTTP request failed: {e}")))?;
+            .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
         if resp.status().is_success() {
             let list: AllocationList = resp
                 .json()
                 .await
-                .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
             Ok(list.allocations)
         } else {
             Err(Self::map_error(resp).await)
@@ -236,11 +236,11 @@ impl HttpIpamClient {
             .query(&query_params)
             .send()
             .await
-            .map_err(|e| IpCalcError::DatabaseError(format!("HTTP request failed: {e}")))?;
+            .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
         if resp.status().is_success() {
             resp.json()
                 .await
-                .map_err(|e| IpCalcError::DatabaseError(e.to_string()))
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))
         } else {
             Err(Self::map_error(resp).await)
         }
@@ -252,11 +252,11 @@ impl HttpIpamClient {
             .get(self.url(&format!("/supernets/{supernet_id}/utilization")))
             .send()
             .await
-            .map_err(|e| IpCalcError::DatabaseError(format!("HTTP request failed: {e}")))?;
+            .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
         if resp.status().is_success() {
             resp.json()
                 .await
-                .map_err(|e| IpCalcError::DatabaseError(e.to_string()))
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))
         } else {
             Err(Self::map_error(resp).await)
         }
@@ -272,12 +272,12 @@ impl HttpIpamClient {
             .get(self.url(&format!("/find-ip/{address}")))
             .send()
             .await
-            .map_err(|e| IpCalcError::DatabaseError(format!("HTTP request failed: {e}")))?;
+            .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
         if resp.status().is_success() {
             let list: AllocationList = resp
                 .json()
                 .await
-                .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
             Ok(list.allocations)
         } else {
             Err(Self::map_error(resp).await)
@@ -290,12 +290,12 @@ impl HttpIpamClient {
             .get(self.url(&format!("/find-resource/{resource_id}")))
             .send()
             .await
-            .map_err(|e| IpCalcError::DatabaseError(format!("HTTP request failed: {e}")))?;
+            .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
         if resp.status().is_success() {
             let list: AllocationList = resp
                 .json()
                 .await
-                .map_err(|e| IpCalcError::DatabaseError(e.to_string()))?;
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
             Ok(list.allocations)
         } else {
             Err(Self::map_error(resp).await)

@@ -1569,49 +1569,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ipcalc"
-version = "0.14.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "chrono",
- "clap",
- "clap_complete",
- "crossterm",
- "csv",
- "dirs",
- "http-body-util",
- "ipnet",
- "proptest",
- "r2d2",
- "r2d2_sqlite",
- "ratatui",
- "reqwest",
- "rmcp",
- "rusqlite",
- "schemars",
- "serde",
- "serde-saphyr",
- "serde_json",
- "sqlx",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-test",
- "toml",
- "tower",
- "tower-http",
- "tower_governor",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "utoipa",
- "utoipa-swagger-ui",
- "uuid",
-]
-
-[[package]]
 name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1903,6 +1860,49 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "netcidr"
+version = "0.15.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "chrono",
+ "clap",
+ "clap_complete",
+ "crossterm",
+ "csv",
+ "dirs",
+ "http-body-util",
+ "ipnet",
+ "proptest",
+ "r2d2",
+ "r2d2_sqlite",
+ "ratatui",
+ "reqwest",
+ "rmcp",
+ "rusqlite",
+ "schemars",
+ "serde",
+ "serde-saphyr",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-test",
+ "toml",
+ "tower",
+ "tower-http",
+ "tower_governor",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "utoipa",
+ "utoipa-swagger-ui",
+ "uuid",
 ]
 
 [[package]]

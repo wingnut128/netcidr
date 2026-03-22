@@ -12,15 +12,15 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ipcalc::ipam::config::PostgresConfig;
-use ipcalc::ipam::models::*;
-use ipcalc::ipam::operations::IpamOps;
-use ipcalc::ipam::postgres::PostgresStore;
-use ipcalc::ipam::store::IpamStore;
+use netcidr::ipam::config::PostgresConfig;
+use netcidr::ipam::models::*;
+use netcidr::ipam::operations::IpamOps;
+use netcidr::ipam::postgres::PostgresStore;
+use netcidr::ipam::store::IpamStore;
 
-const CONTAINER_NAME: &str = "ipcalc-test-pg";
+const CONTAINER_NAME: &str = "netcidr-test-pg";
 const PG_PORT: u16 = 15432;
-const PG_DB: &str = "ipcalc_test";
+const PG_DB: &str = "netcidr_test";
 const PG_USER: &str = "postgres";
 
 fn pg_url() -> String {

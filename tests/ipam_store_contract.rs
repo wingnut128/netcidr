@@ -4,10 +4,10 @@
 //! Run against SQLite in-memory by default; Postgres via Docker with
 //! `--features ipam-postgres`.
 
-use ipcalc::error::IpCalcError;
-use ipcalc::ipam::models::*;
-use ipcalc::ipam::sqlite::SqliteStore;
-use ipcalc::ipam::store::IpamStore;
+use netcidr::error::NetcidrError;
+use netcidr::ipam::models::*;
+use netcidr::ipam::sqlite::SqliteStore;
+use netcidr::ipam::store::IpamStore;
 
 // ---------------------------------------------------------------------------
 // Test harness: macro generates identical tests for each backend
@@ -131,7 +131,7 @@ macro_rules! store_contract_tests {
 
             let err = store.delete_supernet(&sn.id).await.unwrap_err();
             assert!(
-                matches!(err, IpCalcError::SupernetHasActiveAllocations(_)),
+                matches!(err, NetcidrError::SupernetHasActiveAllocations(_)),
                 "expected SupernetHasActiveAllocations, got: {:?}",
                 err
             );
@@ -142,7 +142,7 @@ macro_rules! store_contract_tests {
             let store = $factory().await;
             let err = store.get_supernet("nonexistent-id").await.unwrap_err();
             assert!(
-                matches!(err, IpCalcError::SupernetNotFound(_)),
+                matches!(err, NetcidrError::SupernetNotFound(_)),
                 "expected SupernetNotFound, got: {:?}",
                 err
             );
@@ -172,7 +172,7 @@ macro_rules! store_contract_tests {
 
             // Should fail due to UNIQUE constraint on cidr
             assert!(
-                matches!(err, IpCalcError::DatabaseError(_)),
+                matches!(err, NetcidrError::DatabaseError(_)),
                 "expected DatabaseError for duplicate CIDR, got: {:?}",
                 err
             );
@@ -371,7 +371,7 @@ macro_rules! store_contract_tests {
             let store = $factory().await;
             let err = store.get_allocation("nonexistent-id").await.unwrap_err();
             assert!(
-                matches!(err, IpCalcError::AllocationNotFound(_)),
+                matches!(err, NetcidrError::AllocationNotFound(_)),
                 "expected AllocationNotFound, got: {:?}",
                 err
             );

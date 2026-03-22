@@ -1,4 +1,4 @@
-use crate::error::{IpCalcError, Result};
+use crate::error::{NetcidrError, Result};
 use crate::ipv4::Ipv4Subnet;
 use crate::ipv6::Ipv6Subnet;
 use serde::Serialize;
@@ -65,13 +65,13 @@ pub fn count_subnets(cidr: &str, new_prefix: u8) -> Result<SplitSummary> {
     };
 
     if new_prefix <= original_prefix {
-        return Err(IpCalcError::InvalidSubnetSplit {
+        return Err(NetcidrError::InvalidSubnetSplit {
             new_prefix,
             original_prefix,
         });
     }
     if new_prefix > max_bits {
-        return Err(IpCalcError::InvalidPrefixLength(new_prefix));
+        return Err(NetcidrError::InvalidPrefixLength(new_prefix));
     }
 
     let bits_diff = new_prefix - original_prefix;
@@ -107,14 +107,14 @@ pub fn generate_ipv4_subnets(
     let supernet = Ipv4Subnet::from_cidr(cidr)?;
 
     if new_prefix <= supernet.prefix_length {
-        return Err(IpCalcError::InvalidSubnetSplit {
+        return Err(NetcidrError::InvalidSubnetSplit {
             new_prefix,
             original_prefix: supernet.prefix_length,
         });
     }
 
     if new_prefix > 32 {
-        return Err(IpCalcError::InvalidPrefixLength(new_prefix));
+        return Err(NetcidrError::InvalidPrefixLength(new_prefix));
     }
 
     let bits_diff = new_prefix - supernet.prefix_length;
@@ -124,7 +124,7 @@ pub fn generate_ipv4_subnets(
     let actual_count = match count {
         Some(c) => {
             if c > available {
-                return Err(IpCalcError::InsufficientSubnets {
+                return Err(NetcidrError::InsufficientSubnets {
                     requested: c,
                     available,
                     new_prefix,
@@ -137,7 +137,7 @@ pub fn generate_ipv4_subnets(
     };
 
     if actual_count > MAX_GENERATED_SUBNETS {
-        return Err(IpCalcError::SubnetLimitExceeded {
+        return Err(NetcidrError::SubnetLimitExceeded {
             count: actual_count.to_string(),
             limit: MAX_GENERATED_SUBNETS,
         });
@@ -181,14 +181,14 @@ pub fn generate_ipv6_subnets(
     let supernet = Ipv6Subnet::from_cidr(cidr)?;
 
     if new_prefix <= supernet.prefix_length {
-        return Err(IpCalcError::InvalidSubnetSplit {
+        return Err(NetcidrError::InvalidSubnetSplit {
             new_prefix,
             original_prefix: supernet.prefix_length,
         });
     }
 
     if new_prefix > 128 {
-        return Err(IpCalcError::InvalidPrefixLength(new_prefix));
+        return Err(NetcidrError::InvalidPrefixLength(new_prefix));
     }
 
     let bits_diff = new_prefix - supernet.prefix_length;
@@ -204,7 +204,7 @@ pub fn generate_ipv6_subnets(
     let actual_count = match count {
         Some(c) => {
             if c > available {
-                return Err(IpCalcError::InsufficientSubnets {
+                return Err(NetcidrError::InsufficientSubnets {
                     requested: c,
                     available,
                     new_prefix,
@@ -217,7 +217,7 @@ pub fn generate_ipv6_subnets(
     };
 
     if actual_count > MAX_GENERATED_SUBNETS {
-        return Err(IpCalcError::SubnetLimitExceeded {
+        return Err(NetcidrError::SubnetLimitExceeded {
             count: actual_count.to_string(),
             limit: MAX_GENERATED_SUBNETS,
         });
@@ -282,7 +282,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(IpCalcError::InsufficientSubnets {
+                Err(NetcidrError::InsufficientSubnets {
                     requested: 33,
                     available: 32,
                     ..
@@ -314,7 +314,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(IpCalcError::InvalidSubnetSplit {
+                Err(NetcidrError::InvalidSubnetSplit {
                     new_prefix: 22,
                     original_prefix: 24,
                 })

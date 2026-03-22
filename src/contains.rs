@@ -1,4 +1,4 @@
-use crate::error::{IpCalcError, Result};
+use crate::error::{NetcidrError, Result};
 use crate::ipv4::{Ipv4Subnet, ipv4_mask};
 use crate::ipv6::{Ipv6Subnet, ipv6_mask};
 use serde::Serialize;
@@ -30,7 +30,7 @@ pub struct ContainsResult {
 pub fn check_ipv4_contains(cidr: &str, address: &str) -> Result<ContainsResult> {
     let subnet = Ipv4Subnet::from_cidr(cidr)?;
     let addr = Ipv4Addr::from_str(address)
-        .map_err(|_| IpCalcError::InvalidIpv4Address(address.to_string()))?;
+        .map_err(|_| NetcidrError::InvalidIpv4Address(address.to_string()))?;
 
     let addr_u32 = u32::from(addr);
     let network_u32 = u32::from(subnet.network);
@@ -56,7 +56,7 @@ pub fn check_ipv4_contains(cidr: &str, address: &str) -> Result<ContainsResult> 
 pub fn check_ipv6_contains(cidr: &str, address: &str) -> Result<ContainsResult> {
     let subnet = Ipv6Subnet::from_cidr(cidr)?;
     let addr = Ipv6Addr::from_str(address)
-        .map_err(|_| IpCalcError::InvalidIpv6Address(address.to_string()))?;
+        .map_err(|_| NetcidrError::InvalidIpv6Address(address.to_string()))?;
 
     let addr_u128 = u128::from(addr);
     let network_u128 = u128::from(subnet.network);
@@ -122,7 +122,7 @@ mod tests {
     fn test_invalid_ipv4_address() {
         let result = check_ipv4_contains("192.168.1.0/24", "not-an-ip");
         assert!(
-            matches!(result, Err(IpCalcError::InvalidIpv4Address(ref s)) if s == "not-an-ip"),
+            matches!(result, Err(NetcidrError::InvalidIpv4Address(ref s)) if s == "not-an-ip"),
             "expected InvalidIpv4Address, got {:?}",
             result
         );
@@ -132,7 +132,7 @@ mod tests {
     fn test_invalid_ipv6_address() {
         let result = check_ipv6_contains("2001:db8::/32", "not-an-ip");
         assert!(
-            matches!(result, Err(IpCalcError::InvalidIpv6Address(ref s)) if s == "not-an-ip"),
+            matches!(result, Err(NetcidrError::InvalidIpv6Address(ref s)) if s == "not-an-ip"),
             "expected InvalidIpv6Address, got {:?}",
             result
         );

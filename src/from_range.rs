@@ -1,4 +1,4 @@
-use crate::error::{IpCalcError, Result};
+use crate::error::{NetcidrError, Result};
 use crate::ipv4::Ipv4Subnet;
 use crate::ipv6::Ipv6Subnet;
 use serde::Serialize;
@@ -126,15 +126,15 @@ pub fn from_range_ipv4_with_limit(
     max_cidrs: usize,
 ) -> Result<Ipv4FromRangeResult> {
     let start_addr = Ipv4Addr::from_str(start)
-        .map_err(|_| IpCalcError::InvalidIpv4Address(start.to_string()))?;
+        .map_err(|_| NetcidrError::InvalidIpv4Address(start.to_string()))?;
     let end_addr =
-        Ipv4Addr::from_str(end).map_err(|_| IpCalcError::InvalidIpv4Address(end.to_string()))?;
+        Ipv4Addr::from_str(end).map_err(|_| NetcidrError::InvalidIpv4Address(end.to_string()))?;
 
     let start_u32 = u32::from(start_addr);
     let end_u32 = u32::from(end_addr);
 
     if start_u32 > end_u32 {
-        return Err(IpCalcError::InvalidRange(
+        return Err(NetcidrError::InvalidRange(
             start.to_string(),
             end.to_string(),
         ));
@@ -142,7 +142,7 @@ pub fn from_range_ipv4_with_limit(
 
     let pairs = range_to_cidrs_v4(start_u32, end_u32, max_cidrs);
     if pairs.len() > max_cidrs {
-        return Err(IpCalcError::FromRangeLimitExceeded {
+        return Err(NetcidrError::FromRangeLimitExceeded {
             count: pairs.len(),
             limit: max_cidrs,
         });
@@ -181,15 +181,15 @@ pub fn from_range_ipv6_with_limit(
     max_cidrs: usize,
 ) -> Result<Ipv6FromRangeResult> {
     let start_addr = Ipv6Addr::from_str(start)
-        .map_err(|_| IpCalcError::InvalidIpv6Address(start.to_string()))?;
+        .map_err(|_| NetcidrError::InvalidIpv6Address(start.to_string()))?;
     let end_addr =
-        Ipv6Addr::from_str(end).map_err(|_| IpCalcError::InvalidIpv6Address(end.to_string()))?;
+        Ipv6Addr::from_str(end).map_err(|_| NetcidrError::InvalidIpv6Address(end.to_string()))?;
 
     let start_u128 = u128::from(start_addr);
     let end_u128 = u128::from(end_addr);
 
     if start_u128 > end_u128 {
-        return Err(IpCalcError::InvalidRange(
+        return Err(NetcidrError::InvalidRange(
             start.to_string(),
             end.to_string(),
         ));
@@ -197,7 +197,7 @@ pub fn from_range_ipv6_with_limit(
 
     let pairs = range_to_cidrs_v6(start_u128, end_u128, max_cidrs);
     if pairs.len() > max_cidrs {
-        return Err(IpCalcError::FromRangeLimitExceeded {
+        return Err(NetcidrError::FromRangeLimitExceeded {
             count: pairs.len(),
             limit: max_cidrs,
         });
@@ -265,7 +265,7 @@ mod tests {
     fn test_start_greater_than_end_v4() {
         let result = from_range_ipv4("192.168.1.20", "192.168.1.10");
         assert!(
-            matches!(result, Err(IpCalcError::InvalidRange(_, _))),
+            matches!(result, Err(NetcidrError::InvalidRange(_, _))),
             "expected InvalidRange, got {:?}",
             result
         );
@@ -275,7 +275,7 @@ mod tests {
     fn test_invalid_address_v4() {
         let result = from_range_ipv4("not-an-ip", "192.168.1.10");
         assert!(
-            matches!(result, Err(IpCalcError::InvalidIpv4Address(_))),
+            matches!(result, Err(NetcidrError::InvalidIpv4Address(_))),
             "expected InvalidIpv4Address, got {:?}",
             result
         );
@@ -307,7 +307,7 @@ mod tests {
     fn test_start_greater_than_end_v6() {
         let result = from_range_ipv6("2001:db8::ff", "2001:db8::1");
         assert!(
-            matches!(result, Err(IpCalcError::InvalidRange(_, _))),
+            matches!(result, Err(NetcidrError::InvalidRange(_, _))),
             "expected InvalidRange, got {:?}",
             result
         );
@@ -328,7 +328,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(IpCalcError::FromRangeLimitExceeded { limit: 2, .. })
+                Err(NetcidrError::FromRangeLimitExceeded { limit: 2, .. })
             ),
             "expected FromRangeLimitExceeded, got {:?}",
             result

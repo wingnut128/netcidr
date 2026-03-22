@@ -14,7 +14,7 @@ export function Sidebar() {
   return (
     <nav className="fixed left-0 top-0 h-full w-48 bg-surface border-r border-border flex flex-col z-50">
       <div className="px-4 py-5 border-b border-border">
-        <h1 className="text-cyan text-lg font-bold tracking-wider">ipcalc</h1>
+        <h1 className="text-cyan text-lg font-bold tracking-wider">netcidr</h1>
         <p className="text-text-muted text-[10px] uppercase tracking-widest mt-1">
           subnet tools
         </p>

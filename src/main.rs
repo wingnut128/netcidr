@@ -1,16 +1,16 @@
 use clap::{CommandFactory, Parser};
-use ipcalc::api::{RouterConfig, create_router};
-use ipcalc::batch::process_batch;
-use ipcalc::cli::{Cli, Commands};
-use ipcalc::config::{CliOverrides, ServerConfig};
-use ipcalc::contains::{check_ipv4_contains, check_ipv6_contains};
-use ipcalc::from_range::{from_range_ipv4, from_range_ipv6};
-use ipcalc::ipv4::Ipv4Subnet;
-use ipcalc::ipv6::Ipv6Subnet;
-use ipcalc::logging::{LogConfig, init_logging, parse_log_level};
-use ipcalc::output::{CsvOutput, OutputFormat, OutputWriter, TextOutput};
-use ipcalc::subnet_generator::{count_subnets, generate_ipv4_subnets, generate_ipv6_subnets};
-use ipcalc::summarize::{summarize_ipv4, summarize_ipv6};
+use netcidr::api::{RouterConfig, create_router};
+use netcidr::batch::process_batch;
+use netcidr::cli::{Cli, Commands};
+use netcidr::config::{CliOverrides, ServerConfig};
+use netcidr::contains::{check_ipv4_contains, check_ipv6_contains};
+use netcidr::from_range::{from_range_ipv4, from_range_ipv6};
+use netcidr::ipv4::Ipv4Subnet;
+use netcidr::ipv6::Ipv6Subnet;
+use netcidr::logging::{LogConfig, init_logging, parse_log_level};
+use netcidr::output::{CsvOutput, OutputFormat, OutputWriter, TextOutput};
+use netcidr::subnet_generator::{count_subnets, generate_ipv4_subnets, generate_ipv6_subnets};
+use netcidr::summarize::{summarize_ipv4, summarize_ipv6};
 use serde::Serialize;
 use std::io::{self, BufRead, Write};
 use std::net::SocketAddr;
@@ -33,7 +33,7 @@ fn print_stdout(s: &str) {
 /// Handle a Result from a calculation: write output on success, print error and exit on failure.
 fn handle_result<T: Serialize + TextOutput + CsvOutput>(
     writer: &OutputWriter,
-    result: ipcalc::error::Result<T>,
+    result: netcidr::error::Result<T>,
     output_file: &Option<String>,
 ) {
     match result {
@@ -83,7 +83,7 @@ async fn main() {
     // Launch TUI mode if requested
     #[cfg(feature = "tui")]
     if cli.tui {
-        if let Err(e) = ipcalc::tui::run_tui() {
+        if let Err(e) = netcidr::tui::run_tui() {
             eprintln!("TUI Error: {}", e);
         }
         return;
@@ -187,7 +187,7 @@ async fn main() {
             }
         }
         Some(Commands::Completions { shell }) => {
-            clap_complete::generate(shell, &mut Cli::command(), "ipcalc", &mut io::stdout());
+            clap_complete::generate(shell, &mut Cli::command(), "netcidr", &mut io::stdout());
         }
         Some(Commands::Ipam { db, command }) => {
             if let Err(e) =
@@ -200,7 +200,7 @@ async fn main() {
         #[cfg(feature = "mcp")]
         Some(Commands::McpServe { ipam_db, api_url }) => {
             if let Err(e) =
-                ipcalc::mcp::run_mcp_server(ipam_db.as_deref(), api_url.as_deref()).await
+                netcidr::mcp::run_mcp_server(ipam_db.as_deref(), api_url.as_deref()).await
             {
                 eprintln!("MCP server error: {}", e);
                 std::process::exit(1);
@@ -289,11 +289,11 @@ async fn main() {
                 .parse()
                 .expect("Invalid address");
 
-            info!("Starting ipcalc API server on http://{}", addr);
+            info!("Starting netcidr API server on http://{}", addr);
             info!("Log level: {}", log_level);
 
             // Print to stdout as well for visibility
-            println!("Starting ipcalc API server on http://{}", addr);
+            println!("Starting netcidr API server on http://{}", addr);
             println!("Endpoints:");
             println!("  GET /health              - Health check");
             println!("  GET /version             - Version information");
@@ -318,7 +318,7 @@ async fn main() {
 
             // Initialize IPAM if enabled
             let ipam_ops = if server_config.ipam_enabled {
-                use ipcalc::ipam;
+                use netcidr::ipam;
                 let mut ipam_config = ipam::config::IpamConfig::default();
                 if let Ok(backend) = server_config.ipam_backend.parse::<ipam::config::Backend>() {
                     ipam_config.backend = backend;

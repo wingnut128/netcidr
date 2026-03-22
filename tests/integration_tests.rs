@@ -1,19 +1,19 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-fn run_ipcalc(args: &[&str]) -> (String, String, bool) {
+fn run_netcidr(args: &[&str]) -> (String, String, bool) {
     let output = Command::new("cargo")
         .args(["run", "--quiet", "--"])
         .args(args)
         .output()
-        .expect("Failed to run ipcalc");
+        .expect("Failed to run netcidr");
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     (stdout, stderr, output.status.success())
 }
 
-fn run_ipcalc_stdin(args: &[&str], input: &str) -> (String, String, bool) {
+fn run_netcidr_stdin(args: &[&str], input: &str) -> (String, String, bool) {
     let mut child = Command::new("cargo")
         .args(["run", "--quiet", "--"])
         .args(args)
@@ -21,7 +21,7 @@ fn run_ipcalc_stdin(args: &[&str], input: &str) -> (String, String, bool) {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("Failed to spawn ipcalc");
+        .expect("Failed to spawn netcidr");
 
     child
         .stdin
@@ -30,7 +30,7 @@ fn run_ipcalc_stdin(args: &[&str], input: &str) -> (String, String, bool) {
         .write_all(input.as_bytes())
         .unwrap();
 
-    let output = child.wait_with_output().expect("Failed to wait for ipcalc");
+    let output = child.wait_with_output().expect("Failed to wait for netcidr");
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     (stdout, stderr, output.status.success())
@@ -38,7 +38,7 @@ fn run_ipcalc_stdin(args: &[&str], input: &str) -> (String, String, bool) {
 
 #[test]
 fn test_ipv4_json_output() {
-    let (stdout, _, success) = run_ipcalc(&["192.168.1.0/24"]);
+    let (stdout, _, success) = run_netcidr(&["192.168.1.0/24"]);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -51,7 +51,7 @@ fn test_ipv4_json_output() {
 
 #[test]
 fn test_ipv4_text_output() {
-    let (stdout, _, success) = run_ipcalc(&["10.0.0.0/8", "--format", "text"]);
+    let (stdout, _, success) = run_netcidr(&["10.0.0.0/8", "--format", "text"]);
     assert!(success);
     assert!(stdout.contains("IPv4 Subnet Calculator"));
     assert!(stdout.contains("Network Address:   10.0.0.0"));
@@ -61,7 +61,7 @@ fn test_ipv4_text_output() {
 
 #[test]
 fn test_ipv6_json_output() {
-    let (stdout, _, success) = run_ipcalc(&["2001:db8::/32"]);
+    let (stdout, _, success) = run_netcidr(&["2001:db8::/32"]);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -72,7 +72,7 @@ fn test_ipv6_json_output() {
 
 #[test]
 fn test_ipv6_text_output() {
-    let (stdout, _, success) = run_ipcalc(&["fe80::1/64", "--format", "text"]);
+    let (stdout, _, success) = run_netcidr(&["fe80::1/64", "--format", "text"]);
     assert!(success);
     assert!(stdout.contains("IPv6 Subnet Calculator"));
     assert!(stdout.contains("Link-Local Unicast (RFC 4291)"));
@@ -80,7 +80,7 @@ fn test_ipv6_text_output() {
 
 #[test]
 fn test_split_ipv4() {
-    let (stdout, _, success) = run_ipcalc(&["split", "192.168.0.0/22", "-p", "27", "-n", "5"]);
+    let (stdout, _, success) = run_netcidr(&["split", "192.168.0.0/22", "-p", "27", "-n", "5"]);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -93,7 +93,7 @@ fn test_split_ipv4() {
 
 #[test]
 fn test_split_ipv6() {
-    let (stdout, _, success) = run_ipcalc(&["split", "2001:db8::/32", "-p", "48", "-n", "3"]);
+    let (stdout, _, success) = run_netcidr(&["split", "2001:db8::/32", "-p", "48", "-n", "3"]);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -103,22 +103,22 @@ fn test_split_ipv6() {
 
 #[test]
 fn test_invalid_ipv4() {
-    let (_, stderr, success) = run_ipcalc(&["999.999.999.999/24"]);
+    let (_, stderr, success) = run_netcidr(&["999.999.999.999/24"]);
     assert!(!success);
     assert!(stderr.contains("Error"));
 }
 
 #[test]
 fn test_invalid_prefix() {
-    let (_, stderr, success) = run_ipcalc(&["192.168.1.0/33"]);
+    let (_, stderr, success) = run_netcidr(&["192.168.1.0/33"]);
     assert!(!success);
     assert!(stderr.contains("Error"));
 }
 
 #[test]
 fn test_file_output() {
-    let temp_file = "/tmp/ipcalc_test_output.json";
-    let (_, _, success) = run_ipcalc(&["172.16.0.0/12", "-o", temp_file]);
+    let temp_file = "/tmp/netcidr_test_output.json";
+    let (_, _, success) = run_netcidr(&["172.16.0.0/12", "-o", temp_file]);
     assert!(success);
 
     let content = std::fs::read_to_string(temp_file).expect("Failed to read output file");
@@ -131,7 +131,7 @@ fn test_file_output() {
 #[test]
 fn test_split_too_many_subnets() {
     // /22 can only fit 32 /27 subnets, requesting 100 should fail
-    let (_, stderr, success) = run_ipcalc(&["split", "192.168.0.0/22", "-p", "27", "-n", "100"]);
+    let (_, stderr, success) = run_netcidr(&["split", "192.168.0.0/22", "-p", "27", "-n", "100"]);
     assert!(!success);
     assert!(stderr.contains("Error"));
 }
@@ -139,7 +139,7 @@ fn test_split_too_many_subnets() {
 #[test]
 fn test_split_ipv4_max() {
     // Test --max option generates all possible subnets
-    let (stdout, _, success) = run_ipcalc(&["split", "192.168.0.0/22", "-p", "27", "--max"]);
+    let (stdout, _, success) = run_netcidr(&["split", "192.168.0.0/22", "-p", "27", "--max"]);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -151,7 +151,7 @@ fn test_split_ipv4_max() {
 #[test]
 fn test_split_ipv6_max() {
     // Test --max option for IPv6
-    let (stdout, _, success) = run_ipcalc(&["split", "2001:db8:abcd::/48", "-p", "52", "--max"]);
+    let (stdout, _, success) = run_netcidr(&["split", "2001:db8:abcd::/48", "-p", "52", "--max"]);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -163,14 +163,14 @@ fn test_split_ipv6_max() {
 #[test]
 fn test_split_requires_count_or_max() {
     // Neither --count nor --max should fail
-    let (_, stderr, success) = run_ipcalc(&["split", "192.168.0.0/22", "-p", "27"]);
+    let (_, stderr, success) = run_netcidr(&["split", "192.168.0.0/22", "-p", "27"]);
     assert!(!success);
     assert!(stderr.contains("Error"));
 }
 
 #[test]
 fn test_direct_ipv4() {
-    let (stdout, _, success) = run_ipcalc(&["192.168.1.0/24"]);
+    let (stdout, _, success) = run_netcidr(&["192.168.1.0/24"]);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -181,7 +181,7 @@ fn test_direct_ipv4() {
 
 #[test]
 fn test_direct_ipv6() {
-    let (stdout, _, success) = run_ipcalc(&["2001:db8::/32"]);
+    let (stdout, _, success) = run_netcidr(&["2001:db8::/32"]);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -192,7 +192,7 @@ fn test_direct_ipv6() {
 
 #[test]
 fn test_direct_ipv4_text_format() {
-    let (stdout, _, success) = run_ipcalc(&["10.0.0.0/8", "--format", "text"]);
+    let (stdout, _, success) = run_netcidr(&["10.0.0.0/8", "--format", "text"]);
     assert!(success);
     assert!(stdout.contains("IPv4 Subnet Calculator"));
     assert!(stdout.contains("Network Address:   10.0.0.0"));
@@ -200,7 +200,7 @@ fn test_direct_ipv4_text_format() {
 
 #[test]
 fn test_contains_ipv4_json() {
-    let (stdout, _, success) = run_ipcalc(&["contains", "192.168.1.0/24", "192.168.1.100"]);
+    let (stdout, _, success) = run_netcidr(&["contains", "192.168.1.0/24", "192.168.1.100"]);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -213,7 +213,7 @@ fn test_contains_ipv4_json() {
 
 #[test]
 fn test_contains_ipv4_not_contained() {
-    let (stdout, _, success) = run_ipcalc(&["contains", "192.168.1.0/24", "10.0.0.1"]);
+    let (stdout, _, success) = run_netcidr(&["contains", "192.168.1.0/24", "10.0.0.1"]);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -222,7 +222,7 @@ fn test_contains_ipv4_not_contained() {
 
 #[test]
 fn test_contains_ipv6_json() {
-    let (stdout, _, success) = run_ipcalc(&["contains", "2001:db8::/32", "2001:db8::1"]);
+    let (stdout, _, success) = run_netcidr(&["contains", "2001:db8::/32", "2001:db8::1"]);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -232,7 +232,7 @@ fn test_contains_ipv6_json() {
 
 #[test]
 fn test_contains_ipv4_text() {
-    let (stdout, _, success) = run_ipcalc(&[
+    let (stdout, _, success) = run_netcidr(&[
         "contains",
         "192.168.1.0/24",
         "192.168.1.100",
@@ -247,14 +247,14 @@ fn test_contains_ipv4_text() {
 
 #[test]
 fn test_contains_invalid_address() {
-    let (_, stderr, success) = run_ipcalc(&["contains", "192.168.1.0/24", "not-an-ip"]);
+    let (_, stderr, success) = run_netcidr(&["contains", "192.168.1.0/24", "not-an-ip"]);
     assert!(!success);
     assert!(stderr.contains("Error"));
 }
 
 #[test]
 fn test_split_count_only_ipv4() {
-    let (stdout, _, success) = run_ipcalc(&["split", "192.168.0.0/22", "-p", "27", "--count-only"]);
+    let (stdout, _, success) = run_netcidr(&["split", "192.168.0.0/22", "-p", "27", "--count-only"]);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -264,7 +264,7 @@ fn test_split_count_only_ipv4() {
 
 #[test]
 fn test_split_count_only_ipv6() {
-    let (stdout, _, success) = run_ipcalc(&["split", "2001:db8::/64", "-p", "96", "--count-only"]);
+    let (stdout, _, success) = run_netcidr(&["split", "2001:db8::/64", "-p", "96", "--count-only"]);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -274,7 +274,7 @@ fn test_split_count_only_ipv6() {
 
 #[test]
 fn test_split_count_only_ipv6_huge() {
-    let (stdout, _, success) = run_ipcalc(&["split", "2001:db8::/32", "-p", "128", "--count-only"]);
+    let (stdout, _, success) = run_netcidr(&["split", "2001:db8::/32", "-p", "128", "--count-only"]);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -283,21 +283,21 @@ fn test_split_count_only_ipv6_huge() {
 
 #[test]
 fn test_split_limit_exceeded_ipv4() {
-    let (_, stderr, success) = run_ipcalc(&["split", "10.0.0.0/8", "-p", "32", "--max"]);
+    let (_, stderr, success) = run_netcidr(&["split", "10.0.0.0/8", "-p", "32", "--max"]);
     assert!(!success);
     assert!(stderr.contains("limit"));
 }
 
 #[test]
 fn test_split_limit_exceeded_ipv6() {
-    let (_, stderr, success) = run_ipcalc(&["split", "2001:db8::/32", "-p", "64", "--max"]);
+    let (_, stderr, success) = run_netcidr(&["split", "2001:db8::/32", "-p", "64", "--max"]);
     assert!(!success);
     assert!(stderr.contains("limit"));
 }
 
 #[test]
 fn test_summarize_ipv4_json() {
-    let (stdout, _, success) = run_ipcalc(&["summarize", "192.168.0.0/24", "192.168.1.0/24"]);
+    let (stdout, _, success) = run_netcidr(&["summarize", "192.168.0.0/24", "192.168.1.0/24"]);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -309,7 +309,7 @@ fn test_summarize_ipv4_json() {
 
 #[test]
 fn test_summarize_ipv4_text() {
-    let (stdout, _, success) = run_ipcalc(&[
+    let (stdout, _, success) = run_netcidr(&[
         "summarize",
         "192.168.0.0/24",
         "192.168.1.0/24",
@@ -324,7 +324,7 @@ fn test_summarize_ipv4_text() {
 
 #[test]
 fn test_summarize_ipv6_json() {
-    let (stdout, _, success) = run_ipcalc(&["summarize", "2001:db8::/48", "2001:db8:1::/48"]);
+    let (stdout, _, success) = run_netcidr(&["summarize", "2001:db8::/48", "2001:db8:1::/48"]);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -336,14 +336,14 @@ fn test_summarize_ipv6_json() {
 
 #[test]
 fn test_summarize_empty() {
-    let (_, stderr, success) = run_ipcalc(&["summarize"]);
+    let (_, stderr, success) = run_netcidr(&["summarize"]);
     assert!(!success);
     assert!(stderr.contains("required"));
 }
 
 #[test]
 fn test_from_range_ipv4_json() {
-    let (stdout, _, success) = run_ipcalc(&["from-range", "192.168.1.10", "192.168.1.20"]);
+    let (stdout, _, success) = run_netcidr(&["from-range", "192.168.1.10", "192.168.1.20"]);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -357,7 +357,7 @@ fn test_from_range_ipv4_json() {
 
 #[test]
 fn test_from_range_ipv4_text() {
-    let (stdout, _, success) = run_ipcalc(&[
+    let (stdout, _, success) = run_netcidr(&[
         "from-range",
         "192.168.1.10",
         "192.168.1.20",
@@ -372,7 +372,7 @@ fn test_from_range_ipv4_text() {
 
 #[test]
 fn test_from_range_ipv4_single_address() {
-    let (stdout, _, success) = run_ipcalc(&["from-range", "10.0.0.1", "10.0.0.1"]);
+    let (stdout, _, success) = run_netcidr(&["from-range", "10.0.0.1", "10.0.0.1"]);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -382,7 +382,7 @@ fn test_from_range_ipv4_single_address() {
 
 #[test]
 fn test_from_range_ipv6_json() {
-    let (stdout, _, success) = run_ipcalc(&["from-range", "2001:db8::1", "2001:db8::ff"]);
+    let (stdout, _, success) = run_netcidr(&["from-range", "2001:db8::1", "2001:db8::ff"]);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -393,14 +393,14 @@ fn test_from_range_ipv6_json() {
 
 #[test]
 fn test_from_range_invalid_start_gt_end() {
-    let (_, stderr, success) = run_ipcalc(&["from-range", "192.168.1.20", "192.168.1.10"]);
+    let (_, stderr, success) = run_netcidr(&["from-range", "192.168.1.20", "192.168.1.10"]);
     assert!(!success);
     assert!(stderr.contains("Error"));
 }
 
 #[test]
 fn test_from_range_invalid_address() {
-    let (_, stderr, success) = run_ipcalc(&["from-range", "not-an-ip", "192.168.1.10"]);
+    let (_, stderr, success) = run_netcidr(&["from-range", "not-an-ip", "192.168.1.10"]);
     assert!(!success);
     assert!(stderr.contains("Error"));
 }
@@ -409,7 +409,7 @@ fn test_from_range_invalid_address() {
 
 #[test]
 fn test_batch_multiple_cidrs() {
-    let (stdout, _, success) = run_ipcalc(&["192.168.1.0/24", "10.0.0.0/8"]);
+    let (stdout, _, success) = run_netcidr(&["192.168.1.0/24", "10.0.0.0/8"]);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -419,7 +419,7 @@ fn test_batch_multiple_cidrs() {
 
 #[test]
 fn test_batch_mixed_v4_v6() {
-    let (stdout, _, success) = run_ipcalc(&["192.168.1.0/24", "2001:db8::/32"]);
+    let (stdout, _, success) = run_netcidr(&["192.168.1.0/24", "2001:db8::/32"]);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -430,7 +430,7 @@ fn test_batch_mixed_v4_v6() {
 
 #[test]
 fn test_batch_with_invalid_cidr() {
-    let (stdout, _, success) = run_ipcalc(&["192.168.1.0/24", "not-valid", "10.0.0.0/8"]);
+    let (stdout, _, success) = run_netcidr(&["192.168.1.0/24", "not-valid", "10.0.0.0/8"]);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -443,7 +443,7 @@ fn test_batch_with_invalid_cidr() {
 
 #[test]
 fn test_batch_text_output() {
-    let (stdout, _, success) = run_ipcalc(&["192.168.1.0/24", "10.0.0.0/8", "--format", "text"]);
+    let (stdout, _, success) = run_netcidr(&["192.168.1.0/24", "10.0.0.0/8", "--format", "text"]);
     assert!(success);
     assert!(stdout.contains("Batch CIDR Processing"));
     assert!(stdout.contains("Total CIDRs: 2"));
@@ -453,7 +453,7 @@ fn test_batch_text_output() {
 
 #[test]
 fn test_single_cidr_not_batched() {
-    let (stdout, _, success) = run_ipcalc(&["192.168.1.0/24"]);
+    let (stdout, _, success) = run_netcidr(&["192.168.1.0/24"]);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -466,7 +466,7 @@ fn test_single_cidr_not_batched() {
 #[test]
 fn test_stdin_batch() {
     let input = "192.168.1.0/24\n# comment\n\n10.0.0.0/8\n2001:db8::/32\n";
-    let (stdout, _, success) = run_ipcalc_stdin(&["--stdin"], input);
+    let (stdout, _, success) = run_netcidr_stdin(&["--stdin"], input);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -477,7 +477,7 @@ fn test_stdin_batch() {
 #[test]
 fn test_stdin_single_cidr() {
     let input = "192.168.1.0/24\n";
-    let (stdout, _, success) = run_ipcalc_stdin(&["--stdin"], input);
+    let (stdout, _, success) = run_netcidr_stdin(&["--stdin"], input);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -490,7 +490,7 @@ fn test_stdin_single_cidr() {
 
 #[test]
 fn test_ipv4_csv_output() {
-    let (stdout, _, success) = run_ipcalc(&["192.168.1.0/24", "--format", "csv"]);
+    let (stdout, _, success) = run_netcidr(&["192.168.1.0/24", "--format", "csv"]);
     assert!(success);
 
     let lines: Vec<&str> = stdout.lines().collect();
@@ -503,7 +503,7 @@ fn test_ipv4_csv_output() {
 
 #[test]
 fn test_ipv6_csv_output() {
-    let (stdout, _, success) = run_ipcalc(&["2001:db8::/32", "--format", "csv"]);
+    let (stdout, _, success) = run_netcidr(&["2001:db8::/32", "--format", "csv"]);
     assert!(success);
 
     let lines: Vec<&str> = stdout.lines().collect();
@@ -514,7 +514,7 @@ fn test_ipv6_csv_output() {
 
 #[test]
 fn test_split_csv_output() {
-    let (stdout, _, success) = run_ipcalc(&[
+    let (stdout, _, success) = run_netcidr(&[
         "split",
         "192.168.0.0/24",
         "-p",
@@ -542,7 +542,7 @@ fn test_split_csv_output() {
 
 #[test]
 fn test_contains_csv_output() {
-    let (stdout, _, success) = run_ipcalc(&[
+    let (stdout, _, success) = run_netcidr(&[
         "contains",
         "192.168.1.0/24",
         "192.168.1.100",
@@ -558,7 +558,7 @@ fn test_contains_csv_output() {
 
 #[test]
 fn test_batch_csv_output() {
-    let (stdout, _, success) = run_ipcalc(&["192.168.1.0/24", "10.0.0.0/8", "--format", "csv"]);
+    let (stdout, _, success) = run_netcidr(&["192.168.1.0/24", "10.0.0.0/8", "--format", "csv"]);
     assert!(success);
 
     let lines: Vec<&str> = stdout.lines().collect();
@@ -576,7 +576,7 @@ fn test_batch_csv_output() {
 
 #[test]
 fn test_ipv4_yaml_output() {
-    let (stdout, _, success) = run_ipcalc(&["192.168.1.0/24", "--format", "yaml"]);
+    let (stdout, _, success) = run_netcidr(&["192.168.1.0/24", "--format", "yaml"]);
     assert!(success);
     assert!(stdout.contains("network_address:"));
     assert!(stdout.contains("192.168.1.0"));
@@ -585,7 +585,7 @@ fn test_ipv4_yaml_output() {
 
 #[test]
 fn test_ipv6_yaml_output() {
-    let (stdout, _, success) = run_ipcalc(&["2001:db8::/32", "--format", "yaml"]);
+    let (stdout, _, success) = run_netcidr(&["2001:db8::/32", "--format", "yaml"]);
     assert!(success);
     assert!(stdout.contains("network_address:"));
     assert!(stdout.contains("prefix_length:"));
@@ -593,7 +593,7 @@ fn test_ipv6_yaml_output() {
 
 #[test]
 fn test_split_yaml_output() {
-    let (stdout, _, success) = run_ipcalc(&[
+    let (stdout, _, success) = run_netcidr(&[
         "split",
         "192.168.0.0/24",
         "-p",
@@ -610,7 +610,7 @@ fn test_split_yaml_output() {
 
 #[test]
 fn test_contains_yaml_output() {
-    let (stdout, _, success) = run_ipcalc(&[
+    let (stdout, _, success) = run_netcidr(&[
         "contains",
         "192.168.1.0/24",
         "192.168.1.100",
@@ -628,12 +628,12 @@ fn test_contains_yaml_output() {
 fn run_ipam(db: &str, args: &[&str]) -> (String, String, bool) {
     let mut full_args = vec!["ipam", "--db", db];
     full_args.extend_from_slice(args);
-    run_ipcalc(&full_args)
+    run_netcidr(&full_args)
 }
 
 #[test]
 fn test_ipam_supernet_lifecycle() {
-    let db = "/tmp/ipcalc-test-lifecycle.db";
+    let db = "/tmp/netcidr-test-lifecycle.db";
     let _ = std::fs::remove_file(db);
 
     // Create supernet
@@ -667,7 +667,7 @@ fn test_ipam_supernet_lifecycle() {
 
 #[test]
 fn test_ipam_allocation_workflow() {
-    let db = "/tmp/ipcalc-test-alloc.db";
+    let db = "/tmp/netcidr-test-alloc.db";
     let _ = std::fs::remove_file(db);
 
     // Create supernet
@@ -729,7 +729,7 @@ fn test_ipam_allocation_workflow() {
 
 #[test]
 fn test_ipam_utilization_and_free_blocks() {
-    let db = "/tmp/ipcalc-test-util.db";
+    let db = "/tmp/netcidr-test-util.db";
     let _ = std::fs::remove_file(db);
 
     let (stdout, _, _) = run_ipam(db, &["supernet", "create", "10.0.0.0/24"]);
@@ -754,7 +754,7 @@ fn test_ipam_utilization_and_free_blocks() {
 
 #[test]
 fn test_ipam_find_ip() {
-    let db = "/tmp/ipcalc-test-findip.db";
+    let db = "/tmp/netcidr-test-findip.db";
     let _ = std::fs::remove_file(db);
 
     let (stdout, _, _) = run_ipam(db, &["supernet", "create", "10.0.0.0/8"]);
@@ -780,7 +780,7 @@ fn test_ipam_find_ip() {
 
 #[test]
 fn test_ipam_audit_log() {
-    let db = "/tmp/ipcalc-test-audit.db";
+    let db = "/tmp/netcidr-test-audit.db";
     let _ = std::fs::remove_file(db);
 
     let (stdout, _, _) = run_ipam(db, &["supernet", "create", "10.0.0.0/8"]);
@@ -799,7 +799,7 @@ fn test_ipam_audit_log() {
 
 #[test]
 fn test_ipam_tags() {
-    let db = "/tmp/ipcalc-test-tags.db";
+    let db = "/tmp/netcidr-test-tags.db";
     let _ = std::fs::remove_file(db);
 
     let (stdout, _, _) = run_ipam(db, &["supernet", "create", "10.0.0.0/8"]);
@@ -830,7 +830,7 @@ fn test_ipam_tags() {
 
 #[test]
 fn test_ipam_overlap_rejected() {
-    let db = "/tmp/ipcalc-test-overlap.db";
+    let db = "/tmp/netcidr-test-overlap.db";
     let _ = std::fs::remove_file(db);
 
     let (stdout, _, _) = run_ipam(db, &["supernet", "create", "10.0.0.0/16"]);
@@ -851,7 +851,7 @@ fn test_ipam_overlap_rejected() {
 
 #[test]
 fn test_ipam_csv_output() {
-    let db = "/tmp/ipcalc-test-csv.db";
+    let db = "/tmp/netcidr-test-csv.db";
     let _ = std::fs::remove_file(db);
 
     let (stdout, _, _) = run_ipam(db, &["supernet", "create", "10.0.0.0/16"]);
@@ -885,7 +885,7 @@ fn test_ipam_csv_output() {
 
 #[test]
 fn test_ipam_ipv6_supernet_lifecycle() {
-    let db = "/tmp/ipcalc-test-v6-lifecycle.db";
+    let db = "/tmp/netcidr-test-v6-lifecycle.db";
     let _ = std::fs::remove_file(db);
 
     // Create IPv6 supernet
@@ -956,7 +956,7 @@ fn test_ipam_ipv6_supernet_lifecycle() {
 
 #[test]
 fn test_ipam_release_and_reactivate_via_update() {
-    let db = "/tmp/ipcalc-test-reactivate.db";
+    let db = "/tmp/netcidr-test-reactivate.db";
     let _ = std::fs::remove_file(db);
 
     // Create supernet and allocate
@@ -994,7 +994,7 @@ fn test_ipam_release_and_reactivate_via_update() {
 
 #[test]
 fn test_ipam_reallocate_released_cidr_reuses_record() {
-    let db = "/tmp/ipcalc-test-realloc-dedup.db";
+    let db = "/tmp/netcidr-test-realloc-dedup.db";
     let _ = std::fs::remove_file(db);
 
     // Create supernet and allocate
@@ -1037,28 +1037,28 @@ fn test_ipam_reallocate_released_cidr_reuses_record() {
 
 #[test]
 fn test_completions_bash() {
-    let (stdout, _, success) = run_ipcalc(&["completions", "bash"]);
+    let (stdout, _, success) = run_netcidr(&["completions", "bash"]);
     assert!(success);
-    assert!(stdout.contains("_ipcalc"));
+    assert!(stdout.contains("_netcidr"));
 }
 
 #[test]
 fn test_completions_zsh() {
-    let (stdout, _, success) = run_ipcalc(&["completions", "zsh"]);
+    let (stdout, _, success) = run_netcidr(&["completions", "zsh"]);
     assert!(success);
-    assert!(stdout.contains("#compdef ipcalc"));
+    assert!(stdout.contains("#compdef netcidr"));
 }
 
 #[test]
 fn test_completions_fish() {
-    let (stdout, _, success) = run_ipcalc(&["completions", "fish"]);
+    let (stdout, _, success) = run_netcidr(&["completions", "fish"]);
     assert!(success);
-    assert!(stdout.contains("complete -c ipcalc"));
+    assert!(stdout.contains("complete -c netcidr"));
 }
 
 #[test]
 fn test_completions_invalid_shell() {
-    let (_, stderr, success) = run_ipcalc(&["completions", "nushell"]);
+    let (_, stderr, success) = run_netcidr(&["completions", "nushell"]);
     assert!(!success);
     assert!(stderr.contains("invalid value"));
 }

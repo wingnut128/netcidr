@@ -57,7 +57,7 @@ pub fn init_logging(config: &LogConfig) -> WorkerGuard {
             let filename = path
                 .file_name()
                 .and_then(|f| f.to_str())
-                .unwrap_or("ipcalc.log");
+                .unwrap_or("netcidr.log");
 
             let file_appender = tracing_appender::rolling::never(parent, filename);
             tracing_appender::non_blocking(file_appender)

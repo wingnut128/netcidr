@@ -1,4 +1,4 @@
-use crate::error::{IpCalcError, Result};
+use crate::error::{NetcidrError, Result};
 use crate::ipam::models::*;
 use crate::output::{CsvOutput, TextOutput};
 use std::fmt::Write;
@@ -206,8 +206,8 @@ impl TextOutput for AuditList {
 // CsvOutput implementations
 // ---------------------------------------------------------------------------
 
-fn csv_err(e: impl std::fmt::Display) -> IpCalcError {
-    IpCalcError::Csv(e.to_string())
+fn csv_err(e: impl std::fmt::Display) -> NetcidrError {
+    NetcidrError::Csv(e.to_string())
 }
 
 fn finish_csv(wtr: csv::Writer<Vec<u8>>) -> Result<String> {

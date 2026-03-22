@@ -1,6 +1,6 @@
 use crate::batch::{BatchEntryResult, BatchResult, SubnetResult};
 use crate::contains::ContainsResult;
-use crate::error::{IpCalcError, Result};
+use crate::error::{NetcidrError, Result};
 use crate::from_range::{Ipv4FromRangeResult, Ipv6FromRangeResult};
 use crate::ipv4::Ipv4Subnet;
 use crate::ipv6::Ipv6Subnet;
@@ -35,8 +35,8 @@ impl std::str::FromStr for OutputFormat {
     }
 }
 
-fn csv_err(e: impl std::fmt::Display) -> IpCalcError {
-    IpCalcError::Csv(e.to_string())
+fn csv_err(e: impl std::fmt::Display) -> NetcidrError {
+    NetcidrError::Csv(e.to_string())
 }
 
 pub struct OutputWriter {
@@ -55,7 +55,7 @@ impl OutputWriter {
             OutputFormat::Text => data.to_text(),
             OutputFormat::Csv => data.to_csv()?,
             OutputFormat::Yaml => {
-                serde_saphyr::to_string(data).map_err(|e| IpCalcError::Yaml(e.to_string()))?
+                serde_saphyr::to_string(data).map_err(|e| NetcidrError::Yaml(e.to_string()))?
             }
         };
 
