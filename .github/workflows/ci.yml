@@ -37,7 +37,7 @@ jobs:
             target/
           key: lint-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: lint-${{ runner.os }}-
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
       - name: Build dashboard
@@ -58,7 +58,7 @@ jobs:
             target/
           key: test-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: test-${{ runner.os }}-
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
       - name: Build dashboard
