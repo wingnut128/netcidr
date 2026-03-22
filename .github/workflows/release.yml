@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Release version (e.g. 0.15.0, no leading v)"
+        required: true
+        type: string
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            target/
+          key: release-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: release-${{ runner.os }}-
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Validate version format
+        run: |
+          if ! echo "${{ inputs.release_version }}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "ERROR: Invalid version format. Expected X.Y.Z (e.g. 0.15.0)"
+            exit 1
+          fi
+
+      - name: Validate Cargo.toml version matches
+        run: |
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          if [ "$CARGO_VERSION" != "${{ inputs.release_version }}" ]; then
+            echo "ERROR: Cargo.toml version ($CARGO_VERSION) does not match release version (${{ inputs.release_version }})"
+            exit 1
+          fi
+
+      - name: Validate CHANGELOG entry exists
+        run: |
+          if ! grep -q "^## \[${{ inputs.release_version }}\]" CHANGELOG.md; then
+            echo "ERROR: CHANGELOG.md has no entry for version ${{ inputs.release_version }}"
+            exit 1
+          fi
+
+      - name: Extract release notes
+        id: notes
+        run: |
+          awk -v ver="${{ inputs.release_version }}" \
+            '/^## \[/{if($0 ~ "\\[" ver "\\]"){found=1; next} else if(found) exit} found{print}' \
+            CHANGELOG.md > release_notes.md
+          echo "Release notes:"
+          cat release_notes.md
+
+      - name: Build dashboard
+        run: cd dashboard && npm ci --silent && npm run build
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.release_version }}
+          name: netcidr v${{ inputs.release_version }}
+          body_path: release_notes.md
+          files: target/release/netcidr
+          target_commitish: main
