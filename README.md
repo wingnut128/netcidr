@@ -1,6 +1,6 @@
 # netcidr
 
-[![CI](https://gitlab.com/mlapane/netcidr/badges/main/pipeline.svg)](https://gitlab.com/mlapane/netcidr/-/pipelines)
+[![CI](https://github.com/wingnut128/netcidr/actions/workflows/ci.yml/badge.svg)](https://github.com/wingnut128/netcidr/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A fast IPv4 and IPv6 subnet calculator written in Rust. Available as a CLI tool, HTTP API, and MCP server for AI assistants.
@@ -30,7 +30,7 @@ A fast IPv4 and IPv6 subnet calculator written in Rust. Available as a CLI tool,
 ### From Source
 
 ```bash
-git clone https://gitlab.com/mlapane/netcidr.git
+git clone https://github.com/wingnut128/netcidr.git
 cd netcidr
 cargo build --release
 ```

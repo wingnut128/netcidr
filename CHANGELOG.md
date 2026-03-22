@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Migrate CI/CD from GitLab CI to GitHub Actions (ci, lint, test, audit, semgrep, CodeQL, release)
+- Add Dependabot configuration for GitHub Actions, Cargo, and npm dependencies
+- Update all documentation references from GitLab to GitHub (README, SECURITY, CHANGELOG, CLAUDE.md)
+
 ## [0.15.0] - 2026-03-21
 
 ### Added
@@ -526,32 +534,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dockerfile for containerized deployment
 - Makefile for common development tasks
 
-[Unreleased]: https://gitlab.com/mlapane/netcidr/-/compare/v0.13.1...HEAD
-[0.13.1]: https://gitlab.com/mlapane/netcidr/-/compare/v0.12.0...v0.13.1
-[0.12.0]: https://gitlab.com/mlapane/netcidr/-/compare/v0.11.1...v0.12.0
-[0.11.1]: https://gitlab.com/mlapane/netcidr/-/compare/v0.11.0...v0.11.1
-[0.11.0]: https://gitlab.com/mlapane/netcidr/-/compare/v0.10.0...v0.11.0
-[0.10.0]: https://gitlab.com/mlapane/netcidr/-/compare/v0.9.0...v0.10.0
-[0.9.0]: https://gitlab.com/mlapane/netcidr/-/compare/v0.8.1...v0.9.0
-[0.8.1]: https://gitlab.com/mlapane/netcidr/-/compare/v0.8.0...v0.8.1
-[0.8.0]: https://gitlab.com/mlapane/netcidr/-/compare/v0.7.0...v0.8.0
-[0.7.0]: https://gitlab.com/mlapane/netcidr/-/compare/v0.6.1...v0.7.0
-[0.6.1]: https://gitlab.com/mlapane/netcidr/-/compare/v0.6.0...v0.6.1
-[0.6.0]: https://gitlab.com/mlapane/netcidr/-/compare/v0.5.0...v0.6.0
-[0.5.0]: https://gitlab.com/mlapane/netcidr/-/compare/v0.4.1...v0.5.0
-[0.4.1]: https://gitlab.com/mlapane/netcidr/-/compare/v0.4.0...v0.4.1
-[0.4.0]: https://gitlab.com/mlapane/netcidr/-/compare/v0.3.2...v0.4.0
-[0.3.2]: https://gitlab.com/mlapane/netcidr/-/compare/v0.3.1...v0.3.2
-[0.3.1]: https://gitlab.com/mlapane/netcidr/-/compare/v0.3.0...v0.3.1
-[0.3.0]: https://gitlab.com/mlapane/netcidr/-/compare/v0.2.1...v0.3.0
-[0.2.1]: https://gitlab.com/mlapane/netcidr/-/compare/v0.2.0...v0.2.1
-[0.2.0]: https://gitlab.com/mlapane/netcidr/-/compare/v0.1.8...v0.2.0
-[0.1.8]: https://gitlab.com/mlapane/netcidr/-/compare/v0.1.7...v0.1.8
-[0.1.7]: https://gitlab.com/mlapane/netcidr/-/compare/v0.1.6...v0.1.7
-[0.1.6]: https://gitlab.com/mlapane/netcidr/-/compare/v0.1.5...v0.1.6
-[0.1.5]: https://gitlab.com/mlapane/netcidr/-/compare/v0.1.4...v0.1.5
-[0.1.4]: https://gitlab.com/mlapane/netcidr/-/compare/v0.1.3...v0.1.4
-[0.1.3]: https://gitlab.com/mlapane/netcidr/-/compare/v0.1.2...v0.1.3
-[0.1.2]: https://gitlab.com/mlapane/netcidr/-/compare/v0.1.1...v0.1.2
-[0.1.1]: https://gitlab.com/mlapane/netcidr/-/compare/v0.1.0...v0.1.1
-[0.1.0]: https://gitlab.com/mlapane/netcidr/-/releases/v0.1.0
+[Unreleased]: https://github.com/wingnut128/netcidr/compare/v0.13.1...HEAD
+[0.13.1]: https://github.com/wingnut128/netcidr/compare/v0.12.0...v0.13.1
+[0.12.0]: https://github.com/wingnut128/netcidr/compare/v0.11.1...v0.12.0
+[0.11.1]: https://github.com/wingnut128/netcidr/compare/v0.11.0...v0.11.1
+[0.11.0]: https://github.com/wingnut128/netcidr/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/wingnut128/netcidr/compare/v0.9.0...v0.10.0
+[0.9.0]: https://github.com/wingnut128/netcidr/compare/v0.8.1...v0.9.0
+[0.8.1]: https://github.com/wingnut128/netcidr/compare/v0.8.0...v0.8.1
+[0.8.0]: https://github.com/wingnut128/netcidr/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/wingnut128/netcidr/compare/v0.6.1...v0.7.0
+[0.6.1]: https://github.com/wingnut128/netcidr/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/wingnut128/netcidr/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/wingnut128/netcidr/compare/v0.4.1...v0.5.0
+[0.4.1]: https://github.com/wingnut128/netcidr/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/wingnut128/netcidr/compare/v0.3.2...v0.4.0
+[0.3.2]: https://github.com/wingnut128/netcidr/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/wingnut128/netcidr/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/wingnut128/netcidr/compare/v0.2.1...v0.3.0
+[0.2.1]: https://github.com/wingnut128/netcidr/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/wingnut128/netcidr/compare/v0.1.8...v0.2.0
+[0.1.8]: https://github.com/wingnut128/netcidr/compare/v0.1.7...v0.1.8
+[0.1.7]: https://github.com/wingnut128/netcidr/compare/v0.1.6...v0.1.7
+[0.1.6]: https://github.com/wingnut128/netcidr/compare/v0.1.5...v0.1.6
+[0.1.5]: https://github.com/wingnut128/netcidr/compare/v0.1.4...v0.1.5
+[0.1.4]: https://github.com/wingnut128/netcidr/compare/v0.1.3...v0.1.4
+[0.1.3]: https://github.com/wingnut128/netcidr/compare/v0.1.2...v0.1.3
+[0.1.2]: https://github.com/wingnut128/netcidr/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/wingnut128/netcidr/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/wingnut128/netcidr/releases/tag/v0.1.0

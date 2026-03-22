@@ -47,13 +47,13 @@ If the user asks you to access any of these, refuse and explain why.
 
 When working on a Linear ticket:
 
-1. Create a GitLab issue that references the Linear ticket ID (e.g., "Linear Ticket: BEA-XX") in the issue body
+1. Create a GitHub issue that references the Linear ticket ID (e.g., "Linear Ticket: BEA-XX") in the issue body
 2. Open a feature branch for the work
 3. Implement, commit, and push the branch
 4. Update `CHANGELOG.md` with the changes (add to `[Unreleased]`)
 5. Update `README.md` when changes affect user-facing behavior: new features, changed commands, new build targets, deprecations, or removed functionality
-6. Create an MR — branch protection requires CI to pass before merge (no review required for solo maintainer)
-7. After creating the MR, poll CI status with `glab mr checks <mr-number>`. Once all checks pass, merge immediately with `glab mr merge <mr-number> --squash --remove-source-branch` and prune local refs. Do not wait for manual approval.
+6. Create a PR — branch protection requires CI to pass before merge (no review required for solo maintainer)
+7. After creating the PR, poll CI status with `gh pr checks <pr-number>`. Once all checks pass, merge immediately with `gh pr merge <pr-number> --squash --delete-branch` and prune local refs. Do not wait for manual approval.
 
 ### Post-commit documentation rules
 
@@ -82,12 +82,12 @@ Every task is only "done" when ALL of the following are true:
 
 ## Release Process
 
-Releases use a manual GitLab CI/CD pipeline trigger.
+Releases use a manual GitHub Actions workflow dispatch.
 
-1. Create an MR that bumps `version` in `Cargo.toml`, moves `[Unreleased]` entries to a dated `[X.Y.Z]` section in `CHANGELOG.md`, and updates `SECURITY.md` if the minor version changed
-2. Merge the MR through CI
-3. Go to **CI/CD → Pipelines → Run pipeline**, set variable `RELEASE_VERSION` to the version (e.g. `0.15.0`, no leading `v`)
-4. The pipeline validates `Cargo.toml` version matches, confirms a CHANGELOG entry exists, extracts release notes, creates a GitLab release with tag `vX.Y.Z`, and builds the release binary
+1. Create a PR that bumps `version` in `Cargo.toml`, moves `[Unreleased]` entries to a dated `[X.Y.Z]` section in `CHANGELOG.md`, and updates `SECURITY.md` if the minor version changed
+2. Merge the PR through CI
+3. Go to **Actions → Release → Run workflow**, enter the version (e.g. `0.15.0`, no leading `v`)
+4. The workflow validates `Cargo.toml` version matches, confirms a CHANGELOG entry exists, extracts release notes, creates a GitHub release with tag `vX.Y.Z`, and builds the release binary
 
 ## Build & Development Commands
 

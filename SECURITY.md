@@ -14,8 +14,8 @@ We actively support and provide security updates for the following versions:
 
 If you discover a security vulnerability in netcidr, please report it responsibly:
 
-1. **Do not** open a public GitLab issue for security vulnerabilities
-2. Send a detailed report to the maintainers via [GitLab confidential issues](https://gitlab.com/mlapane/netcidr/-/issues/new?confidential=true)
+1. **Do not** open a public GitHub issue for security vulnerabilities
+2. Send a detailed report to the maintainers via [GitHub Security Advisories](https://github.com/wingnut128/netcidr/security/advisories/new)
 3. Include:
    - Description of the vulnerability
    - Steps to reproduce
