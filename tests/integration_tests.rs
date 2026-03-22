@@ -30,7 +30,9 @@ fn run_netcidr_stdin(args: &[&str], input: &str) -> (String, String, bool) {
         .write_all(input.as_bytes())
         .unwrap();
 
-    let output = child.wait_with_output().expect("Failed to wait for netcidr");
+    let output = child
+        .wait_with_output()
+        .expect("Failed to wait for netcidr");
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     (stdout, stderr, output.status.success())
@@ -254,7 +256,8 @@ fn test_contains_invalid_address() {
 
 #[test]
 fn test_split_count_only_ipv4() {
-    let (stdout, _, success) = run_netcidr(&["split", "192.168.0.0/22", "-p", "27", "--count-only"]);
+    let (stdout, _, success) =
+        run_netcidr(&["split", "192.168.0.0/22", "-p", "27", "--count-only"]);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -274,7 +277,8 @@ fn test_split_count_only_ipv6() {
 
 #[test]
 fn test_split_count_only_ipv6_huge() {
-    let (stdout, _, success) = run_netcidr(&["split", "2001:db8::/32", "-p", "128", "--count-only"]);
+    let (stdout, _, success) =
+        run_netcidr(&["split", "2001:db8::/32", "-p", "128", "--count-only"]);
     assert!(success);
 
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");

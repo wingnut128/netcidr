@@ -441,7 +441,9 @@ impl IpamStore for SqliteStore {
             |_| Ok(()),
         )
         .map_err(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => NetcidrError::AllocationNotFound(id.to_string()),
+            rusqlite::Error::QueryReturnedNoRows => {
+                NetcidrError::AllocationNotFound(id.to_string())
+            }
             _ => NetcidrError::DatabaseError(e.to_string()),
         })?;
 
