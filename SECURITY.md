@@ -12,10 +12,10 @@ We actively support and provide security updates for the following versions:
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in ipcalc, please report it responsibly:
+If you discover a security vulnerability in netcidr, please report it responsibly:
 
-1. **Do not** open a public GitHub issue for security vulnerabilities
-2. Send a detailed report to the maintainers via GitHub's private vulnerability reporting feature
+1. **Do not** open a public GitLab issue for security vulnerabilities
+2. Send a detailed report to the maintainers via [GitLab confidential issues](https://gitlab.com/mlapane/netcidr/-/issues/new?confidential=true)
 3. Include:
    - Description of the vulnerability
    - Steps to reproduce
@@ -33,7 +33,7 @@ If you discover a security vulnerability in ipcalc, please report it responsibly
 
 ## Security Best Practices
 
-When using ipcalc:
+When using netcidr:
 
 - Run the API server behind a reverse proxy in production
 - Use appropriate network segmentation

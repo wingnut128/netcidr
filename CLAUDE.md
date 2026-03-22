@@ -47,13 +47,13 @@ If the user asks you to access any of these, refuse and explain why.
 
 When working on a Linear ticket:
 
-1. Create a GitHub issue that references the Linear ticket ID (e.g., "Linear Ticket: BEA-XX") in the issue body
+1. Create a GitLab issue that references the Linear ticket ID (e.g., "Linear Ticket: BEA-XX") in the issue body
 2. Open a feature branch for the work
 3. Implement, commit, and push the branch
 4. Update `CHANGELOG.md` with the changes (add to `[Unreleased]`)
 5. Update `README.md` when changes affect user-facing behavior: new features, changed commands, new build targets, deprecations, or removed functionality
-6. Create a PR — branch protection requires CI to pass before merge (no review required for solo maintainer)
-7. After creating the PR, poll CI status with `gh pr checks <pr-number> --watch`. Once all checks pass, merge immediately with `gh pr merge <pr-number> --squash --delete-branch` and prune local refs. Do not wait for manual approval.
+6. Create an MR — branch protection requires CI to pass before merge (no review required for solo maintainer)
+7. After creating the MR, poll CI status with `glab mr checks <mr-number>`. Once all checks pass, merge immediately with `glab mr merge <mr-number> --squash --remove-source-branch` and prune local refs. Do not wait for manual approval.
 
 ### Post-commit documentation rules
 
@@ -82,12 +82,12 @@ Every task is only "done" when ALL of the following are true:
 
 ## Release Process
 
-Releases use a `workflow_dispatch` GitHub Actions workflow.
+Releases use a manual GitLab CI/CD pipeline trigger.
 
-1. Create a PR that bumps `version` in `Cargo.toml`, moves `[Unreleased]` entries to a dated `[X.Y.Z]` section in `CHANGELOG.md`, and updates `SECURITY.md` if the minor version changed
-2. Merge the PR through CI
-3. Go to **Actions → Release → Run workflow** and enter the version (e.g. `0.12.0`, no leading `v`)
-4. The workflow validates `Cargo.toml` version matches, confirms a CHANGELOG entry exists, extracts release notes, creates a GitHub release with tag `vX.Y.Z`, and builds/uploads cross-platform binaries
+1. Create an MR that bumps `version` in `Cargo.toml`, moves `[Unreleased]` entries to a dated `[X.Y.Z]` section in `CHANGELOG.md`, and updates `SECURITY.md` if the minor version changed
+2. Merge the MR through CI
+3. Go to **CI/CD → Pipelines → Run pipeline**, set variable `RELEASE_VERSION` to the version (e.g. `0.15.0`, no leading `v`)
+4. The pipeline validates `Cargo.toml` version matches, confirms a CHANGELOG entry exists, extracts release notes, creates a GitLab release with tag `vX.Y.Z`, and builds the release binary
 
 ## Build & Development Commands
 
@@ -114,26 +114,26 @@ make serve          # Run on localhost:8080
 make serve-debug    # Run with debug logging
 
 # API server with config file and overrides
-ipcalc serve --config ipcalc.toml
-ipcalc serve --enable-swagger --max-batch-size 500 --timeout 60
+netcidr serve --config netcidr.toml
+netcidr serve --enable-swagger --max-batch-size 500 --timeout 60
 
 # Fuzz testing (requires: rustup toolchain install nightly && cargo install cargo-fuzz)
 make fuzz                                      # Run fuzz_cidr_parsing for 60s
 make fuzz FUZZ_TARGET=fuzz_contains FUZZ_DURATION=30  # Run specific target
 
 # CLI usage
-ipcalc 192.168.1.0/24                  # IPv4 subnet info
-ipcalc 2001:db8::/48                   # IPv6 prefix info
-ipcalc split 10.0.0.0/8 -p 16 -n 10   # Generate 10 /16 subnets
-ipcalc split 10.0.0.0/8 -p 16 --max   # Generate all possible /16 subnets
+netcidr 192.168.1.0/24                  # IPv4 subnet info
+netcidr 2001:db8::/48                   # IPv6 prefix info
+netcidr split 10.0.0.0/8 -p 16 -n 10   # Generate 10 /16 subnets
+netcidr split 10.0.0.0/8 -p 16 --max   # Generate all possible /16 subnets
 
 # IPAM commands
-ipcalc ipam supernet create 10.0.0.0/8 --name "Corp"
-ipcalc ipam allocate <supernet-id> 10.0.1.0/24 --name "Web"
-ipcalc ipam auto-allocate <supernet-id> -p 24 -n 3
-ipcalc ipam utilization <supernet-id> --format text
-ipcalc ipam find-ip 10.0.1.50
-ipcalc ipam --db /path/to/db supernet list   # Custom DB path
+netcidr ipam supernet create 10.0.0.0/8 --name "Corp"
+netcidr ipam allocate <supernet-id> 10.0.1.0/24 --name "Web"
+netcidr ipam auto-allocate <supernet-id> -p 24 -n 3
+netcidr ipam utilization <supernet-id> --format text
+netcidr ipam find-ip 10.0.1.50
+netcidr ipam --db /path/to/db supernet list   # Custom DB path
 ```
 
 Global options: `--format json|text|csv|yaml`, `--output <file>`
@@ -152,10 +152,10 @@ This is a Rust CLI/API/MCP server for IPv4 and IPv6 subnet calculations with IPA
 - `validation.rs` - Shared input validation (CIDR, IP, text fields, identifiers, status allowlist)
 - `api.rs` - Axum HTTP server with REST endpoints sharing the same data structures as CLI
 - `ipam/` - IPAM persistence layer: `operations.rs` (business logic), `store.rs` (trait), `sqlite/` (backend), `models.rs`, `config.rs`
-- `ipam_cli.rs` - CLI handler for `ipcalc ipam` subcommands
+- `ipam_cli.rs` - CLI handler for `netcidr ipam` subcommands
 - `mcp.rs` - Rust-native MCP server using `rmcp` SDK (feature-gated: `mcp`), supports local or remote IPAM backend
-- `mcp_client.rs` - HTTP client that proxies IPAM operations to a remote `ipcalc serve` API (feature-gated: `mcp`)
-- `error.rs` - Custom `IpCalcError` enum with `Result<T>` type alias used throughout
+- `mcp_client.rs` - HTTP client that proxies IPAM operations to a remote `netcidr serve` API (feature-gated: `mcp`)
+- `error.rs` - Custom `NetcidrError` enum with `Result<T>` type alias used throughout
 - `output.rs` - `TextOutput` / `CsvOutput` traits for JSON/text/CSV/YAML formatting
 
 **Dashboard** (`dashboard/`): React + Vite + TypeScript SPA with Tailwind CSS. Built to a single `dashboard/dist/index.html` via `vite-plugin-singlefile`, embedded in the Rust binary with `include_str!`.

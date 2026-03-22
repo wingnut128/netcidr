@@ -1,7 +1,6 @@
-# ipcalc
+# netcidr
 
-[![CI](https://github.com/wingnut128/ipcalc/actions/workflows/ci.yml/badge.svg)](https://github.com/wingnut128/ipcalc/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/wingnut128/ipcalc/actions/workflows/codeql.yml/badge.svg)](https://github.com/wingnut128/ipcalc/actions/workflows/codeql.yml)
+[![CI](https://gitlab.com/mlapane/netcidr/badges/main/pipeline.svg)](https://gitlab.com/mlapane/netcidr/-/pipelines)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A fast IPv4 and IPv6 subnet calculator written in Rust. Available as a CLI tool, HTTP API, and MCP server for AI assistants.
@@ -18,11 +17,11 @@ A fast IPv4 and IPv6 subnet calculator written in Rust. Available as a CLI tool,
 - **Batch processing**: process multiple CIDRs via positional arguments, `--stdin`, or the `POST /batch` API endpoint
 - **Multiple output formats**: JSON (default), plain text, CSV, and YAML
 - **File output**: write results directly to a file
-- **Web dashboard**: Full SPA at `http://localhost:8080/` with subnet calculator, splitter, contains check, summarize, from-range, IPAM dashboard, and subnet visualizer — served automatically when running `ipcalc serve`
+- **Web dashboard**: Full SPA at `http://localhost:8080/` with subnet calculator, splitter, contains check, summarize, from-range, IPAM dashboard, and subnet visualizer — served automatically when running `netcidr serve`
 - **HTTP API**: REST endpoints for all calculations
 - **OpenAPI documentation**: Machine-readable API specification for easy integration with tools like Swagger Editor, Postman, and Insomnia
 - **MCP server**: [Model Context Protocol](https://modelcontextprotocol.io) server for AI assistant integration (Claude, etc.) over stdio
-- **IPAM (IP Address Management)**: IPv4 and IPv6 allocation tracking with conflict detection, audit trail, utilization reporting, reservation TTL/expiry, and JSON export/import — available via CLI (`ipcalc ipam`) and REST API (`ipcalc serve --ipam-enabled`)
+- **IPAM (IP Address Management)**: IPv4 and IPv6 allocation tracking with conflict detection, audit trail, utilization reporting, reservation TTL/expiry, and JSON export/import — available via CLI (`netcidr ipam`) and REST API (`netcidr serve --ipam-enabled`)
 - **Configurable security**: rate limiting, request size limits, timeouts, restrictive CORS, and security headers
 - **TOML configuration**: server settings via config file with CLI flag overrides
 
@@ -31,12 +30,12 @@ A fast IPv4 and IPv6 subnet calculator written in Rust. Available as a CLI tool,
 ### From Source
 
 ```bash
-git clone https://github.com/wingnut128/ipcalc.git
-cd ipcalc
+git clone https://gitlab.com/mlapane/netcidr.git
+cd netcidr
 cargo build --release
 ```
 
-The binary will be at `target/release/ipcalc`.
+The binary will be at `target/release/netcidr`.
 
 ### Using Cargo
 
@@ -52,23 +51,23 @@ The CLI auto-detects IPv4 or IPv6 based on the CIDR notation:
 
 ```bash
 # JSON output (default)
-ipcalc 192.168.1.0/24
+netcidr 192.168.1.0/24
 
 # Plain text output
-ipcalc 192.168.1.0/24 --format text
+netcidr 192.168.1.0/24 --format text
 
 # CSV output (spreadsheet-importable)
-ipcalc 192.168.1.0/24 --format csv
+netcidr 192.168.1.0/24 --format csv
 
 # YAML output (IaC-friendly)
-ipcalc 192.168.1.0/24 --format yaml
+netcidr 192.168.1.0/24 --format yaml
 
 # Output to file
-ipcalc 10.0.0.0/8 -o results.json
+netcidr 10.0.0.0/8 -o results.json
 
 # IPv6 prefix
-ipcalc 2001:db8::/32
-ipcalc fe80::1/64 --format text
+netcidr 2001:db8::/32
+netcidr fe80::1/64 --format text
 ```
 
 Example JSON output:
@@ -95,16 +94,16 @@ Generate smaller subnets from a larger supernet:
 
 ```bash
 # Generate 10 /27 subnets from a /22
-ipcalc split 192.168.0.0/22 -p 27 -n 10
+netcidr split 192.168.0.0/22 -p 27 -n 10
 
 # Generate all possible /27 subnets from a /22
-ipcalc split 192.168.0.0/22 -p 27 --max
+netcidr split 192.168.0.0/22 -p 27 --max
 
 # Show only how many /27 subnets fit in a /22 (no generation)
-ipcalc split 192.168.0.0/22 -p 27 --count-only
+netcidr split 192.168.0.0/22 -p 27 --count-only
 
 # Generate 5 /48 subnets from a /32
-ipcalc split 2001:db8::/32 -p 48 -n 5
+netcidr split 2001:db8::/32 -p 48 -n 5
 ```
 
 ### Subnet Summarization
@@ -113,13 +112,13 @@ Aggregate multiple CIDRs into the minimal covering set:
 
 ```bash
 # Summarize adjacent IPv4 subnets
-ipcalc summarize 192.168.0.0/24 192.168.1.0/24
+netcidr summarize 192.168.0.0/24 192.168.1.0/24
 
 # Summarize IPv6 prefixes
-ipcalc summarize 2001:db8::/48 2001:db8:1::/48
+netcidr summarize 2001:db8::/48 2001:db8:1::/48
 
 # Text output
-ipcalc summarize 10.0.0.0/24 10.0.1.0/24 10.0.2.0/23 --format text
+netcidr summarize 10.0.0.0/24 10.0.1.0/24 10.0.2.0/23 --format text
 ```
 
 ### Range to CIDR
@@ -128,13 +127,13 @@ Convert an arbitrary IP range into the minimal set of CIDR blocks:
 
 ```bash
 # IPv4 range
-ipcalc from-range 192.168.1.10 192.168.1.20
+netcidr from-range 192.168.1.10 192.168.1.20
 
 # IPv6 range
-ipcalc from-range 2001:db8::1 2001:db8::ff
+netcidr from-range 2001:db8::1 2001:db8::ff
 
 # Text output
-ipcalc from-range 192.168.1.10 192.168.1.20 --format text
+netcidr from-range 192.168.1.10 192.168.1.20 --format text
 ```
 
 ### Address Containment
@@ -143,13 +142,13 @@ Check if an IP address is contained within a subnet:
 
 ```bash
 # IPv4 — JSON output
-ipcalc contains 192.168.1.0/24 192.168.1.100
+netcidr contains 192.168.1.0/24 192.168.1.100
 
 # IPv4 — text output
-ipcalc contains 192.168.1.0/24 10.0.0.1 --format text
+netcidr contains 192.168.1.0/24 10.0.0.1 --format text
 
 # IPv6
-ipcalc contains 2001:db8::/32 2001:db8::1
+netcidr contains 2001:db8::/32 2001:db8::1
 ```
 
 ### Batch Processing
@@ -158,13 +157,13 @@ Process multiple CIDRs in a single invocation:
 
 ```bash
 # Multiple CIDRs as positional arguments
-ipcalc 192.168.1.0/24 10.0.0.0/8 172.16.0.0/12
+netcidr 192.168.1.0/24 10.0.0.0/8 172.16.0.0/12
 
 # Read CIDRs from stdin (one per line, blank lines and # comments skipped)
-cat cidrs.txt | ipcalc --stdin
+cat cidrs.txt | netcidr --stdin
 
 # Combine with any output format
-echo -e "192.168.1.0/24\n10.0.0.0/8" | ipcalc --stdin --format yaml
+echo -e "192.168.1.0/24\n10.0.0.0/8" | netcidr --stdin --format yaml
 ```
 
 Invalid CIDRs in a batch are reported per-entry without failing the entire operation.
@@ -178,7 +177,7 @@ Launch an interactive terminal user interface for real-time subnet calculations 
 cargo build --release --features tui
 
 # Run the TUI
-ipcalc --tui
+netcidr --tui
 ```
 
 **TUI Features:**
@@ -212,26 +211,26 @@ Generate tab-completion scripts for your shell:
 
 ```bash
 # Bash (add to ~/.bashrc)
-eval "$(ipcalc completions bash)"
+eval "$(netcidr completions bash)"
 
 # Zsh (add to ~/.zshrc)
-eval "$(ipcalc completions zsh)"
+eval "$(netcidr completions zsh)"
 
 # Fish (add to ~/.config/fish/config.fish)
-ipcalc completions fish | source
+netcidr completions fish | source
 
 # Elvish
-eval (ipcalc completions elvish | slurp)
+eval (netcidr completions elvish | slurp)
 
 # PowerShell (add to $PROFILE)
-ipcalc completions powershell | Out-String | Invoke-Expression
+netcidr completions powershell | Out-String | Invoke-Expression
 ```
 
 Supported shells: `bash`, `zsh`, `fish`, `elvish`, `powershell`.
 
 ### MCP Server (AI Assistant Integration)
 
-The MCP server lets AI assistants like Claude use ipcalc as a tool for subnet calculations. It communicates over stdio using the [Model Context Protocol](https://modelcontextprotocol.io). Built natively in Rust using the official `rmcp` SDK — no Node.js required.
+The MCP server lets AI assistants like Claude use netcidr as a tool for subnet calculations. It communicates over stdio using the [Model Context Protocol](https://modelcontextprotocol.io). Built natively in Rust using the official `rmcp` SDK — no Node.js required.
 
 ```bash
 # Build with MCP support
@@ -273,8 +272,8 @@ Add to `~/.claude.json`:
 ```json
 {
   "mcpServers": {
-    "ipcalc": {
-      "command": "/absolute/path/to/ipcalc",
+    "netcidr": {
+      "command": "/absolute/path/to/netcidr",
       "args": ["mcp-serve"]
     }
   }
@@ -286,21 +285,21 @@ With IPAM enabled (local database):
 ```json
 {
   "mcpServers": {
-    "ipcalc": {
-      "command": "/absolute/path/to/ipcalc",
+    "netcidr": {
+      "command": "/absolute/path/to/netcidr",
       "args": ["mcp-serve", "--ipam-db", "/path/to/ipam.db"]
     }
   }
 }
 ```
 
-With IPAM via remote API server (connects to a running `ipcalc serve`):
+With IPAM via remote API server (connects to a running `netcidr serve`):
 
 ```json
 {
   "mcpServers": {
-    "ipcalc": {
-      "command": "/absolute/path/to/ipcalc",
+    "netcidr": {
+      "command": "/absolute/path/to/netcidr",
       "args": ["mcp-serve", "--api-url", "http://localhost:8080"]
     }
   }
@@ -316,8 +315,8 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 ```json
 {
   "mcpServers": {
-    "ipcalc": {
-      "command": "/absolute/path/to/ipcalc",
+    "netcidr": {
+      "command": "/absolute/path/to/netcidr",
       "args": ["mcp-serve"]
     }
   }
@@ -328,26 +327,26 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 
 ```bash
 # Start server on default port 8080
-ipcalc serve
+netcidr serve
 
 # Custom address and port
-ipcalc serve --address 0.0.0.0 --port 3000
+netcidr serve --address 0.0.0.0 --port 3000
 
 # With logging
-ipcalc serve --log-level debug --log-file /var/log/ipcalc.log
+netcidr serve --log-level debug --log-file /var/log/netcidr.log
 
 # With TOML config file
-ipcalc serve --config ipcalc.toml
+netcidr serve --config netcidr.toml
 
 # With CLI overrides
-ipcalc serve --enable-swagger --max-batch-size 500 --timeout 60
+netcidr serve --enable-swagger --max-batch-size 500 --timeout 60
 ```
 
 #### Server Configuration
 
 The server can be configured via a TOML file (`--config`) and/or CLI flags. CLI flags override config file values, and unspecified options use defaults.
 
-Example `ipcalc.toml`:
+Example `netcidr.toml`:
 
 ```toml
 max_batch_size = 10000        # Max CIDRs per batch request (default: 10,000)
@@ -429,7 +428,7 @@ The API provides interactive Swagger UI documentation and a complete OpenAPI 3.0
 
 ```bash
 # Start server with Swagger UI enabled
-ipcalc serve --enable-swagger
+netcidr serve --enable-swagger
 
 # Access interactive Swagger UI in your browser
 open http://localhost:8080/swagger-ui
@@ -469,7 +468,7 @@ cargo build --release --no-default-features
 ## CLI Reference
 
 ```
-ipcalc [OPTIONS] [CIDR]... [COMMAND]
+netcidr [OPTIONS] [CIDR]... [COMMAND]
 
 Arguments:
   [CIDR]...  IP address(es) in CIDR notation (e.g., 192.168.1.0/24 or 2001:db8::/48)
@@ -496,20 +495,20 @@ Options:
 **Notes:**
 - Multiple CIDRs can be passed as positional arguments for batch processing
 - The `--stdin` flag reads CIDRs from stdin (blank lines and `#` comments are skipped)
-- The legacy `v4` and `v6` CLI subcommands have been removed; use `ipcalc <cidr>` directly
+- The legacy `v4` and `v6` CLI subcommands have been removed; use `netcidr <cidr>` directly
 - The `--tui` flag is only available when built with the `tui` feature: `cargo build --features tui`
 
 ## Docker
 
 ```bash
 # Build the image
-docker build -t ipcalc .
+docker build -t netcidr .
 
 # Run CLI
-docker run --rm ipcalc 192.168.1.0/24
+docker run --rm netcidr 192.168.1.0/24
 
 # Run API server
-docker run --rm -p 8080:8080 ipcalc serve --address 0.0.0.0
+docker run --rm -p 8080:8080 netcidr serve --address 0.0.0.0
 ```
 
 ## Development
@@ -601,40 +600,40 @@ The IPAM module provides library-level IP address allocation tracking with a plu
 
 ```bash
 # Create a supernet
-ipcalc ipam supernet create 10.0.0.0/8 --name "Corporate Network"
+netcidr ipam supernet create 10.0.0.0/8 --name "Corporate Network"
 
 # List supernets
-ipcalc ipam supernet list --format text
+netcidr ipam supernet list --format text
 
 # Allocate a specific block
-ipcalc ipam allocate <supernet-id> 10.0.1.0/24 --name "Web Tier" --environment production
+netcidr ipam allocate <supernet-id> 10.0.1.0/24 --name "Web Tier" --environment production
 
 # Auto-allocate next available /24s
-ipcalc ipam auto-allocate <supernet-id> -p 24 -n 3 --name "App Tier"
+netcidr ipam auto-allocate <supernet-id> -p 24 -n 3 --name "App Tier"
 
 # Check utilization
-ipcalc ipam utilization <supernet-id> --format text
+netcidr ipam utilization <supernet-id> --format text
 
 # Find free blocks
-ipcalc ipam free-blocks <supernet-id> -p 24
+netcidr ipam free-blocks <supernet-id> -p 24
 
 # Look up which allocation contains an IP
-ipcalc ipam find-ip 10.0.1.50
+netcidr ipam find-ip 10.0.1.50
 
 # View audit log
-ipcalc ipam audit --limit 10
+netcidr ipam audit --limit 10
 
 # IPv6 IPAM — same commands, IPv6 CIDRs
-ipcalc ipam supernet create 2001:db8::/32 --name "IPv6 Space"
-ipcalc ipam allocate <supernet-id> 2001:db8:1::/48 --name "Site A"
-ipcalc ipam auto-allocate <supernet-id> -p 48 -n 5
-ipcalc ipam find-ip 2001:db8:1::50
+netcidr ipam supernet create 2001:db8::/32 --name "IPv6 Space"
+netcidr ipam allocate <supernet-id> 2001:db8:1::/48 --name "Site A"
+netcidr ipam auto-allocate <supernet-id> -p 48 -n 5
+netcidr ipam find-ip 2001:db8:1::50
 
 # Use a specific database file
-ipcalc ipam --db /path/to/my.db supernet list
+netcidr ipam --db /path/to/my.db supernet list
 ```
 
-**Database location** (precedence order): `--db` flag > `IPCALC_DB` env var > `db_path` in config file > `~/.local/share/ipcalc/ipcalc.db`
+**Database location** (precedence order): `--db` flag > `NETCIDR_DB` env var > `db_path` in config file > `~/.local/share/netcidr/netcidr.db`
 
 **REST API:**
 
@@ -642,10 +641,10 @@ Enable IPAM endpoints on the HTTP server with `--ipam-enabled`:
 
 ```bash
 # Start server with IPAM enabled
-ipcalc serve --ipam-enabled
+netcidr serve --ipam-enabled
 
 # Use a specific database file
-ipcalc serve --ipam-enabled --ipam-db /path/to/ipam.db
+netcidr serve --ipam-enabled --ipam-db /path/to/ipam.db
 ```
 
 | Endpoint | Method | Description |
@@ -667,7 +666,7 @@ ipcalc serve --ipam-enabled --ipam-db /path/to/ipam.db
 | `/ipam/find-resource/{resource_id}` | `GET` | Find allocations by resource ID |
 | `/ipam/audit` | `GET` | Query audit log (filterable) |
 
-**Status:** Fully integrated — available via CLI (`ipcalc ipam`), REST API (`ipcalc serve --ipam-enabled`), and MCP server (`ipcalc mcp-serve --ipam-db <path>`).
+**Status:** Fully integrated — available via CLI (`netcidr ipam`), REST API (`netcidr serve --ipam-enabled`), and MCP server (`netcidr mcp-serve --ipam-db <path>`).
 
 ## License
 

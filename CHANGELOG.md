@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Per-IP rate limiting on the API server via `tower-governor` — uses existing `rate_limit_per_second` and `rate_limit_burst` config fields; set `rate_limit_per_second = 0` to disable
-- Shell completion generation via `ipcalc completions <shell>` (supports bash, zsh, fish, elvish, powershell)
+- Shell completion generation via `netcidr completions <shell>` (supports bash, zsh, fish, elvish, powershell)
 - IPAM dashboard: RE-ACTIVATE button on released allocations to restore them to active status
 - React + Vite + TypeScript dashboard scaffolding (`dashboard/` directory) — replaces Alpine.js single-file dashboard
 - Dashboard: Calculator page with bit grid visualization, IPv4/IPv6 results, hextet display
@@ -71,7 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- MCP server remote backend: `--api-url <url>` flag on `ipcalc mcp-serve` proxies IPAM tool calls to a running `ipcalc serve` HTTP API instead of using a local database (mutually exclusive with `--ipam-db`)
+- MCP server remote backend: `--api-url <url>` flag on `netcidr mcp-serve` proxies IPAM tool calls to a running `netcidr serve` HTTP API instead of using a local database (mutually exclusive with `--ipam-db`)
 
 ## [0.13.2] - 2026-03-16
 
@@ -115,7 +115,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Flexible key-value tags on allocations
   - DB path resolution: CLI flag > env var > config file > XDG default
   - Embedded schema migrations with version tracking
-- IPAM CLI integration via `ipcalc ipam` subcommand with full command suite:
+- IPAM CLI integration via `netcidr ipam` subcommand with full command suite:
   - `ipam supernet create/list/get/delete` — manage top-level address spaces
   - `ipam allocate` / `ipam auto-allocate` — specific or next-available allocation
   - `ipam allocation get/list/update` — query and update allocations
@@ -123,7 +123,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `ipam utilization` / `ipam free-blocks` — capacity reporting
   - `ipam find-ip` / `ipam find-resource` — reverse lookup
   - `ipam audit` — query the immutable audit log
-- IPAM REST API endpoints via `ipcalc serve --ipam-enabled`:
+- IPAM REST API endpoints via `netcidr serve --ipam-enabled`:
   - `POST /ipam/supernets` — create supernet; `GET` — list all
   - `GET /ipam/supernets/{id}` — get supernet; `DELETE` — delete (guarded by active allocations)
   - `POST /ipam/supernets/{id}/allocate` — auto-allocate next-available blocks
@@ -146,8 +146,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Calls library functions directly instead of shelling out to the binary
   - 5 calculator tools: `subnet_calc`, `subnet_split`, `contains_check`, `from_range`, `summarize`
   - 10 IPAM tools: `ipam_create_supernet`, `ipam_list_supernets`, `ipam_allocate`, `ipam_allocate_specific`, `ipam_release`, `ipam_list_allocations`, `ipam_free_blocks`, `ipam_utilization`, `ipam_find_ip`, `ipam_find_resource`
-  - IPAM tools enabled via `ipcalc mcp-serve --ipam-db <path>`
-  - Runs via `ipcalc mcp-serve` subcommand over stdio transport
+  - IPAM tools enabled via `netcidr mcp-serve --ipam-db <path>`
+  - Runs via `netcidr mcp-serve` subcommand over stdio transport
   - Enabled with `--features mcp` cargo feature flag
   - 15 unit tests covering all tools and error paths
 - Full web application dashboard replacing the IPAM-only dashboard
@@ -166,7 +166,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `PostgresStore` implementing the `IpamStore` trait using `sqlx` with `PgPool`
   - Embedded schema migrations matching the SQLite schema (uses `SMALLINT`, `BIGINT`, `BIGSERIAL`)
   - Backend selection via `--ipam-backend postgres` CLI flag
-  - Connection URL via `--ipam-db-url`, `IPCALC_IPAM_DB_URL` env var, or `[ipam.postgres]` config
+  - Connection URL via `--ipam-db-url`, `NETCIDR_IPAM_DB_URL` env var, or `[ipam.postgres]` config
   - Configurable connection pool (`max_connections`, `min_connections`)
   - `Backend` enum and `PostgresConfig` in IPAM config module
   - Docker-based PostgreSQL integration tests
@@ -177,7 +177,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- **BREAKING**: Removed deprecated `v4` and `v6` CLI subcommands — use `ipcalc <cidr>` directly (deprecated since v0.1.7)
+- **BREAKING**: Removed deprecated `v4` and `v6` CLI subcommands — use `netcidr <cidr>` directly (deprecated since v0.1.7)
 - Removed unused `tower_governor` dependency from `Cargo.toml`
 
 ### Refactored
@@ -217,7 +217,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MCP (Model Context Protocol) server for AI assistant integration via stdio transport
   - TypeScript implementation in `mcp-server/` using `@modelcontextprotocol/sdk`
   - 5 tools: `subnet_calc`, `subnet_split`, `contains_check`, `from_range`, `summarize`
-  - Delegates all calculations to the `ipcalc` binary (JSON output)
+  - Delegates all calculations to the `netcidr` binary (JSON output)
   - Auto-detects IPv4 vs IPv6 from input
   - 13 unit tests covering all tools and error paths
 - MCP server setup instructions in README for Claude Code and Claude Desktop
@@ -233,7 +233,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - JSON API output unchanged — backward compatibility preserved via `#[serde(rename)]` attributes
 - Replaced `split('/').collect::<Vec<&str>>()` with `split_once('/')` in CIDR parsing for both IPv4 and IPv6
 - Optimized `Ipv6Subnet::format_full` from `Vec<String>` intermediate allocation to a single `format!()` call
-- Improved error-masking tests across all modules to assert specific `IpCalcError` variants instead of generic `is_err()` checks
+- Improved error-masking tests across all modules to assert specific `NetcidrError` variants instead of generic `is_err()` checks
 
 ### Fixed
 
@@ -285,7 +285,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Organized `lib.rs` with crate-level documentation and module grouping by domain
-- Removed unused `IpCalcError` re-export from public API
+- Removed unused `NetcidrError` re-export from public API
 - Updated CLAUDE.md with `test-tui` build command and workflow instructions
 
 ## [0.8.0] - 2026-02-10
@@ -437,19 +437,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Direct CIDR notation support: use `ipcalc <cidr>` instead of subcommands
+- Direct CIDR notation support: use `netcidr <cidr>` instead of subcommands
 - Auto-detection of IPv4 vs IPv6 based on input format
 - Integration tests for direct CIDR input and deprecation warnings
 
 ### Changed
 
 - Simplified CLI interface - CIDR can now be passed directly as a positional argument
-- Users should now use `ipcalc 192.168.1.0/24` instead of `ipcalc v4 192.168.1.0/24`
+- Users should now use `netcidr 192.168.1.0/24` instead of `netcidr v4 192.168.1.0/24`
 
 ### Deprecated
 
-- `v4` subcommand - use `ipcalc <cidr>` instead
-- `v6` subcommand - use `ipcalc <cidr>` instead
+- `v4` subcommand - use `netcidr <cidr>` instead
+- `v6` subcommand - use `netcidr <cidr>` instead
 
 ## [0.1.6] - 2026-01-16
 
@@ -526,32 +526,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dockerfile for containerized deployment
 - Makefile for common development tasks
 
-[Unreleased]: https://github.com/wingnut128/ipcalc/compare/v0.13.1...HEAD
-[0.13.1]: https://github.com/wingnut128/ipcalc/compare/v0.12.0...v0.13.1
-[0.12.0]: https://github.com/wingnut128/ipcalc/compare/v0.11.1...v0.12.0
-[0.11.1]: https://github.com/wingnut128/ipcalc/compare/v0.11.0...v0.11.1
-[0.11.0]: https://github.com/wingnut128/ipcalc/compare/v0.10.0...v0.11.0
-[0.10.0]: https://github.com/wingnut128/ipcalc/compare/v0.9.0...v0.10.0
-[0.9.0]: https://github.com/wingnut128/ipcalc/compare/v0.8.1...v0.9.0
-[0.8.1]: https://github.com/wingnut128/ipcalc/compare/v0.8.0...v0.8.1
-[0.8.0]: https://github.com/wingnut128/ipcalc/compare/v0.7.0...v0.8.0
-[0.7.0]: https://github.com/wingnut128/ipcalc/compare/v0.6.1...v0.7.0
-[0.6.1]: https://github.com/wingnut128/ipcalc/compare/v0.6.0...v0.6.1
-[0.6.0]: https://github.com/wingnut128/ipcalc/compare/v0.5.0...v0.6.0
-[0.5.0]: https://github.com/wingnut128/ipcalc/compare/v0.4.1...v0.5.0
-[0.4.1]: https://github.com/wingnut128/ipcalc/compare/v0.4.0...v0.4.1
-[0.4.0]: https://github.com/wingnut128/ipcalc/compare/v0.3.2...v0.4.0
-[0.3.2]: https://github.com/wingnut128/ipcalc/compare/v0.3.1...v0.3.2
-[0.3.1]: https://github.com/wingnut128/ipcalc/compare/v0.3.0...v0.3.1
-[0.3.0]: https://github.com/wingnut128/ipcalc/compare/v0.2.1...v0.3.0
-[0.2.1]: https://github.com/wingnut128/ipcalc/compare/v0.2.0...v0.2.1
-[0.2.0]: https://github.com/wingnut128/ipcalc/compare/v0.1.8...v0.2.0
-[0.1.8]: https://github.com/wingnut128/ipcalc/compare/v0.1.7...v0.1.8
-[0.1.7]: https://github.com/wingnut128/ipcalc/compare/v0.1.6...v0.1.7
-[0.1.6]: https://github.com/wingnut128/ipcalc/compare/v0.1.5...v0.1.6
-[0.1.5]: https://github.com/wingnut128/ipcalc/compare/v0.1.4...v0.1.5
-[0.1.4]: https://github.com/wingnut128/ipcalc/compare/v0.1.3...v0.1.4
-[0.1.3]: https://github.com/wingnut128/ipcalc/compare/v0.1.2...v0.1.3
-[0.1.2]: https://github.com/wingnut128/ipcalc/compare/v0.1.1...v0.1.2
-[0.1.1]: https://github.com/wingnut128/ipcalc/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/wingnut128/ipcalc/releases/tag/v0.1.0
+[Unreleased]: https://gitlab.com/mlapane/netcidr/-/compare/v0.13.1...HEAD
+[0.13.1]: https://gitlab.com/mlapane/netcidr/-/compare/v0.12.0...v0.13.1
+[0.12.0]: https://gitlab.com/mlapane/netcidr/-/compare/v0.11.1...v0.12.0
+[0.11.1]: https://gitlab.com/mlapane/netcidr/-/compare/v0.11.0...v0.11.1
+[0.11.0]: https://gitlab.com/mlapane/netcidr/-/compare/v0.10.0...v0.11.0
+[0.10.0]: https://gitlab.com/mlapane/netcidr/-/compare/v0.9.0...v0.10.0
+[0.9.0]: https://gitlab.com/mlapane/netcidr/-/compare/v0.8.1...v0.9.0
+[0.8.1]: https://gitlab.com/mlapane/netcidr/-/compare/v0.8.0...v0.8.1
+[0.8.0]: https://gitlab.com/mlapane/netcidr/-/compare/v0.7.0...v0.8.0
+[0.7.0]: https://gitlab.com/mlapane/netcidr/-/compare/v0.6.1...v0.7.0
+[0.6.1]: https://gitlab.com/mlapane/netcidr/-/compare/v0.6.0...v0.6.1
+[0.6.0]: https://gitlab.com/mlapane/netcidr/-/compare/v0.5.0...v0.6.0
+[0.5.0]: https://gitlab.com/mlapane/netcidr/-/compare/v0.4.1...v0.5.0
+[0.4.1]: https://gitlab.com/mlapane/netcidr/-/compare/v0.4.0...v0.4.1
+[0.4.0]: https://gitlab.com/mlapane/netcidr/-/compare/v0.3.2...v0.4.0
+[0.3.2]: https://gitlab.com/mlapane/netcidr/-/compare/v0.3.1...v0.3.2
+[0.3.1]: https://gitlab.com/mlapane/netcidr/-/compare/v0.3.0...v0.3.1
+[0.3.0]: https://gitlab.com/mlapane/netcidr/-/compare/v0.2.1...v0.3.0
+[0.2.1]: https://gitlab.com/mlapane/netcidr/-/compare/v0.2.0...v0.2.1
+[0.2.0]: https://gitlab.com/mlapane/netcidr/-/compare/v0.1.8...v0.2.0
+[0.1.8]: https://gitlab.com/mlapane/netcidr/-/compare/v0.1.7...v0.1.8
+[0.1.7]: https://gitlab.com/mlapane/netcidr/-/compare/v0.1.6...v0.1.7
+[0.1.6]: https://gitlab.com/mlapane/netcidr/-/compare/v0.1.5...v0.1.6
+[0.1.5]: https://gitlab.com/mlapane/netcidr/-/compare/v0.1.4...v0.1.5
+[0.1.4]: https://gitlab.com/mlapane/netcidr/-/compare/v0.1.3...v0.1.4
+[0.1.3]: https://gitlab.com/mlapane/netcidr/-/compare/v0.1.2...v0.1.3
+[0.1.2]: https://gitlab.com/mlapane/netcidr/-/compare/v0.1.1...v0.1.2
+[0.1.1]: https://gitlab.com/mlapane/netcidr/-/compare/v0.1.0...v0.1.1
+[0.1.0]: https://gitlab.com/mlapane/netcidr/-/releases/v0.1.0
