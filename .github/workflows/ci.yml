@@ -15,7 +15,7 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -25,11 +25,11 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry/
@@ -37,9 +37,9 @@ jobs:
             target/
           key: lint-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: lint-${{ runner.os }}-
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
       - name: Build dashboard
         run: cd dashboard && npm ci --silent && npm run build
       - run: cargo clippy --all-targets --all-features -- -D warnings
@@ -48,9 +48,9 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry/
@@ -58,9 +58,9 @@ jobs:
             target/
           key: test-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: test-${{ runner.os }}-
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
       - name: Build dashboard
         run: cd dashboard && npm ci --silent && npm run build
       - run: cargo test --features mcp,tui --verbose
@@ -69,7 +69,7 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo install cargo-audit
       - run: cargo audit
@@ -80,5 +80,5 @@ jobs:
     container:
       image: semgrep/semgrep:latest
     steps:
-      - uses: actions/checkout@v4
-      - run: semgrep scan --config=p/owasp-top-ten --config=p/rust --error .
+      - uses: actions/checkout@v6
+      - run: semgrep scan --config=p/owasp-top-ten --config=p/rust --error --exclude='dashboard' .

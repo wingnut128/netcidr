@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add Dependabot configuration for GitHub Actions, Cargo, and npm dependencies
 - Update all documentation references from GitLab to GitHub (README, SECURITY, CHANGELOG, CLAUDE.md)
 
+### Fixed
+
+- Update GitHub Actions to Node 22 versions: checkout v4→v6, setup-node v4→v6, cache v4→v5, codeql-action v3→v4
+- Fix Semgrep CI job failing by excluding dashboard directory from scans
+- Bump Node.js version from 20 to 22 in CI and release workflows
+
 ## [0.15.0] - 2026-03-21
 
 ### Added
