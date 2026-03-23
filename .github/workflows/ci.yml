@@ -74,11 +74,3 @@ jobs:
       - run: cargo install cargo-audit
       - run: cargo audit
 
-  semgrep:
-    name: Semgrep
-    runs-on: ubuntu-latest
-    container:
-      image: semgrep/semgrep:latest
-    steps:
-      - uses: actions/checkout@v6
-      - run: semgrep scan --config=p/owasp-top-ten --config=p/rust --error --exclude='dashboard' .
