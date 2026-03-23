@@ -15,8 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Update GitHub Actions to Node 22 versions: checkout v4→v6, setup-node v4→v6, cache v4→v5, codeql-action v3→v4
+- Update GitHub Actions to Node 22 versions: checkout v4→v6, setup-node v4→v6, cache v4→v5
 - Fix Semgrep CI job failing by excluding dashboard directory from scans
+- Remove custom CodeQL workflow in favor of GitHub's default setup to fix SARIF processing conflict
 - Bump Node.js version from 20 to 22 in CI and release workflows
 
 ## [0.15.0] - 2026-03-21
