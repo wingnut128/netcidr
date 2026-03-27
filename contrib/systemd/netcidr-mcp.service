@@ -1,0 +1,29 @@
+[Unit]
+Description=netcidr MCP Server (Streamable HTTP)
+Documentation=https://github.com/wingnut128/netcidr
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/netcidr mcp-serve --address 127.0.0.1 --port 3000
+Restart=on-failure
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+
+# Uncomment and adjust to enable IPAM with a local database:
+# ExecStart=/usr/local/bin/netcidr mcp-serve --address 127.0.0.1 --port 3000 --ipam-db /var/lib/netcidr/ipam.db
+# ReadWritePaths=/var/lib/netcidr
+
+# Uncomment to enable IPAM via remote API server:
+# ExecStart=/usr/local/bin/netcidr mcp-serve --address 127.0.0.1 --port 3000 --api-url http://localhost:8080
+
+[Install]
+WantedBy=multi-user.target
