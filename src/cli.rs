@@ -88,9 +88,33 @@ pub enum Commands {
         command: IpamCommands,
     },
 
-    /// Start the MCP (Model Context Protocol) server over stdio
+    /// Start the MCP (Model Context Protocol) server
     #[cfg(feature = "mcp")]
     McpServe {
+        /// Transport protocol (http or stdio)
+        #[arg(long, default_value = "http")]
+        transport: McpTransport,
+
+        /// Address to bind to (HTTP transport only)
+        #[arg(short, long, default_value = "127.0.0.1")]
+        address: String,
+
+        /// Port to listen on (HTTP transport only)
+        #[arg(short, long, default_value = "3000")]
+        port: u16,
+
+        /// Run as a background daemon (HTTP transport only)
+        #[arg(long)]
+        daemonize: bool,
+
+        /// PID file path (used with --daemonize)
+        #[arg(long, default_value = "/tmp/netcidr-mcp.pid")]
+        pid_file: String,
+
+        /// Log file path (used with --daemonize, stderr otherwise)
+        #[arg(long)]
+        log_file: Option<String>,
+
         /// Path to IPAM SQLite database (enables IPAM tools via local store)
         #[arg(long, conflicts_with = "api_url")]
         ipam_db: Option<String>,
@@ -442,6 +466,16 @@ pub enum OutputFormatArg {
     Text,
     Csv,
     Yaml,
+}
+
+#[cfg(feature = "mcp")]
+#[derive(Clone, Copy, ValueEnum, Default)]
+pub enum McpTransport {
+    /// Streamable HTTP server (default)
+    #[default]
+    Http,
+    /// Legacy stdio transport
+    Stdio,
 }
 
 impl From<OutputFormatArg> for crate::output::OutputFormat {

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-03-27
+
+### Added
+
+- MCP server now supports Streamable HTTP transport (default) in addition to stdio
+- New `--transport http|stdio` flag for `mcp-serve` (defaults to `http`)
+- New `--address` and `--port` flags for MCP HTTP transport (defaults to `127.0.0.1:3000`)
+- New `--daemonize` flag to run MCP HTTP server as a background daemon with PID file and log file support
+- Graceful shutdown via Ctrl+C for MCP HTTP server
+- systemd unit file (`contrib/systemd/netcidr-mcp.service`) for Linux deployment
+- launchd plist (`contrib/launchd/com.netcidr.mcp.plist`) for macOS deployment
+
 ### Changed
 
 - Migrate CI/CD from GitLab CI to GitHub Actions (ci, lint, test, audit, semgrep, CodeQL, release)

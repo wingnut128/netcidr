@@ -20,7 +20,7 @@ A fast IPv4 and IPv6 subnet calculator written in Rust. Available as a CLI tool,
 - **Web dashboard**: Full SPA at `http://localhost:8080/` with subnet calculator, splitter, contains check, summarize, from-range, IPAM dashboard, and subnet visualizer — served automatically when running `netcidr serve`
 - **HTTP API**: REST endpoints for all calculations
 - **OpenAPI documentation**: Machine-readable API specification for easy integration with tools like Swagger Editor, Postman, and Insomnia
-- **MCP server**: [Model Context Protocol](https://modelcontextprotocol.io) server for AI assistant integration (Claude, etc.) over stdio
+- **MCP server**: [Model Context Protocol](https://modelcontextprotocol.io) server for AI assistant integration (Claude, etc.) via Streamable HTTP or stdio
 - **IPAM (IP Address Management)**: IPv4 and IPv6 allocation tracking with conflict detection, audit trail, utilization reporting, reservation TTL/expiry, and JSON export/import — available via CLI (`netcidr ipam`) and REST API (`netcidr serve --ipam-enabled`)
 - **Configurable security**: rate limiting, request size limits, timeouts, restrictive CORS, and security headers
 - **TOML configuration**: server settings via config file with CLI flag overrides
@@ -230,7 +230,7 @@ Supported shells: `bash`, `zsh`, `fish`, `elvish`, `powershell`.
 
 ### MCP Server (AI Assistant Integration)
 
-The MCP server lets AI assistants like Claude use netcidr as a tool for subnet calculations. It communicates over stdio using the [Model Context Protocol](https://modelcontextprotocol.io). Built natively in Rust using the official `rmcp` SDK — no Node.js required.
+The MCP server lets AI assistants like Claude use netcidr as a tool for subnet calculations. Supports [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http) (default) and stdio transports via the [Model Context Protocol](https://modelcontextprotocol.io). Built natively in Rust using the official `rmcp` SDK — no Node.js required.
 
 ```bash
 # Build with MCP support
@@ -238,6 +238,41 @@ cargo build --release --features mcp
 
 # Or use make
 make build-mcp
+
+# Start MCP server (Streamable HTTP on 127.0.0.1:3000)
+netcidr mcp-serve
+
+# Custom address and port
+netcidr mcp-serve --address 0.0.0.0 --port 4000
+
+# Use stdio transport (for pipe-based clients like Claude Code)
+netcidr mcp-serve --transport stdio
+
+# With IPAM enabled
+netcidr mcp-serve --ipam-db /path/to/ipam.db
+netcidr mcp-serve --api-url http://localhost:8080
+
+# Run as a background daemon
+netcidr mcp-serve --daemonize --pid-file /var/run/netcidr-mcp.pid --log-file /var/log/netcidr-mcp.log
+```
+
+#### Running as a Service
+
+Service files are provided in `contrib/` for running the MCP server as a system service:
+
+**systemd (Linux):**
+
+```bash
+sudo cp contrib/systemd/netcidr-mcp.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now netcidr-mcp
+```
+
+**launchd (macOS):**
+
+```bash
+cp contrib/launchd/com.netcidr.mcp.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.netcidr.mcp.plist
 ```
 
 **Calculator tools** (always available):
@@ -265,16 +300,26 @@ make build-mcp
 | `ipam_find_ip` | Find allocations containing an IP |
 | `ipam_find_resource` | Find allocations by resource ID |
 
-#### Claude Code
+#### Streamable HTTP (remote clients)
 
-Add to `~/.claude.json`:
+Any MCP client that supports Streamable HTTP can connect to:
+
+```
+http://127.0.0.1:3000/mcp
+```
+
+Start the server with `netcidr mcp-serve` (defaults to HTTP on port 3000).
+
+#### Claude Code (stdio)
+
+Claude Code uses stdio transport. Add to `~/.claude.json`:
 
 ```json
 {
   "mcpServers": {
     "netcidr": {
       "command": "/absolute/path/to/netcidr",
-      "args": ["mcp-serve"]
+      "args": ["mcp-serve", "--transport", "stdio"]
     }
   }
 }
@@ -287,7 +332,7 @@ With IPAM enabled (local database):
   "mcpServers": {
     "netcidr": {
       "command": "/absolute/path/to/netcidr",
-      "args": ["mcp-serve", "--ipam-db", "/path/to/ipam.db"]
+      "args": ["mcp-serve", "--transport", "stdio", "--ipam-db", "/path/to/ipam.db"]
     }
   }
 }
@@ -300,7 +345,7 @@ With IPAM via remote API server (connects to a running `netcidr serve`):
   "mcpServers": {
     "netcidr": {
       "command": "/absolute/path/to/netcidr",
-      "args": ["mcp-serve", "--api-url", "http://localhost:8080"]
+      "args": ["mcp-serve", "--transport", "stdio", "--api-url", "http://localhost:8080"]
     }
   }
 }
@@ -308,7 +353,7 @@ With IPAM via remote API server (connects to a running `netcidr serve`):
 
 > **Note:** `--ipam-db` and `--api-url` are mutually exclusive. Use `--api-url` when IPAM state must be shared across multiple MCP clients or when the MCP server runs on a different host.
 
-#### Claude Desktop
+#### Claude Desktop (stdio)
 
 Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
 
@@ -317,7 +362,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
   "mcpServers": {
     "netcidr": {
       "command": "/absolute/path/to/netcidr",
-      "args": ["mcp-serve"]
+      "args": ["mcp-serve", "--transport", "stdio"]
     }
   }
 }

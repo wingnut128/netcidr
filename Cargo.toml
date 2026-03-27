@@ -1,6 +1,6 @@
 [package]
 name = "netcidr"
-version = "0.15.0"
+version = "0.16.0"
 edition = "2024"
 license = "MIT"
 description = "A fast IPv4 and IPv6 subnet calculator CLI and API"
@@ -32,7 +32,9 @@ chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1"
 async-trait = "0.1"
 dirs = "6"
-rmcp = { version = "1.1", features = ["server", "transport-io", "macros"], optional = true }
+rmcp = { version = "1.1", features = ["server", "transport-io", "transport-streamable-http-server", "macros"], optional = true }
+daemonize = { version = "0.5", optional = true }
+tokio-util = { version = "0.7", features = ["rt"], optional = true }
 schemars = { version = "1", optional = true }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "query"], optional = true }
 ratatui = { version = "0.30", optional = true }
@@ -56,7 +58,7 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 default = ["swagger"]
 swagger = ["dep:utoipa", "dep:utoipa-swagger-ui"]
 tui = ["dep:ratatui", "dep:crossterm", "dep:ipnet"]
-mcp = ["dep:rmcp", "dep:schemars", "dep:reqwest"]
+mcp = ["dep:rmcp", "dep:schemars", "dep:reqwest", "dep:tokio-util", "dep:daemonize"]
 ipam-postgres = ["dep:sqlx"]
 
 [profile.release]
