@@ -508,6 +508,212 @@ impl IpamOps {
     }
 
     // -----------------------------------------------------------------------
+    // Batch operations
+    // -----------------------------------------------------------------------
+
+    /// Batch allocate: process multiple allocation requests in a single call.
+    /// Each item is processed sequentially (required for conflict detection).
+    /// Per-item errors are captured rather than aborting the entire batch.
+    pub async fn batch_allocate(&self, items: &[BatchAllocateItem]) -> Result<BatchAllocateResult> {
+        const MAX_BATCH_SIZE: usize = 100;
+        if items.len() > MAX_BATCH_SIZE {
+            return Err(NetcidrError::InvalidInput(format!(
+                "batch size {} exceeds maximum of {MAX_BATCH_SIZE}",
+                items.len()
+            )));
+        }
+
+        let mut total_allocated = 0usize;
+        let mut results = Vec::with_capacity(items.len());
+
+        for (index, item) in items.iter().enumerate() {
+            let request = AutoAllocateRequest {
+                supernet_id: item.supernet_id.clone(),
+                prefix_length: item.prefix_length,
+                count: item.count,
+                status: None,
+                resource_id: item.resource_id.clone(),
+                resource_type: None,
+                name: item.name.clone(),
+                description: None,
+                environment: item.environment.clone(),
+                owner: item.owner.clone(),
+                parent_allocation_id: None,
+                tags: None,
+                ttl_seconds: None,
+            };
+
+            match self.allocate_auto(&request).await {
+                Ok(allocs) => {
+                    let compact: Vec<CompactAllocation> =
+                        allocs.iter().map(CompactAllocation::from).collect();
+                    total_allocated += compact.len();
+                    results.push(BatchAllocateItemResult {
+                        index,
+                        allocations: Some(compact),
+                        error: None,
+                    });
+                }
+                Err(e) => {
+                    results.push(BatchAllocateItemResult {
+                        index,
+                        allocations: None,
+                        error: Some(e.to_string()),
+                    });
+                }
+            }
+        }
+
+        Ok(BatchAllocateResult {
+            total_requested: items.len(),
+            total_allocated,
+            results,
+        })
+    }
+
+    /// Batch release: release multiple allocations in a single call.
+    /// Supports release by explicit IDs, by resource_id, or by supernet_id.
+    pub async fn batch_release(&self, request: &BatchReleaseRequest) -> Result<BatchReleaseResult> {
+        // Resolve which allocation IDs to release
+        let ids_to_release: Vec<(String, String)> = if let Some(ref ids) = request.allocation_ids {
+            // Explicit IDs — look up each to get the CIDR for the response
+            let mut resolved = Vec::with_capacity(ids.len());
+            for id in ids {
+                match self.store.get_allocation(id).await {
+                    Ok(alloc) => resolved.push((alloc.id, alloc.cidr)),
+                    Err(_) => resolved.push((id.clone(), "unknown".to_string())),
+                }
+            }
+            resolved
+        } else if let Some(ref resource_id) = request.resource_id {
+            // By resource_id, optionally scoped to supernet
+            let filter = AllocationFilter {
+                resource_id: Some(resource_id.clone()),
+                supernet_id: request.supernet_id.clone(),
+                status: Some(AllocationStatus::Active),
+                ..Default::default()
+            };
+            let allocs = self.store.list_allocations(&filter).await?;
+            allocs.into_iter().map(|a| (a.id, a.cidr)).collect()
+        } else if let Some(ref supernet_id) = request.supernet_id {
+            // All active allocations in a supernet
+            let allocs = self
+                .store
+                .find_allocations_in_supernet(supernet_id, &[AllocationStatus::Active])
+                .await?;
+            allocs.into_iter().map(|a| (a.id, a.cidr)).collect()
+        } else {
+            return Err(NetcidrError::InvalidInput(
+                "batch release requires at least one of: allocation_ids, resource_id, supernet_id"
+                    .to_string(),
+            ));
+        };
+
+        let total_requested = ids_to_release.len();
+        let mut total_released = 0usize;
+        let mut results = Vec::with_capacity(total_requested);
+
+        for (id, cidr) in ids_to_release {
+            match self.release_allocation(&id).await {
+                Ok(_) => {
+                    total_released += 1;
+                    results.push(BatchReleaseItemResult {
+                        allocation_id: id,
+                        cidr,
+                        error: None,
+                    });
+                }
+                Err(e) => {
+                    results.push(BatchReleaseItemResult {
+                        allocation_id: id,
+                        cidr,
+                        error: Some(e.to_string()),
+                    });
+                }
+            }
+        }
+
+        Ok(BatchReleaseResult {
+            total_requested,
+            total_released,
+            results,
+        })
+    }
+
+    /// Get a grouped allocation summary across all (or one) supernet(s).
+    pub async fn allocation_summary(&self, supernet_id: Option<&str>) -> Result<AllocationSummary> {
+        let supernets = if let Some(id) = supernet_id {
+            vec![self.store.get_supernet(id).await?]
+        } else {
+            self.store.list_supernets().await?
+        };
+
+        let mut total_allocations = 0usize;
+        let mut total_active = 0usize;
+        let mut summaries = Vec::with_capacity(supernets.len());
+
+        for sn in &supernets {
+            let active = self
+                .store
+                .find_allocations_in_supernet(
+                    &sn.id,
+                    &[AllocationStatus::Active, AllocationStatus::Reserved],
+                )
+                .await?;
+
+            let allocated: u128 = active.iter().map(|a| a.total_hosts).sum();
+            let pct = if sn.total_hosts > 0 {
+                (allocated as f64 / sn.total_hosts as f64) * 100.0
+            } else {
+                0.0
+            };
+
+            // Group by resource_id
+            let mut resource_map: std::collections::HashMap<String, ResourceGroup> =
+                std::collections::HashMap::new();
+
+            for alloc in &active {
+                let key = alloc
+                    .resource_id
+                    .clone()
+                    .unwrap_or_else(|| "(none)".to_string());
+                let entry = resource_map
+                    .entry(key.clone())
+                    .or_insert_with(|| ResourceGroup {
+                        resource_id: key,
+                        name: alloc.name.clone(),
+                        environment: alloc.environment.clone(),
+                        count: 0,
+                        cidrs: Vec::new(),
+                    });
+                entry.count += 1;
+                entry.cidrs.push(alloc.cidr.clone());
+            }
+
+            let mut by_resource: Vec<ResourceGroup> = resource_map.into_values().collect();
+            by_resource.sort_by(|a, b| a.resource_id.cmp(&b.resource_id));
+
+            total_allocations += active.len();
+            total_active += active.len();
+
+            summaries.push(SupernetAllocationSummary {
+                supernet_id: sn.id.clone(),
+                supernet_cidr: sn.cidr.clone(),
+                supernet_name: sn.name.clone(),
+                utilization_percent: pct,
+                active_count: active.len(),
+                by_resource,
+            });
+        }
+
+        Ok(AllocationSummary {
+            supernets: summaries,
+            total_allocations,
+            total_active,
+        })
+    }
+
+    // -----------------------------------------------------------------------
     // Dump / Load
     // -----------------------------------------------------------------------
 

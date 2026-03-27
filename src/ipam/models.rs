@@ -255,6 +255,162 @@ pub struct FreeBlocksReport {
 }
 
 // ---------------------------------------------------------------------------
+// Compact views (reduced token usage for MCP batch operations)
+// ---------------------------------------------------------------------------
+
+/// Minimal allocation view — only essential fields.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactAllocation {
+    pub id: String,
+    pub cidr: String,
+    pub name: Option<String>,
+    pub status: AllocationStatus,
+    pub resource_id: Option<String>,
+    pub environment: Option<String>,
+}
+
+impl From<&Allocation> for CompactAllocation {
+    fn from(a: &Allocation) -> Self {
+        Self {
+            id: a.id.clone(),
+            cidr: a.cidr.clone(),
+            name: a.name.clone(),
+            status: a.status.clone(),
+            resource_id: a.resource_id.clone(),
+            environment: a.environment.clone(),
+        }
+    }
+}
+
+impl From<Allocation> for CompactAllocation {
+    fn from(a: Allocation) -> Self {
+        Self::from(&a)
+    }
+}
+
+/// Minimal supernet view.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactSupernet {
+    pub id: String,
+    pub cidr: String,
+    pub name: Option<String>,
+    pub total_hosts: u128,
+}
+
+impl From<&Supernet> for CompactSupernet {
+    fn from(s: &Supernet) -> Self {
+        Self {
+            id: s.id.clone(),
+            cidr: s.cidr.clone(),
+            name: s.name.clone(),
+            total_hosts: s.total_hosts,
+        }
+    }
+}
+
+impl From<Supernet> for CompactSupernet {
+    fn from(s: Supernet) -> Self {
+        Self::from(&s)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Batch operation models
+// ---------------------------------------------------------------------------
+
+/// A single item in a batch allocate request.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BatchAllocateItem {
+    pub supernet_id: String,
+    pub prefix_length: u8,
+    pub count: Option<u32>,
+    pub name: Option<String>,
+    pub environment: Option<String>,
+    pub owner: Option<String>,
+    pub resource_id: Option<String>,
+}
+
+/// Result for a single item in a batch allocate.
+#[derive(Debug, Clone, Serialize)]
+pub struct BatchAllocateItemResult {
+    /// Index of the item in the request array
+    pub index: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allocations: Option<Vec<CompactAllocation>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Overall batch allocate response.
+#[derive(Debug, Clone, Serialize)]
+pub struct BatchAllocateResult {
+    pub total_requested: usize,
+    pub total_allocated: usize,
+    pub results: Vec<BatchAllocateItemResult>,
+}
+
+/// Request for batch release — at least one selector must be provided.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BatchReleaseRequest {
+    /// Release by explicit allocation IDs
+    pub allocation_ids: Option<Vec<String>>,
+    /// Release all active allocations matching a resource_id
+    pub resource_id: Option<String>,
+    /// Scope resource_id filter to a specific supernet
+    pub supernet_id: Option<String>,
+}
+
+/// Result for a single released allocation.
+#[derive(Debug, Clone, Serialize)]
+pub struct BatchReleaseItemResult {
+    pub allocation_id: String,
+    pub cidr: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Overall batch release response.
+#[derive(Debug, Clone, Serialize)]
+pub struct BatchReleaseResult {
+    pub total_requested: usize,
+    pub total_released: usize,
+    pub results: Vec<BatchReleaseItemResult>,
+}
+
+// ---------------------------------------------------------------------------
+// Allocation summary models
+// ---------------------------------------------------------------------------
+
+/// Grouped allocation summary across supernets.
+#[derive(Debug, Clone, Serialize)]
+pub struct AllocationSummary {
+    pub supernets: Vec<SupernetAllocationSummary>,
+    pub total_allocations: usize,
+    pub total_active: usize,
+}
+
+/// Per-supernet allocation summary with groupings.
+#[derive(Debug, Clone, Serialize)]
+pub struct SupernetAllocationSummary {
+    pub supernet_id: String,
+    pub supernet_cidr: String,
+    pub supernet_name: Option<String>,
+    pub utilization_percent: f64,
+    pub active_count: usize,
+    pub by_resource: Vec<ResourceGroup>,
+}
+
+/// Allocations grouped by resource_id.
+#[derive(Debug, Clone, Serialize)]
+pub struct ResourceGroup {
+    pub resource_id: String,
+    pub name: Option<String>,
+    pub environment: Option<String>,
+    pub count: usize,
+    pub cidrs: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
 // Dump / Load (export/import)
 // ---------------------------------------------------------------------------
 
