@@ -76,8 +76,7 @@ async fn shutdown_signal() {
     info!("Shutdown signal received, starting graceful shutdown");
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     let cli = Cli::parse();
 
     // Launch TUI mode if requested
@@ -89,6 +88,33 @@ async fn main() {
         return;
     }
 
+    // Daemonize BEFORE creating the tokio runtime so the fork doesn't
+    // corrupt kqueue/epoll file descriptors used by the async I/O reactor.
+    #[cfg(feature = "mcp")]
+    if let Some(Commands::McpServe {
+        daemonize: true,
+        ref pid_file,
+        ref log_file,
+        ref transport,
+        ..
+    }) = cli.command
+    {
+        if *transport == netcidr::cli::McpTransport::Stdio {
+            eprintln!("Error: --daemonize is only supported with HTTP transport");
+            std::process::exit(1);
+        }
+        if let Err(e) = netcidr::mcp::daemonize_process(pid_file, log_file.as_deref()) {
+            eprintln!("Failed to daemonize: {}", e);
+            std::process::exit(1);
+        }
+    }
+
+    // Build the tokio runtime after any fork so file descriptors are valid.
+    let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+    runtime.block_on(async_main(cli));
+}
+
+async fn async_main(cli: Cli) {
     let format: OutputFormat = cli.format.into();
     let writer = OutputWriter::new(format, cli.output.clone());
 
@@ -202,7 +228,7 @@ async fn main() {
             transport,
             address,
             port,
-            daemonize,
+            daemonize: _,
             pid_file,
             log_file,
             ipam_db,
@@ -212,7 +238,10 @@ async fn main() {
                 transport,
                 address: &address,
                 port,
-                daemonize,
+                // Daemonization already happened in main() before the tokio
+                // runtime was created, so we never daemonize inside the async
+                // context where it would corrupt the I/O reactor.
+                daemonize: false,
                 pid_file: &pid_file,
                 log_file: log_file.as_deref(),
                 ipam_db: ipam_db.as_deref(),

@@ -469,7 +469,7 @@ pub enum OutputFormatArg {
 }
 
 #[cfg(feature = "mcp")]
-#[derive(Clone, Copy, ValueEnum, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
 pub enum McpTransport {
     /// Streamable HTTP server (default)
     #[default]

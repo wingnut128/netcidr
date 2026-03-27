@@ -625,7 +625,11 @@ pub async fn run_mcp_server(config: McpServerConfig<'_>) -> crate::error::Result
 
 /// Fork the current process into the background using the `daemonize` crate,
 /// write a PID file, and redirect output to a log file (or /dev/null).
-fn daemonize_process(pid_file: &str, log_file: Option<&str>) -> crate::error::Result<()> {
+///
+/// **Must be called before creating a tokio runtime.** Forking after the
+/// runtime is alive corrupts the kqueue/epoll file descriptor, causing
+/// `TcpListener::bind` to fail with EBADF (os error 9).
+pub fn daemonize_process(pid_file: &str, log_file: Option<&str>) -> crate::error::Result<()> {
     let mut daemon = daemonize::Daemonize::new().pid_file(pid_file);
 
     if let Some(path) = log_file {

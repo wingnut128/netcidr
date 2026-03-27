@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-03-27
+
+### Fixed
+
+- Fix MCP server `--daemonize` failing with "Bad file descriptor (os error 9)" — daemonize now forks before the tokio runtime is created so kqueue/epoll fds are not corrupted
+
 ## [0.16.0] - 2026-03-27
 
 ### Added
