@@ -198,10 +198,27 @@ async fn main() {
             }
         }
         #[cfg(feature = "mcp")]
-        Some(Commands::McpServe { ipam_db, api_url }) => {
-            if let Err(e) =
-                netcidr::mcp::run_mcp_server(ipam_db.as_deref(), api_url.as_deref()).await
-            {
+        Some(Commands::McpServe {
+            transport,
+            address,
+            port,
+            daemonize,
+            pid_file,
+            log_file,
+            ipam_db,
+            api_url,
+        }) => {
+            let mcp_config = netcidr::mcp::McpServerConfig {
+                transport,
+                address: &address,
+                port,
+                daemonize,
+                pid_file: &pid_file,
+                log_file: log_file.as_deref(),
+                ipam_db: ipam_db.as_deref(),
+                api_url: api_url.as_deref(),
+            };
+            if let Err(e) = netcidr::mcp::run_mcp_server(mcp_config).await {
                 eprintln!("MCP server error: {}", e);
                 std::process::exit(1);
             }

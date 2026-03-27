@@ -575,19 +575,27 @@ impl ServerHandler for NetcidrMcp {
     }
 }
 
-pub async fn run_mcp_server(
-    ipam_db: Option<&str>,
-    api_url: Option<&str>,
-) -> crate::error::Result<()> {
-    let ipam = match (ipam_db, api_url) {
+pub struct McpServerConfig<'a> {
+    pub transport: crate::cli::McpTransport,
+    pub address: &'a str,
+    pub port: u16,
+    pub daemonize: bool,
+    pub pid_file: &'a str,
+    pub log_file: Option<&'a str>,
+    pub ipam_db: Option<&'a str>,
+    pub api_url: Option<&'a str>,
+}
+
+pub async fn run_mcp_server(config: McpServerConfig<'_>) -> crate::error::Result<()> {
+    let ipam = match (config.ipam_db, config.api_url) {
         (Some(_), Some(_)) => {
             return Err(crate::error::NetcidrError::InvalidInput(
                 "--ipam-db and --api-url are mutually exclusive".to_string(),
             ));
         }
         (Some(db), None) => {
-            let config = crate::ipam::config::IpamConfig::default();
-            let store = crate::ipam::create_store(&config, Some(db), None).await?;
+            let ipam_config = crate::ipam::config::IpamConfig::default();
+            let store = crate::ipam::create_store(&ipam_config, Some(db), None).await?;
             Some(McpIpamBackend::Local(Arc::new(IpamOps::new(store))))
         }
         (None, Some(url)) => {
@@ -597,6 +605,59 @@ pub async fn run_mcp_server(
         (None, None) => None,
     };
 
+    match config.transport {
+        crate::cli::McpTransport::Stdio => {
+            if config.daemonize {
+                return Err(crate::error::NetcidrError::InvalidInput(
+                    "--daemonize is only supported with HTTP transport".to_string(),
+                ));
+            }
+            run_mcp_stdio(ipam).await
+        }
+        crate::cli::McpTransport::Http => {
+            if config.daemonize {
+                daemonize_process(config.pid_file, config.log_file)?;
+            }
+            run_mcp_http(ipam, config.address, config.port).await
+        }
+    }
+}
+
+/// Fork the current process into the background using the `daemonize` crate,
+/// write a PID file, and redirect output to a log file (or /dev/null).
+fn daemonize_process(pid_file: &str, log_file: Option<&str>) -> crate::error::Result<()> {
+    let mut daemon = daemonize::Daemonize::new().pid_file(pid_file);
+
+    if let Some(path) = log_file {
+        let stdout = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|e| {
+                crate::error::NetcidrError::InvalidInput(format!(
+                    "Failed to open log file {path}: {e}"
+                ))
+            })?;
+        let stderr = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|e| {
+                crate::error::NetcidrError::InvalidInput(format!(
+                    "Failed to open log file {path}: {e}"
+                ))
+            })?;
+        daemon = daemon.stdout(stdout).stderr(stderr);
+    }
+
+    daemon.start().map_err(|e| {
+        crate::error::NetcidrError::InvalidInput(format!("Failed to daemonize: {e}"))
+    })?;
+
+    Ok(())
+}
+
+async fn run_mcp_stdio(ipam: Option<McpIpamBackend>) -> crate::error::Result<()> {
     let server = NetcidrMcp::new(ipam);
     let transport = rmcp::transport::io::stdio();
     let service = server
@@ -607,6 +668,48 @@ pub async fn run_mcp_server(
         .waiting()
         .await
         .map_err(|e| crate::error::NetcidrError::InvalidInput(format!("MCP server error: {e}")))?;
+    Ok(())
+}
+
+async fn run_mcp_http(
+    ipam: Option<McpIpamBackend>,
+    address: &str,
+    port: u16,
+) -> crate::error::Result<()> {
+    use rmcp::transport::streamable_http_server::{
+        StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
+    };
+
+    let config = StreamableHttpServerConfig::default();
+    let ct = config.cancellation_token.clone();
+
+    let service = StreamableHttpService::new(
+        move || Ok(NetcidrMcp::new(ipam.clone())),
+        Arc::new(LocalSessionManager::default()),
+        config,
+    );
+
+    let router = axum::Router::new().nest_service("/mcp", service);
+    let bind_addr = format!("{address}:{port}");
+    let listener = tokio::net::TcpListener::bind(&bind_addr)
+        .await
+        .map_err(|e| {
+            crate::error::NetcidrError::InvalidInput(format!("Failed to bind {bind_addr}: {e}"))
+        })?;
+
+    eprintln!("MCP server listening on http://{bind_addr}/mcp");
+
+    let shutdown_ct = ct.clone();
+    tokio::spawn(async move {
+        let _ = tokio::signal::ctrl_c().await;
+        shutdown_ct.cancel();
+    });
+
+    axum::serve(listener, router)
+        .with_graceful_shutdown(async move { ct.cancelled().await })
+        .await
+        .map_err(|e| crate::error::NetcidrError::InvalidInput(format!("MCP server error: {e}")))?;
+
     Ok(())
 }
 
@@ -1112,10 +1215,16 @@ mod tests {
     #[test]
     fn test_mutually_exclusive_options() {
         // run_mcp_server validates this, but we can test the logic directly
-        let result = tokio_test::block_on(run_mcp_server(
-            Some("test.db"),
-            Some("http://localhost:8080"),
-        ));
+        let result = tokio_test::block_on(run_mcp_server(McpServerConfig {
+            transport: crate::cli::McpTransport::Stdio,
+            address: "127.0.0.1",
+            port: 3000,
+            daemonize: false,
+            pid_file: "/tmp/netcidr-test.pid",
+            log_file: None,
+            ipam_db: Some("test.db"),
+            api_url: Some("http://localhost:8080"),
+        }));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("mutually exclusive"));
