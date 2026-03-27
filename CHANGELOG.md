@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Replace `softprops/action-gh-release@v2` with `gh release create` in release workflow — eliminates third-party action dependency
+
 ## [0.17.0] - 2026-03-27
 
 ### Added

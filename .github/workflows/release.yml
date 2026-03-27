@@ -70,10 +70,11 @@ jobs:
         run: cargo build --release
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ inputs.release_version }}
-          name: netcidr v${{ inputs.release_version }}
-          body_path: release_notes.md
-          files: target/release/netcidr
-          target_commitish: main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ inputs.release_version }}" \
+            --title "netcidr v${{ inputs.release_version }}" \
+            --notes-file release_notes.md \
+            --target main \
+            target/release/netcidr
