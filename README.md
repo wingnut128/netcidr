@@ -299,6 +299,9 @@ launchctl load ~/Library/LaunchAgents/com.netcidr.mcp.plist
 | `ipam_utilization` | Get utilization statistics |
 | `ipam_find_ip` | Find allocations containing an IP |
 | `ipam_find_resource` | Find allocations by resource ID |
+| `ipam_batch_allocate` | Batch allocate across supernets in one call (compact output) |
+| `ipam_batch_release` | Batch release by IDs, resource_id, or supernet_id |
+| `ipam_allocation_summary` | Grouped allocation overview by resource with utilization |
 
 #### Streamable HTTP (remote clients)
 
