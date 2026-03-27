@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-03-27
+
+### Added
+
+- MCP batch operations for reduced token usage in bulk workflows:
+  - `ipam_batch_allocate` — allocate multiple CIDR blocks across supernets in a single call (up to 100 items), returns compact output with per-item error handling
+  - `ipam_batch_release` — release allocations by IDs, resource_id, or supernet_id in one call
+  - `ipam_allocation_summary` — grouped overview of allocations across supernets organized by resource ID, with utilization stats
+- Compact allocation/supernet models (`CompactAllocation`, `CompactSupernet`) that omit null fields, timestamps, and tags to minimize response size
+- Batch allocate returns ~85% fewer tokens vs individual calls; batch release returns ~96% fewer tokens
+
 ## [0.16.1] - 2026-03-27
 
 ### Fixed

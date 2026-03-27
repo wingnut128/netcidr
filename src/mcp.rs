@@ -113,6 +113,42 @@ impl McpIpamBackend {
             Self::Remote(client) => client.find_by_resource(resource_id).await,
         }
     }
+
+    pub async fn batch_allocate(
+        &self,
+        items: &[BatchAllocateItem],
+    ) -> crate::error::Result<BatchAllocateResult> {
+        match self {
+            Self::Local(ops) => ops.batch_allocate(items).await,
+            Self::Remote(_) => Err(crate::error::NetcidrError::InvalidInput(
+                "batch operations are not yet supported via remote API".to_string(),
+            )),
+        }
+    }
+
+    pub async fn batch_release(
+        &self,
+        request: &BatchReleaseRequest,
+    ) -> crate::error::Result<BatchReleaseResult> {
+        match self {
+            Self::Local(ops) => ops.batch_release(request).await,
+            Self::Remote(_) => Err(crate::error::NetcidrError::InvalidInput(
+                "batch operations are not yet supported via remote API".to_string(),
+            )),
+        }
+    }
+
+    pub async fn allocation_summary(
+        &self,
+        supernet_id: Option<&str>,
+    ) -> crate::error::Result<AllocationSummary> {
+        match self {
+            Self::Local(ops) => ops.allocation_summary(supernet_id).await,
+            Self::Remote(_) => Err(crate::error::NetcidrError::InvalidInput(
+                "allocation summary is not yet supported via remote API".to_string(),
+            )),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -252,6 +288,50 @@ struct IpamFindIpParams {
 struct IpamFindResourceParams {
     /// Resource ID to look up
     resource_id: String,
+}
+
+// ---------------------------------------------------------------------------
+// Parameter types — batch IPAM tools
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct BatchAllocateItemParam {
+    /// Supernet ID to allocate from
+    supernet_id: String,
+    /// Desired prefix length
+    prefix_length: u8,
+    /// Number of blocks to allocate per item (default: 1)
+    count: Option<u32>,
+    /// Human-readable name
+    name: Option<String>,
+    /// Environment (e.g., production, staging)
+    environment: Option<String>,
+    /// Owner
+    owner: Option<String>,
+    /// External resource identifier
+    resource_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct IpamBatchAllocateParams {
+    /// Array of allocation requests to process
+    items: Vec<BatchAllocateItemParam>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct IpamBatchReleaseParams {
+    /// Release by explicit allocation IDs
+    allocation_ids: Option<Vec<String>>,
+    /// Release all active allocations matching this resource ID
+    resource_id: Option<String>,
+    /// Scope to a specific supernet (used with resource_id, or alone to release all in supernet)
+    supernet_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct IpamAllocationSummaryParams {
+    /// Optional supernet ID to scope the summary (omit for all supernets)
+    supernet_id: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -561,6 +641,74 @@ impl NetcidrMcp {
             return IPAM_NOT_ENABLED.to_string();
         };
         result_to_string(backend.find_by_resource(&params.resource_id).await)
+    }
+
+    // -------------------------------------------------------------------
+    // Batch IPAM tools
+    // -------------------------------------------------------------------
+
+    #[tool(
+        name = "ipam_batch_allocate",
+        description = "Allocate multiple CIDR blocks in a single call. Each item specifies a supernet, prefix length, and optional metadata. Returns compact results per-item (id, cidr, name, status, resource_id, environment). Errors are captured per-item without aborting the batch. Maximum 100 items."
+    )]
+    async fn ipam_batch_allocate(
+        &self,
+        Parameters(params): Parameters<IpamBatchAllocateParams>,
+    ) -> String {
+        let Some(backend) = &self.ipam else {
+            return IPAM_NOT_ENABLED.to_string();
+        };
+        let items: Vec<BatchAllocateItem> = params
+            .items
+            .into_iter()
+            .map(|p| BatchAllocateItem {
+                supernet_id: p.supernet_id,
+                prefix_length: p.prefix_length,
+                count: p.count,
+                name: p.name,
+                environment: p.environment,
+                owner: p.owner,
+                resource_id: p.resource_id,
+            })
+            .collect();
+        result_to_string(backend.batch_allocate(&items).await)
+    }
+
+    #[tool(
+        name = "ipam_batch_release",
+        description = "Release multiple IPAM allocations in a single call. Specify allocation_ids directly, or use resource_id and/or supernet_id to release matching active allocations. Per-item errors are captured individually."
+    )]
+    async fn ipam_batch_release(
+        &self,
+        Parameters(params): Parameters<IpamBatchReleaseParams>,
+    ) -> String {
+        let Some(backend) = &self.ipam else {
+            return IPAM_NOT_ENABLED.to_string();
+        };
+        let request = BatchReleaseRequest {
+            allocation_ids: params.allocation_ids,
+            resource_id: params.resource_id,
+            supernet_id: params.supernet_id,
+        };
+        result_to_string(backend.batch_release(&request).await)
+    }
+
+    #[tool(
+        name = "ipam_allocation_summary",
+        description = "Get a grouped summary of all allocations across supernets, organized by resource ID. Shows utilization percentage and CIDR lists per resource. Useful for a high-level overview without fetching individual allocations."
+    )]
+    async fn ipam_allocation_summary(
+        &self,
+        Parameters(params): Parameters<IpamAllocationSummaryParams>,
+    ) -> String {
+        let Some(backend) = &self.ipam else {
+            return IPAM_NOT_ENABLED.to_string();
+        };
+        result_to_string(
+            backend
+                .allocation_summary(params.supernet_id.as_deref())
+                .await,
+        )
     }
 }
 
@@ -1153,6 +1301,242 @@ mod tests {
             .await;
         assert!(!result.starts_with("Error"));
         assert!(result.contains("10.0.2.0/24"));
+    }
+
+    // -------------------------------------------------------------------
+    // Batch IPAM tool tests
+    // -------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_ipam_batch_allocate() {
+        let server = ipam_server().await;
+
+        // Create two supernets
+        let r1 = server
+            .ipam_create_supernet(Parameters(IpamCreateSupernetParams {
+                cidr: "10.0.0.0/16".into(),
+                name: Some("Private".into()),
+                description: None,
+            }))
+            .await;
+        let sn1: serde_json::Value = serde_json::from_str(&r1).unwrap();
+        let sn1_id = sn1["id"].as_str().unwrap().to_string();
+
+        let r2 = server
+            .ipam_create_supernet(Parameters(IpamCreateSupernetParams {
+                cidr: "192.168.0.0/24".into(),
+                name: Some("Public".into()),
+                description: None,
+            }))
+            .await;
+        let sn2: serde_json::Value = serde_json::from_str(&r2).unwrap();
+        let sn2_id = sn2["id"].as_str().unwrap().to_string();
+
+        // Batch allocate across both supernets
+        let result = server
+            .ipam_batch_allocate(Parameters(IpamBatchAllocateParams {
+                items: vec![
+                    BatchAllocateItemParam {
+                        supernet_id: sn1_id.clone(),
+                        prefix_length: 24,
+                        count: Some(3),
+                        name: Some("Account-01 Private".into()),
+                        environment: Some("prod".into()),
+                        owner: None,
+                        resource_id: Some("acct-01".into()),
+                    },
+                    BatchAllocateItemParam {
+                        supernet_id: sn2_id.clone(),
+                        prefix_length: 26,
+                        count: Some(2),
+                        name: Some("Account-01 Public".into()),
+                        environment: Some("prod".into()),
+                        owner: None,
+                        resource_id: Some("acct-01".into()),
+                    },
+                ],
+            }))
+            .await;
+
+        assert!(!result.starts_with("Error"), "batch failed: {result}");
+        let batch: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(batch["total_requested"], 2);
+        assert_eq!(batch["total_allocated"], 5);
+        assert_eq!(
+            batch["results"][0]["allocations"].as_array().unwrap().len(),
+            3
+        );
+        assert_eq!(
+            batch["results"][1]["allocations"].as_array().unwrap().len(),
+            2
+        );
+        // Verify compact format — no broadcast_address, no tags, no timestamps
+        let first_alloc = &batch["results"][0]["allocations"][0];
+        assert!(first_alloc.get("cidr").is_some());
+        assert!(first_alloc.get("broadcast_address").is_none());
+        assert!(first_alloc.get("tags").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_ipam_batch_allocate_partial_failure() {
+        let server = ipam_server().await;
+
+        let r = server
+            .ipam_create_supernet(Parameters(IpamCreateSupernetParams {
+                cidr: "192.168.0.0/30".into(), // tiny: only 4 IPs
+                name: None,
+                description: None,
+            }))
+            .await;
+        let sn: serde_json::Value = serde_json::from_str(&r).unwrap();
+        let sn_id = sn["id"].as_str().unwrap().to_string();
+
+        let result = server
+            .ipam_batch_allocate(Parameters(IpamBatchAllocateParams {
+                items: vec![
+                    BatchAllocateItemParam {
+                        supernet_id: sn_id.clone(),
+                        prefix_length: 31,
+                        count: Some(1),
+                        name: Some("ok".into()),
+                        environment: None,
+                        owner: None,
+                        resource_id: None,
+                    },
+                    BatchAllocateItemParam {
+                        supernet_id: sn_id.clone(),
+                        prefix_length: 24, // too big for /30
+                        count: Some(1),
+                        name: Some("fail".into()),
+                        environment: None,
+                        owner: None,
+                        resource_id: None,
+                    },
+                ],
+            }))
+            .await;
+
+        let batch: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(batch["total_requested"], 2);
+        assert_eq!(batch["total_allocated"], 1);
+        assert!(batch["results"][0]["error"].is_null());
+        assert!(batch["results"][1]["error"].is_string());
+    }
+
+    #[tokio::test]
+    async fn test_ipam_batch_release_by_resource() {
+        let server = ipam_server().await;
+
+        let r = server
+            .ipam_create_supernet(Parameters(IpamCreateSupernetParams {
+                cidr: "10.0.0.0/16".into(),
+                name: None,
+                description: None,
+            }))
+            .await;
+        let sn: serde_json::Value = serde_json::from_str(&r).unwrap();
+        let sn_id = sn["id"].as_str().unwrap().to_string();
+
+        // Allocate 3 blocks for resource "vpc-1"
+        server
+            .ipam_batch_allocate(Parameters(IpamBatchAllocateParams {
+                items: vec![BatchAllocateItemParam {
+                    supernet_id: sn_id.clone(),
+                    prefix_length: 24,
+                    count: Some(3),
+                    name: None,
+                    environment: None,
+                    owner: None,
+                    resource_id: Some("vpc-1".into()),
+                }],
+            }))
+            .await;
+
+        // Release all by resource_id
+        let result = server
+            .ipam_batch_release(Parameters(IpamBatchReleaseParams {
+                allocation_ids: None,
+                resource_id: Some("vpc-1".into()),
+                supernet_id: None,
+            }))
+            .await;
+
+        assert!(!result.starts_with("Error"), "release failed: {result}");
+        let rel: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(rel["total_requested"], 3);
+        assert_eq!(rel["total_released"], 3);
+    }
+
+    #[tokio::test]
+    async fn test_ipam_allocation_summary() {
+        let server = ipam_server().await;
+
+        let r = server
+            .ipam_create_supernet(Parameters(IpamCreateSupernetParams {
+                cidr: "10.0.0.0/16".into(),
+                name: Some("Test".into()),
+                description: None,
+            }))
+            .await;
+        let sn: serde_json::Value = serde_json::from_str(&r).unwrap();
+        let sn_id = sn["id"].as_str().unwrap().to_string();
+
+        // Allocate for two resources
+        server
+            .ipam_batch_allocate(Parameters(IpamBatchAllocateParams {
+                items: vec![
+                    BatchAllocateItemParam {
+                        supernet_id: sn_id.clone(),
+                        prefix_length: 24,
+                        count: Some(2),
+                        name: Some("web".into()),
+                        environment: Some("prod".into()),
+                        owner: None,
+                        resource_id: Some("vpc-web".into()),
+                    },
+                    BatchAllocateItemParam {
+                        supernet_id: sn_id.clone(),
+                        prefix_length: 24,
+                        count: Some(1),
+                        name: Some("db".into()),
+                        environment: Some("prod".into()),
+                        owner: None,
+                        resource_id: Some("vpc-db".into()),
+                    },
+                ],
+            }))
+            .await;
+
+        let result = server
+            .ipam_allocation_summary(Parameters(IpamAllocationSummaryParams {
+                supernet_id: None,
+            }))
+            .await;
+
+        assert!(!result.starts_with("Error"), "summary failed: {result}");
+        let summary: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(summary["total_allocations"], 3);
+        assert_eq!(summary["total_active"], 3);
+        assert_eq!(summary["supernets"].as_array().unwrap().len(), 1);
+
+        let sn_summary = &summary["supernets"][0];
+        assert!(sn_summary["utilization_percent"].as_f64().unwrap() > 0.0);
+        let by_resource = sn_summary["by_resource"].as_array().unwrap();
+        assert_eq!(by_resource.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_ipam_batch_release_no_selector() {
+        let server = ipam_server().await;
+        let result = server
+            .ipam_batch_release(Parameters(IpamBatchReleaseParams {
+                allocation_ids: None,
+                resource_id: None,
+                supernet_id: None,
+            }))
+            .await;
+        assert!(result.starts_with("Error"));
+        assert!(result.contains("at least one"));
     }
 
     #[tokio::test]
