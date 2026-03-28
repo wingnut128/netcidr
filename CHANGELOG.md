@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Replace `cargo install cargo-audit` with `rustsec/audit-check@v2` GitHub Action in CI — faster (pre-built binary), fixes CVSS v4.0 parsing failures
+- Add `rust-toolchain.toml` to pin stable channel for consistent builds across environments
+
 ## [0.18.0] - 2026-03-27
 
 ### Added

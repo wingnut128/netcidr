@@ -284,10 +284,7 @@ impl HttpIpamClient {
         }
     }
 
-    pub async fn batch_allocate(
-        &self,
-        items: &[BatchAllocateItem],
-    ) -> Result<BatchAllocateResult> {
+    pub async fn batch_allocate(&self, items: &[BatchAllocateItem]) -> Result<BatchAllocateResult> {
         let resp = self
             .client
             .post(self.url("/batch/allocate"))
@@ -304,10 +301,7 @@ impl HttpIpamClient {
         }
     }
 
-    pub async fn batch_release(
-        &self,
-        request: &BatchReleaseRequest,
-    ) -> Result<BatchReleaseResult> {
+    pub async fn batch_release(&self, request: &BatchReleaseRequest) -> Result<BatchReleaseResult> {
         let resp = self
             .client
             .post(self.url("/batch/release"))
@@ -324,10 +318,7 @@ impl HttpIpamClient {
         }
     }
 
-    pub async fn allocation_summary(
-        &self,
-        supernet_id: Option<&str>,
-    ) -> Result<AllocationSummary> {
+    pub async fn allocation_summary(&self, supernet_id: Option<&str>) -> Result<AllocationSummary> {
         let mut url = self.url("/batch/summary");
         if let Some(id) = supernet_id {
             url = format!("{url}?supernet_id={id}");
