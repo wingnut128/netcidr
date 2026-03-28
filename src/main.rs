@@ -115,11 +115,10 @@ fn main() {
         ref log_file,
         ..
     }) = cli.command
+        && let Err(e) = netcidr::daemon::daemonize_process(pid_file, log_file.as_deref())
     {
-        if let Err(e) = netcidr::daemon::daemonize_process(pid_file, log_file.as_deref()) {
-            eprintln!("Failed to daemonize: {}", e);
-            std::process::exit(1);
-        }
+        eprintln!("Failed to daemonize: {}", e);
+        std::process::exit(1);
     }
 
     // Build the tokio runtime after any fork so file descriptors are valid.
