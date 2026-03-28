@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.2] - 2026-03-28
+
 ### Changed
 
 - Merge CI format and lint jobs into a single job — saves a runner spin-up
