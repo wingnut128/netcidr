@@ -1,20 +1,16 @@
 #!/bin/sh
 #
 # Pre-commit hook for netcidr
-# Runs formatting check and linting before commit
+# Auto-formats code, then lints before commit
 
 set -e
 
 echo "Running pre-commit checks..."
 
-# Check formatting
-echo "Checking formatting..."
-if ! cargo fmt --all -- --check; then
-    echo ""
-    echo "ERROR: Formatting check failed."
-    echo "Run 'cargo fmt' to fix formatting issues."
-    exit 1
-fi
+# Auto-format and re-stage changed files
+echo "Formatting..."
+cargo fmt --all
+git diff --name-only --diff-filter=M | xargs -r git add
 
 # Run clippy
 echo "Running clippy..."
