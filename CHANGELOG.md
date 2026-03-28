@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Merge CI format and lint jobs into a single job — saves a runner spin-up
+- Switch CI test runner from `cargo test` to `cargo nextest run` for parallel test execution
+- Replace `rustsec/audit-check@v2` with `taiki-e/install-action@cargo-audit` — pre-built binary avoids 3-minute compilation and removes `checks: write` permission requirement
+
 ## [0.18.1] - 2026-03-28
 
 ### Changed
