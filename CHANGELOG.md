@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Remove `rust-toolchain.toml` — pinning `stable` adds no value; CI is the formatting authority via `dtolnay/rust-toolchain@stable`
 
+### Fixed
+
+- Cap `batch_release` allocation IDs at 10,000 to prevent uncontrolled memory allocation from user input (CodeQL alert #10)
+
 ## [0.18.1] - 2026-03-28
 
 ### Changed

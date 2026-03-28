@@ -574,6 +574,17 @@ impl IpamOps {
     /// Batch release: release multiple allocations in a single call.
     /// Supports release by explicit IDs, by resource_id, or by supernet_id.
     pub async fn batch_release(&self, request: &BatchReleaseRequest) -> Result<BatchReleaseResult> {
+        const MAX_BATCH_RELEASE_ITEMS: usize = 10_000;
+
+        if let Some(ref ids) = request.allocation_ids
+            && ids.len() > MAX_BATCH_RELEASE_ITEMS
+        {
+            return Err(NetcidrError::InvalidInput(format!(
+                "batch release size {} exceeds maximum of {MAX_BATCH_RELEASE_ITEMS}",
+                ids.len()
+            )));
+        }
+
         // Resolve which allocation IDs to release
         let ids_to_release: Vec<(String, String)> = if let Some(ref ids) = request.allocation_ids {
             // Explicit IDs — look up each to get the CIDR for the response
@@ -2978,5 +2989,20 @@ mod tests {
             list_result.is_ok(),
             "store should remain queryable after concurrent operations"
         );
+    }
+
+    #[tokio::test]
+    async fn test_batch_release_rejects_oversized_request() {
+        let ops = test_ops().await;
+
+        let oversized_ids: Vec<String> = (0..10_001).map(|i| format!("id-{i}")).collect();
+        let request = BatchReleaseRequest {
+            allocation_ids: Some(oversized_ids),
+            resource_id: None,
+            supernet_id: None,
+        };
+
+        let err = ops.batch_release(&request).await.unwrap_err();
+        assert!(matches!(err, NetcidrError::InvalidInput(_)));
     }
 }
