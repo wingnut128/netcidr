@@ -8,6 +8,10 @@ use crate::ipam::models::*;
 use crate::ipam::store::IpamStore;
 use crate::validation;
 
+/// Maximum number of items allowed in a single batch release request.
+/// This guards against unbounded memory allocations from user input.
+const MAX_BATCH_RELEASE_ITEMS: usize = 10_000;
+
 /// High-level IPAM operations that sit above the store trait.
 /// All conflict detection and free-space logic lives here, keeping
 /// the store as a thin persistence boundary.
@@ -576,6 +580,15 @@ impl IpamOps {
     pub async fn batch_release(&self, request: &BatchReleaseRequest) -> Result<BatchReleaseResult> {
         // Resolve which allocation IDs to release
         let ids_to_release: Vec<(String, String)> = if let Some(ref ids) = request.allocation_ids {
+            // Explicit IDs — look up each to get the CIDR for the response
+            if ids.len() > MAX_BATCH_RELEASE_ITEMS {
+                return Err(NetcidrError::InvalidInput(
+                    format!(
+                        "batch release exceeds maximum allowed items (max {})",
+                        MAX_BATCH_RELEASE_ITEMS
+                    ),
+                ));
+            }
             // Explicit IDs — look up each to get the CIDR for the response
             let mut resolved = Vec::with_capacity(ids.len());
             for id in ids {
