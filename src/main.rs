@@ -109,6 +109,19 @@ fn main() {
         }
     }
 
+    if let Some(Commands::Serve {
+        daemonize: true,
+        ref pid_file,
+        ref log_file,
+        ..
+    }) = cli.command
+    {
+        if let Err(e) = netcidr::daemon::daemonize_process(pid_file, log_file.as_deref()) {
+            eprintln!("Failed to daemonize: {}", e);
+            std::process::exit(1);
+        }
+    }
+
     // Build the tokio runtime after any fork so file descriptors are valid.
     let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
     runtime.block_on(async_main(cli));
@@ -255,6 +268,8 @@ async fn async_main(cli: Cli) {
         Some(Commands::Serve {
             address,
             port,
+            daemonize: _,
+            pid_file: _,
             log_level,
             log_file,
             log_json,

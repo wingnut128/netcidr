@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Batch IPAM endpoints on the API server: `POST /ipam/batch/allocate`, `POST /ipam/batch/release`, `GET /ipam/batch/summary`
 - MCP remote mode now supports batch operations and allocation summary (previously local-only)
+- `netcidr serve --daemonize` flag to run the API server as a background daemon with PID file support
 
 ### Changed
 

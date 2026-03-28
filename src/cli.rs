@@ -140,6 +140,14 @@ pub enum Commands {
         #[arg(short, long, default_value = "8080")]
         port: u16,
 
+        /// Run as a background daemon
+        #[arg(long)]
+        daemonize: bool,
+
+        /// PID file path (used with --daemonize)
+        #[arg(long, default_value = "/tmp/netcidr-serve.pid")]
+        pid_file: String,
+
         /// Log level (trace, debug, info, warn, error)
         #[arg(long, default_value = "info")]
         log_level: String,
