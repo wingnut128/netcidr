@@ -388,6 +388,12 @@ netcidr serve --config netcidr.toml
 
 # With CLI overrides
 netcidr serve --enable-swagger --max-batch-size 500 --timeout 60
+
+# Run as a background daemon
+netcidr serve --daemonize --pid-file /var/run/netcidr.pid --log-file /var/log/netcidr.log
+
+# Daemonize with IPAM enabled
+netcidr serve --daemonize --ipam-enabled --ipam-db /path/to/ipam.db
 ```
 
 #### Server Configuration
