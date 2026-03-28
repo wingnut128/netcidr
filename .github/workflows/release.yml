@@ -14,6 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      RELEASE_VERSION: ${{ inputs.release_version }}
     steps:
       - uses: actions/checkout@v6
 
@@ -34,7 +36,7 @@ jobs:
 
       - name: Validate version format
         run: |
-          if ! echo "${{ inputs.release_version }}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+          if ! echo "$RELEASE_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
             echo "ERROR: Invalid version format. Expected X.Y.Z (e.g. 0.15.0)"
             exit 1
           fi
@@ -42,22 +44,22 @@ jobs:
       - name: Validate Cargo.toml version matches
         run: |
           CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-          if [ "$CARGO_VERSION" != "${{ inputs.release_version }}" ]; then
-            echo "ERROR: Cargo.toml version ($CARGO_VERSION) does not match release version (${{ inputs.release_version }})"
+          if [ "$CARGO_VERSION" != "$RELEASE_VERSION" ]; then
+            echo "ERROR: Cargo.toml version ($CARGO_VERSION) does not match release version ($RELEASE_VERSION)"
             exit 1
           fi
 
       - name: Validate CHANGELOG entry exists
         run: |
-          if ! grep -q "^## \[${{ inputs.release_version }}\]" CHANGELOG.md; then
-            echo "ERROR: CHANGELOG.md has no entry for version ${{ inputs.release_version }}"
+          if ! grep -q "^## \[$RELEASE_VERSION\]" CHANGELOG.md; then
+            echo "ERROR: CHANGELOG.md has no entry for version $RELEASE_VERSION"
             exit 1
           fi
 
       - name: Extract release notes
         id: notes
         run: |
-          awk -v ver="${{ inputs.release_version }}" \
+          awk -v ver="$RELEASE_VERSION" \
             '/^## \[/{if($0 ~ "\\[" ver "\\]"){found=1; next} else if(found) exit} found{print}' \
             CHANGELOG.md > release_notes.md
           echo "Release notes:"
@@ -73,8 +75,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "v${{ inputs.release_version }}" \
-            --title "netcidr v${{ inputs.release_version }}" \
+          gh release create "v$RELEASE_VERSION" \
+            --title "netcidr v$RELEASE_VERSION" \
             --notes-file release_notes.md \
             --target main \
             target/release/netcidr
