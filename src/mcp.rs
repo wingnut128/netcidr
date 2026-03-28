@@ -120,9 +120,7 @@ impl McpIpamBackend {
     ) -> crate::error::Result<BatchAllocateResult> {
         match self {
             Self::Local(ops) => ops.batch_allocate(items).await,
-            Self::Remote(_) => Err(crate::error::NetcidrError::InvalidInput(
-                "batch operations are not yet supported via remote API".to_string(),
-            )),
+            Self::Remote(client) => client.batch_allocate(items).await,
         }
     }
 
@@ -132,9 +130,7 @@ impl McpIpamBackend {
     ) -> crate::error::Result<BatchReleaseResult> {
         match self {
             Self::Local(ops) => ops.batch_release(request).await,
-            Self::Remote(_) => Err(crate::error::NetcidrError::InvalidInput(
-                "batch operations are not yet supported via remote API".to_string(),
-            )),
+            Self::Remote(client) => client.batch_release(request).await,
         }
     }
 
@@ -144,9 +140,7 @@ impl McpIpamBackend {
     ) -> crate::error::Result<AllocationSummary> {
         match self {
             Self::Local(ops) => ops.allocation_summary(supernet_id).await,
-            Self::Remote(_) => Err(crate::error::NetcidrError::InvalidInput(
-                "allocation summary is not yet supported via remote API".to_string(),
-            )),
+            Self::Remote(client) => client.allocation_summary(supernet_id).await,
         }
     }
 }

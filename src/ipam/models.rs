@@ -319,7 +319,7 @@ impl From<Supernet> for CompactSupernet {
 // ---------------------------------------------------------------------------
 
 /// A single item in a batch allocate request.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchAllocateItem {
     pub supernet_id: String,
     pub prefix_length: u8,
@@ -331,7 +331,7 @@ pub struct BatchAllocateItem {
 }
 
 /// Result for a single item in a batch allocate.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchAllocateItemResult {
     /// Index of the item in the request array
     pub index: usize,
@@ -342,7 +342,7 @@ pub struct BatchAllocateItemResult {
 }
 
 /// Overall batch allocate response.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchAllocateResult {
     pub total_requested: usize,
     pub total_allocated: usize,
@@ -350,7 +350,7 @@ pub struct BatchAllocateResult {
 }
 
 /// Request for batch release — at least one selector must be provided.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchReleaseRequest {
     /// Release by explicit allocation IDs
     pub allocation_ids: Option<Vec<String>>,
@@ -361,7 +361,7 @@ pub struct BatchReleaseRequest {
 }
 
 /// Result for a single released allocation.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchReleaseItemResult {
     pub allocation_id: String,
     pub cidr: String,
@@ -370,7 +370,7 @@ pub struct BatchReleaseItemResult {
 }
 
 /// Overall batch release response.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchReleaseResult {
     pub total_requested: usize,
     pub total_released: usize,
@@ -382,7 +382,7 @@ pub struct BatchReleaseResult {
 // ---------------------------------------------------------------------------
 
 /// Grouped allocation summary across supernets.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AllocationSummary {
     pub supernets: Vec<SupernetAllocationSummary>,
     pub total_allocations: usize,
@@ -390,7 +390,7 @@ pub struct AllocationSummary {
 }
 
 /// Per-supernet allocation summary with groupings.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SupernetAllocationSummary {
     pub supernet_id: String,
     pub supernet_cidr: String,
@@ -401,7 +401,7 @@ pub struct SupernetAllocationSummary {
 }
 
 /// Allocations grouped by resource_id.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceGroup {
     pub resource_id: String,
     pub name: Option<String>,

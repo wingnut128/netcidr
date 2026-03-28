@@ -284,6 +284,69 @@ impl HttpIpamClient {
         }
     }
 
+    pub async fn batch_allocate(
+        &self,
+        items: &[BatchAllocateItem],
+    ) -> Result<BatchAllocateResult> {
+        let resp = self
+            .client
+            .post(self.url("/batch/allocate"))
+            .json(items)
+            .send()
+            .await
+            .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
+        if resp.status().is_success() {
+            resp.json()
+                .await
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))
+        } else {
+            Err(Self::map_error(resp).await)
+        }
+    }
+
+    pub async fn batch_release(
+        &self,
+        request: &BatchReleaseRequest,
+    ) -> Result<BatchReleaseResult> {
+        let resp = self
+            .client
+            .post(self.url("/batch/release"))
+            .json(request)
+            .send()
+            .await
+            .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
+        if resp.status().is_success() {
+            resp.json()
+                .await
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))
+        } else {
+            Err(Self::map_error(resp).await)
+        }
+    }
+
+    pub async fn allocation_summary(
+        &self,
+        supernet_id: Option<&str>,
+    ) -> Result<AllocationSummary> {
+        let mut url = self.url("/batch/summary");
+        if let Some(id) = supernet_id {
+            url = format!("{url}?supernet_id={id}");
+        }
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
+        if resp.status().is_success() {
+            resp.json()
+                .await
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))
+        } else {
+            Err(Self::map_error(resp).await)
+        }
+    }
+
     pub async fn find_by_resource(&self, resource_id: &str) -> Result<Vec<Allocation>> {
         let resp = self
             .client

@@ -162,6 +162,13 @@ pub struct AuditQuery {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(IntoParams))]
+pub struct SummaryQuery {
+    /// Optional supernet ID to scope the summary
+    pub supernet_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "swagger", derive(ToSchema))]
 pub struct TagsBody {
     /// Tags to set on the allocation
@@ -202,6 +209,9 @@ pub fn create_ipam_router() -> Router {
         .route("/find-ip/{address}", get(ipam_find_ip))
         .route("/find-resource/{resource_id}", get(ipam_find_resource))
         .route("/audit", get(ipam_query_audit))
+        .route("/batch/allocate", post(ipam_batch_allocate))
+        .route("/batch/release", post(ipam_batch_release))
+        .route("/batch/summary", get(ipam_batch_summary))
 }
 
 // ---------------------------------------------------------------------------
@@ -642,6 +652,40 @@ async fn ipam_set_tags(
     }
     match ops.get_allocation(&id).await {
         Ok(allocation) => Json(allocation).into_response(),
+        Err(e) => ipam_error_response(e),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Batch handlers
+// ---------------------------------------------------------------------------
+
+async fn ipam_batch_allocate(
+    Extension(ops): Extension<Arc<IpamOps>>,
+    Json(items): Json<Vec<BatchAllocateItem>>,
+) -> impl IntoResponse {
+    match ops.batch_allocate(&items).await {
+        Ok(result) => Json(result).into_response(),
+        Err(e) => ipam_error_response(e),
+    }
+}
+
+async fn ipam_batch_release(
+    Extension(ops): Extension<Arc<IpamOps>>,
+    Json(body): Json<BatchReleaseRequest>,
+) -> impl IntoResponse {
+    match ops.batch_release(&body).await {
+        Ok(result) => Json(result).into_response(),
+        Err(e) => ipam_error_response(e),
+    }
+}
+
+async fn ipam_batch_summary(
+    Extension(ops): Extension<Arc<IpamOps>>,
+    Query(query): Query<SummaryQuery>,
+) -> impl IntoResponse {
+    match ops.allocation_summary(query.supernet_id.as_deref()).await {
+        Ok(summary) => Json(summary).into_response(),
         Err(e) => ipam_error_response(e),
     }
 }

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Batch IPAM endpoints on the API server: `POST /ipam/batch/allocate`, `POST /ipam/batch/release`, `GET /ipam/batch/summary`
+- MCP remote mode now supports batch operations and allocation summary (previously local-only)
+
 ### Changed
 
 - Replace `softprops/action-gh-release@v2` with `gh release create` in release workflow — eliminates third-party action dependency
