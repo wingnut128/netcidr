@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add man page (`doc/netcidr.1`) covering all commands, options, IPAM subcommands, environment variables, and examples
+
 ## [0.18.2] - 2026-03-28
 
 ### Changed
