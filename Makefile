@@ -16,11 +16,11 @@ all: build
 
 # Build React dashboard (produces dashboard/dist/index.html)
 dashboard:
-	cd dashboard && npm ci --silent && npm run build
+	cd dashboard && bun install --frozen-lockfile && bun run build
 
 # Run dashboard dev server with HMR (proxies API to localhost:8080)
 dashboard-dev:
-	cd dashboard && npm run dev
+	cd dashboard && bun run dev
 
 # Build debug binary (default features: swagger)
 build: dashboard

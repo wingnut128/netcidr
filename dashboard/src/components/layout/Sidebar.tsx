@@ -1,16 +1,22 @@
 import { NavLink } from "react-router-dom";
 
-const navItems = [
+const baseNavItems = [
   { to: "/", label: "CALC" },
   { to: "/split", label: "SPLIT" },
   { to: "/contains", label: "CONTAINS" },
   { to: "/summarize", label: "SUMMARIZE" },
   { to: "/from-range", label: "RANGE" },
   { to: "/visualizer", label: "VISUALIZE" },
-  { to: "/ipam", label: "IPAM" },
 ];
 
-export function Sidebar() {
+interface SidebarProps {
+  ipamEnabled: boolean;
+}
+
+export function Sidebar({ ipamEnabled }: SidebarProps) {
+  const navItems = ipamEnabled
+    ? [...baseNavItems, { to: "/ipam", label: "IPAM" }]
+    : baseNavItems;
   return (
     <nav className="fixed left-0 top-0 h-full w-48 bg-surface border-r border-border flex flex-col z-50">
       <div className="px-4 py-5 border-b border-border">
