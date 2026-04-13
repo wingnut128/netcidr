@@ -328,11 +328,14 @@ pub fn create_router(config: RouterConfig) -> Router {
         .route("/v6/from-range", get(from_range_ipv6_handler))
         .route("/batch", post(batch_handler));
 
-    // Dashboard is always available (serves the SPA for all tools)
     let ipam_enabled = config.ipam_ops.is_some();
+
+    #[cfg(feature = "dashboard")]
     let router = router
         .route("/dashboard", get(dashboard))
         .route("/", get(dashboard));
+    #[cfg(not(feature = "dashboard"))]
+    let router = router;
 
     // Conditionally mount IPAM routes
     let router = if let Some(ops) = config.ipam_ops {
@@ -950,6 +953,7 @@ struct FeaturesResponse {
     swagger: bool,
 }
 
+#[cfg(feature = "dashboard")]
 async fn dashboard() -> impl IntoResponse {
     (
         StatusCode::OK,

@@ -38,20 +38,20 @@ build-tui:
 release-tui:
 	cargo build --release --features tui
 
-# Build debug binary without default features (no swagger)
+# Build debug binary without default features (no swagger, no dashboard)
 build-no-default:
 	cargo build --no-default-features
 
-# Build release binary without default features (no swagger)
+# Build release binary without default features (no swagger, no dashboard)
 release-no-default:
 	cargo build --release --no-default-features
 
-# Build debug binary with all features (swagger + tui)
-build-all-features:
+# Build debug binary with all features (swagger + tui + dashboard)
+build-all-features: dashboard
 	cargo build --all-features
 
-# Build release binary with all features (swagger + tui)
-release-all-features:
+# Build release binary with all features (swagger + tui + dashboard)
+release-all-features: dashboard
 	cargo build --release --all-features
 
 # Run all tests
@@ -160,8 +160,8 @@ help:
 	@echo "  release                Build release binary (default features: swagger)"
 	@echo "  build-tui              Build debug binary with TUI feature"
 	@echo "  release-tui            Build release binary with TUI feature"
-	@echo "  build-no-default       Build debug binary without default features"
-	@echo "  release-no-default     Build release binary without default features"
+	@echo "  build-no-default       Build without defaults (no swagger/dashboard)"
+	@echo "  release-no-default     Release without defaults (no swagger/dashboard)"
 	@echo "  build-all-features     Build debug binary with all features"
 	@echo "  release-all-features   Build release binary with all features"
 	@echo "  build-mcp              Build with MCP feature"

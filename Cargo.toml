@@ -55,7 +55,8 @@ proptest = "1"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 
 [features]
-default = ["swagger"]
+default = ["swagger", "dashboard"]
+dashboard = []
 swagger = ["dep:utoipa", "dep:utoipa-swagger-ui"]
 tui = ["dep:ratatui", "dep:crossterm", "dep:ipnet"]
 mcp = ["dep:rmcp", "dep:schemars", "dep:reqwest", "dep:tokio-util"]
