@@ -1,6 +1,10 @@
 name: Release
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - Cargo.toml
   workflow_dispatch:
     inputs:
       release_version:
@@ -9,13 +13,63 @@ on:
         type: string
 
 jobs:
+  detect:
+    name: Detect version bump
+    runs-on: ubuntu-latest
+    outputs:
+      release_version: ${{ steps.out.outputs.release_version }}
+      should_release: ${{ steps.out.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+
+      - id: out
+        name: Decide whether to release
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VER="${{ inputs.release_version }}"
+            echo "release_version=$VER" >> "$GITHUB_OUTPUT"
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "Manual dispatch: releasing $VER"
+            exit 0
+          fi
+
+          NEW=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          OLD=$(git show HEAD~1:Cargo.toml 2>/dev/null | grep '^version' | head -1 | sed 's/.*"\(.*\)".*/\1/' || echo "")
+
+          if [ "$NEW" = "$OLD" ]; then
+            echo "Cargo.toml version unchanged ($NEW); skipping release."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! echo "$NEW" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Version '$NEW' is not X.Y.Z; skipping release."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if git ls-remote --tags origin "refs/tags/v$NEW" | grep -q "refs/tags/v$NEW"; then
+            echo "Tag v$NEW already exists on origin; skipping release."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Detected version bump: $OLD -> $NEW; releasing."
+          echo "release_version=$NEW" >> "$GITHUB_OUTPUT"
+          echo "should_release=true" >> "$GITHUB_OUTPUT"
+
   release:
     name: Build and Release
+    needs: detect
+    if: needs.detect.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
-      RELEASE_VERSION: ${{ inputs.release_version }}
+      RELEASE_VERSION: ${{ needs.detect.outputs.release_version }}
     steps:
       - uses: actions/checkout@v6
 

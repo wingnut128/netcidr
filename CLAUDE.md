@@ -82,10 +82,9 @@ Every task is only "done" when ALL of the following are true:
 
 ## Release Process
 
-Releases use a manual GitHub Actions workflow dispatch. After merging a PR that includes a version bump:
+Releases auto-trigger when a PR merged to `main` changes `Cargo.toml`. The workflow's `detect` job compares the old and new version; if the version bumped to a new `X.Y.Z` and no `vX.Y.Z` tag exists yet, the `release` job runs automatically. Manual `workflow_dispatch` is still available as a fallback (Actions → Release → Run workflow, enter the version without leading `v`).
 
-1. Go to **Actions → Release → Run workflow**, enter the version (e.g. `0.19.0`, no leading `v`)
-2. The workflow validates `Cargo.toml` version matches, confirms a CHANGELOG entry exists, extracts release notes, creates a GitHub release with tag `vX.Y.Z`, and builds the release binary
+The release job validates `Cargo.toml` version matches, confirms a CHANGELOG entry exists, extracts release notes, builds the release binary, and creates a GitHub release with tag `vX.Y.Z`. So the full release flow for a maintainer is: bump `Cargo.toml` + CHANGELOG in the PR, merge, done.
 
 ## Build & Development Commands
 
