@@ -12,14 +12,14 @@ ARG FEATURES=default
 ARG WITH_DASHBOARD=true
 
 # ---------- Dashboard build (skipped when WITH_DASHBOARD=false) -----------
-FROM oven/bun:alpine AS dashboard-build
+FROM oven/bun:1-alpine AS dashboard-build
 WORKDIR /app/dashboard
 COPY dashboard/package.json dashboard/bun.lock ./
 RUN bun install --frozen-lockfile
 COPY dashboard/ ./
 RUN bun run build
 
-FROM alpine:3.21 AS dashboard-false
+FROM alpine:3.23 AS dashboard-false
 RUN mkdir -p /app/dashboard/dist
 
 FROM dashboard-build AS dashboard-true
@@ -28,7 +28,7 @@ FROM dashboard-build AS dashboard-true
 FROM dashboard-${WITH_DASHBOARD} AS dashboard
 
 # ---------- Rust build ---------------------------------------------------
-FROM rust:1.88-alpine AS builder
+FROM rust:1.94-alpine3.23 AS builder
 
 ARG FEATURES
 
@@ -57,7 +57,7 @@ RUN touch src/main.rs && \
     cargo build --release --no-default-features --features "${FEATURES}"
 
 # ---------- Runtime -------------------------------------------------------
-FROM alpine:3.21
+FROM alpine:3.23
 
 RUN apk add --no-cache ca-certificates
 
