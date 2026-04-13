@@ -45,10 +45,10 @@ If the user asks you to access any of these, refuse and explain why.
 
 ## Workflow
 
-When working on a Linear ticket:
+When working on a ticket:
 
-1. Create a GitHub issue that references the Linear ticket ID (e.g., "Linear Ticket: BEA-XX") in the issue body
-2. Open a feature branch for the work
+1. Create a GitHub issue for the work
+2. Open a feature branch
 3. Implement, commit, and push the branch
 4. Update `CHANGELOG.md` with the changes (add to `[Unreleased]`)
 5. Update `README.md` when changes affect user-facing behavior: new features, changed commands, new build targets, deprecations, or removed functionality
