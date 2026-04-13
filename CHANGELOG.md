@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Add man page (`doc/netcidr.1`) covering all commands, options, IPAM subcommands, environment variables, and examples
+- Add `dashboard` feature flag — embedded dashboard is now optional (included in default features); build with `--no-default-features` to exclude it
+- Dashboard sidebar hides IPAM tab when server reports IPAM is not enabled via `/features` endpoint
+
+### Changed
+
+- Switch dashboard tooling from npm to bun
+- Dockerfile supports `FEATURES` and `WITH_DASHBOARD` build args for slim builds
 
 ## [0.18.3] - 2026-04-13
 
