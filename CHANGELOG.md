@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Add man page (`doc/netcidr.1`) covering all commands, options, IPAM subcommands, environment variables, and examples
 
+## [0.18.3] - 2026-04-13
+
+### Fixed
+
+- Bump Dockerfile builder image from `rust:1.83-alpine` to `rust:1.87-alpine`
+
 ## [0.18.2] - 2026-03-28
 
 ### Changed
