@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.2] - 2026-04-13
+
 ### Fixed
 
 - Bump Dockerfile base images to Alpine 3.23 (builder: `rust:1.94-alpine3.23`, runtime: `alpine:3.23`) to pick up patched `libssl3`, addressing CVE-2026-28387, CVE-2026-31790, CVE-2026-28388, and related openssl vulnerabilities reported by Snyk
