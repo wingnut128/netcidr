@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::ServerCapabilities;
 use rmcp::{ServerHandler, ServiceExt, tool, tool_handler, tool_router};
@@ -334,16 +333,12 @@ struct IpamAllocationSummaryParams {
 
 #[derive(Debug, Clone)]
 pub struct NetcidrMcp {
-    tool_router: ToolRouter<Self>,
     ipam: Option<McpIpamBackend>,
 }
 
 impl NetcidrMcp {
     pub fn new(ipam: Option<McpIpamBackend>) -> Self {
-        Self {
-            tool_router: Self::tool_router(),
-            ipam,
-        }
+        Self { ipam }
     }
 }
 
