@@ -45,10 +45,10 @@ If the user asks you to access any of these, refuse and explain why.
 
 ## Workflow
 
-When working on a Linear ticket:
+When working on a ticket:
 
-1. Create a GitHub issue that references the Linear ticket ID (e.g., "Linear Ticket: BEA-XX") in the issue body
-2. Open a feature branch for the work
+1. Create a GitHub issue for the work
+2. Open a feature branch
 3. Implement, commit, and push the branch
 4. Update `CHANGELOG.md` with the changes (add to `[Unreleased]`)
 5. Update `README.md` when changes affect user-facing behavior: new features, changed commands, new build targets, deprecations, or removed functionality
@@ -65,11 +65,11 @@ After every commit (whether from a Linear ticket or not):
 
 ### Versioning
 
-This project uses semantic versioning. Version bumps happen at **release time**, not per-PR:
+This project uses semantic versioning. Version bumps happen **in the same PR** as the change when a release is intended:
 
-- All changes accumulate under `[Unreleased]` in `CHANGELOG.md`
-- When ready to release, create a PR that bumps `Cargo.toml` version, moves `[Unreleased]` to a dated `[X.Y.Z]` section, and updates `SECURITY.md` if the minor version changed
-- Do NOT bump the version on every feature or fix PR
+- Bump `version` in `Cargo.toml`, move `[Unreleased]` entries to a dated `[X.Y.Z]` section in `CHANGELOG.md`, and update `SECURITY.md` if the minor version changed — all in the feature/fix PR
+- After merging, trigger the release workflow immediately
+- Not every PR needs a version bump — batch small changes under `[Unreleased]` and bump when ready to ship
 
 ### Task completion checklist
 
@@ -82,12 +82,10 @@ Every task is only "done" when ALL of the following are true:
 
 ## Release Process
 
-Releases use a manual GitHub Actions workflow dispatch.
+Releases use a manual GitHub Actions workflow dispatch. After merging a PR that includes a version bump:
 
-1. Create a PR that bumps `version` in `Cargo.toml`, moves `[Unreleased]` entries to a dated `[X.Y.Z]` section in `CHANGELOG.md`, and updates `SECURITY.md` if the minor version changed
-2. Merge the PR through CI
-3. Go to **Actions → Release → Run workflow**, enter the version (e.g. `0.15.0`, no leading `v`)
-4. The workflow validates `Cargo.toml` version matches, confirms a CHANGELOG entry exists, extracts release notes, creates a GitHub release with tag `vX.Y.Z`, and builds the release binary
+1. Go to **Actions → Release → Run workflow**, enter the version (e.g. `0.19.0`, no leading `v`)
+2. The workflow validates `Cargo.toml` version matches, confirms a CHANGELOG entry exists, extracts release notes, creates a GitHub release with tag `vX.Y.Z`, and builds the release binary
 
 ## Build & Development Commands
 
