@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Release workflow now auto-triggers on pushes to `main` that bump the `Cargo.toml` version, in addition to the existing manual `workflow_dispatch`. A new `detect` job compares the old and new versions and skips release if the version is unchanged, malformed, or the tag already exists.
+- Move CodeQL from GitHub default setup to an advanced workflow (`.github/workflows/codeql.yml`) so docs-only changes (`**/*.md`, `doc/**`, `LICENSE`) skip scans via `paths-ignore`. Scans still run weekly on schedule.
 
 ### Note
 
