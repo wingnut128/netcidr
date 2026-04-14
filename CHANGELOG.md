@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Release workflow now auto-triggers on pushes to `main` that bump the `Cargo.toml` version, in addition to the existing manual `workflow_dispatch`. A new `detect` job compares the old and new versions and skips release if the version is unchanged, malformed, or the tag already exists.
+
 ## [0.19.2] - 2026-04-13
 
 ### Fixed
