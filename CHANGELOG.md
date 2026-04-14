@@ -7,10 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.3] - 2026-04-13
+
+### Fixed
+
+- Bump Dockerfile base images to Alpine 3.23 (builder: `rust:1.94-alpine3.23`, runtime: `alpine:3.23`) to pick up patched `libssl3`, addressing CVE-2026-28387, CVE-2026-31790, CVE-2026-28388, and related openssl vulnerabilities reported by Snyk
+- Pin dashboard build image to `oven/bun:1-alpine` instead of the floating `oven/bun:alpine` tag
+
 ### Changed
 
 - Release workflow now auto-triggers on pushes to `main` that bump the `Cargo.toml` version, in addition to the existing manual `workflow_dispatch`. A new `detect` job compares the old and new versions and skips release if the version is unchanged, malformed, or the tag already exists.
 - Move CodeQL from GitHub default setup to an advanced workflow (`.github/workflows/codeql.yml`) so docs-only changes (`**/*.md`, `doc/**`, `LICENSE`) skip scans via `paths-ignore`. Scans still run weekly on schedule.
+
+### Note
+
+- `v0.19.2` was skipped because a release tag was previously published against an unrelated commit before the Dockerfile CVE patches landed. This release (`v0.19.3`) is the first tag that actually contains the libssl3 fixes.
 
 ## [0.19.2] - 2026-04-13
 
