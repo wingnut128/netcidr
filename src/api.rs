@@ -388,12 +388,22 @@ pub fn create_router(config: RouterConfig) -> Router {
     // `into_make_service_with_connect_info::<SocketAddr>()`.
     let router = if config.server.rate_limit_per_second > 0 {
         let replenish_ms = 1000u64 / config.server.rate_limit_per_second;
-        let governor_config = GovernorConfigBuilder::default()
+        match GovernorConfigBuilder::default()
             .per_millisecond(replenish_ms)
             .burst_size(config.server.rate_limit_burst)
             .finish()
-            .unwrap();
-        router.layer(GovernorLayer::new(governor_config))
+        {
+            Some(governor_config) => router.layer(GovernorLayer::new(governor_config)),
+            None => {
+                // burst_size = 0 makes the config invalid; disable rate limiting and warn.
+                warn!(
+                    rate_limit_per_second = config.server.rate_limit_per_second,
+                    rate_limit_burst = config.server.rate_limit_burst,
+                    "invalid rate limit config (burst_size must be > 0); rate limiting disabled"
+                );
+                router
+            }
+        }
     } else {
         router
     };
