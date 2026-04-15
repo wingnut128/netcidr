@@ -707,4 +707,3 @@ async fn ipam_batch_summary(
         Err(e) => ipam_error_response(e),
     }
 }
-
