@@ -470,6 +470,10 @@ impl IpamOps {
 
     /// Query the audit log.
     pub async fn query_audit(&self, filter: &AuditFilter) -> Result<Vec<AuditEntry>> {
+        // Validate filter fields — consistent with all other string inputs.
+        validation::validate_optional_identifier(&filter.entity_id)?;
+        validation::validate_optional_text(&filter.entity_type, 0)?;
+        validation::validate_optional_text(&filter.action, 0)?;
         self.store.query_audit(filter).await
     }
 
@@ -3004,5 +3008,90 @@ mod tests {
 
         let err = ops.batch_release(&request).await.unwrap_err();
         assert!(matches!(err, NetcidrError::InvalidInput(_)));
+    }
+
+    // -----------------------------------------------------------------------
+    // AuditFilter input validation (M3 fix)
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_query_audit_rejects_entity_id_with_path_traversal() {
+        let ops = test_ops().await;
+        let err = ops
+            .query_audit(&AuditFilter {
+                entity_id: Some("../etc/passwd".to_string()),
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(err, NetcidrError::InvalidInput(_)));
+    }
+
+    #[tokio::test]
+    async fn test_query_audit_rejects_entity_id_with_null_byte() {
+        let ops = test_ops().await;
+        let err = ops
+            .query_audit(&AuditFilter {
+                entity_id: Some("id\x00injected".to_string()),
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(err, NetcidrError::InvalidInput(_)));
+    }
+
+    #[tokio::test]
+    async fn test_query_audit_rejects_entity_type_with_control_char() {
+        let ops = test_ops().await;
+        let err = ops
+            .query_audit(&AuditFilter {
+                entity_type: Some("supernet\x01injected".to_string()),
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(err, NetcidrError::InvalidInput(_)));
+    }
+
+    #[tokio::test]
+    async fn test_query_audit_rejects_action_with_control_char() {
+        let ops = test_ops().await;
+        let err = ops
+            .query_audit(&AuditFilter {
+                action: Some("create\x07bell".to_string()),
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(err, NetcidrError::InvalidInput(_)));
+    }
+
+    #[tokio::test]
+    async fn test_query_audit_rejects_oversized_entity_type() {
+        let ops = test_ops().await;
+        let err = ops
+            .query_audit(&AuditFilter {
+                entity_type: Some("x".repeat(1025)),
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(err, NetcidrError::InputTooLong { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_query_audit_valid_filter_passes() {
+        let ops = test_ops().await;
+        // No entries, but valid filter should not error.
+        let entries = ops
+            .query_audit(&AuditFilter {
+                entity_type: Some("supernet".to_string()),
+                entity_id: Some("sn-abc123".to_string()),
+                action: Some("create_supernet".to_string()),
+                limit: Some(10),
+            })
+            .await
+            .unwrap();
+        assert!(entries.is_empty());
     }
 }

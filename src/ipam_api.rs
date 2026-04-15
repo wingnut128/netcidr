@@ -20,38 +20,56 @@ use crate::ipam::operations::IpamOps;
 // ---------------------------------------------------------------------------
 
 fn ipam_error_response(err: NetcidrError) -> Response {
-    let status = match &err {
+    let (status, client_msg) = match &err {
         NetcidrError::InvalidCidr(_)
         | NetcidrError::InvalidPrefixLength { .. }
         | NetcidrError::InvalidInput(_)
         | NetcidrError::InvalidSubnetSplit { .. }
         | NetcidrError::InvalidIpv4Address(_)
-        | NetcidrError::InvalidIpv6Address(_) => StatusCode::BAD_REQUEST,
+        | NetcidrError::InvalidIpv6Address(_) => (StatusCode::BAD_REQUEST, err.to_string()),
 
         NetcidrError::SupernetNotFound(_) | NetcidrError::AllocationNotFound(_) => {
-            StatusCode::NOT_FOUND
+            (StatusCode::NOT_FOUND, err.to_string())
         }
 
         NetcidrError::AllocationConflict { .. } | NetcidrError::SupernetHasActiveAllocations(_) => {
-            StatusCode::CONFLICT
+            (StatusCode::CONFLICT, err.to_string())
         }
 
-        NetcidrError::NoFreeSpace { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+        NetcidrError::NoFreeSpace { .. } => (StatusCode::UNPROCESSABLE_ENTITY, err.to_string()),
 
+        // DatabaseError: classify by content for status code, but never expose
+        // raw DB messages (table names, file paths, constraint names) to clients.
         NetcidrError::DatabaseError(msg)
             if msg.contains("not found") || msg.contains("No supernet") =>
         {
-            StatusCode::NOT_FOUND
+            tracing::error!(error = %err, "database error");
+            (StatusCode::NOT_FOUND, "not found".to_string())
         }
 
         NetcidrError::DatabaseError(msg) if msg.contains("overlap") || msg.contains("conflict") => {
-            StatusCode::CONFLICT
+            tracing::error!(error = %err, "database error");
+            (StatusCode::CONFLICT, "allocation conflict".to_string())
         }
 
-        _ => StatusCode::INTERNAL_SERVER_ERROR,
+        NetcidrError::DatabaseError(_) => {
+            tracing::error!(error = %err, "database error");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal server error".to_string(),
+            )
+        }
+
+        _ => {
+            tracing::error!(error = %err, "unexpected error");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal server error".to_string(),
+            )
+        }
     };
 
-    let body = serde_json::json!({ "error": err.to_string() });
+    let body = serde_json::json!({ "error": client_msg });
     (status, Json(body)).into_response()
 }
 
@@ -689,3 +707,4 @@ async fn ipam_batch_summary(
         Err(e) => ipam_error_response(e),
     }
 }
+

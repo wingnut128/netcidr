@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Cap audit log `LIMIT` at 10,000 and bind it as a typed parameter in both SQLite and Postgres backends, preventing a full-table-scan DoS via `u32::MAX` (closes #53)
+- Validate `AuditFilter` fields (`entity_type`, `entity_id`, `action`) through the shared validation layer before reaching the store, consistent with all other IPAM operations (closes #53)
+- Sanitize `DatabaseError` responses in the HTTP API: raw DB messages (table names, file paths, constraint names) are now logged internally and replaced with generic strings for clients (closes #53)
+- Replace `GovernorConfigBuilder::finish().unwrap()` with a `match` to avoid a startup panic when `rate_limit_burst = 0` is set alongside a non-zero `rate_limit_per_second` (closes #53)
+
 ## [0.19.3] - 2026-04-13
 
 ### Fixed

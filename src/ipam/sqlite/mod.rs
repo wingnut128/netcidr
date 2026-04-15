@@ -647,7 +647,10 @@ impl IpamStore for SqliteStore {
         sql.push_str(" ORDER BY id DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            // Cap to prevent full-table-scan DoS; bind as parameter to avoid interpolation.
+            let capped = limit.min(10_000);
+            sql.push_str(&format!(" LIMIT ?{}", idx));
+            param_values.push(Box::new(capped as i64));
         }
 
         let params_refs: Vec<&dyn rusqlite::types::ToSql> =
@@ -1099,5 +1102,68 @@ mod tests {
         // Verify roundtrip through get
         let fetched = store.get_allocation(&alloc.id).await.unwrap();
         assert_eq!(fetched.total_hosts, expected);
+    }
+
+    // -----------------------------------------------------------------------
+    // Audit LIMIT cap (M1 fix)
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_audit_limit_cap_returns_at_most_10000() {
+        let store = test_store().await;
+
+        // Insert 5 entries — enough to verify the cap doesn't break normal queries.
+        for i in 0..5 {
+            store
+                .append_audit(&AuditEntry {
+                    id: String::new(),
+                    entity_type: "supernet".to_string(),
+                    entity_id: format!("sn-{i}"),
+                    action: "create_supernet".to_string(),
+                    details: None,
+                    timestamp: "2026-01-01T00:00:00Z".to_string(),
+                })
+                .await
+                .unwrap();
+        }
+
+        // A limit larger than 10_000 must be silently capped — query must succeed.
+        let entries = store
+            .query_audit(&AuditFilter {
+                limit: Some(u32::MAX),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        // All 5 entries are returned (well within the cap).
+        assert_eq!(entries.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn test_audit_limit_respected() {
+        let store = test_store().await;
+
+        for i in 0..10 {
+            store
+                .append_audit(&AuditEntry {
+                    id: String::new(),
+                    entity_type: "supernet".to_string(),
+                    entity_id: format!("sn-{i}"),
+                    action: "create_supernet".to_string(),
+                    details: None,
+                    timestamp: "2026-01-01T00:00:00Z".to_string(),
+                })
+                .await
+                .unwrap();
+        }
+
+        let entries = store
+            .query_audit(&AuditFilter {
+                limit: Some(3),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(entries.len(), 3);
     }
 }

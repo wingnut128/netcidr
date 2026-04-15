@@ -637,13 +637,19 @@ impl IpamStore for PostgresStore {
 
         sql.push_str(" ORDER BY id DESC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
+        // Cap to prevent full-table-scan DoS. Applied after building the string
+        // params so the integer can be bound separately at the end.
+        let capped_limit: Option<i64> = filter.limit.map(|l| l.min(10_000) as i64);
+        if capped_limit.is_some() {
+            sql.push_str(&format!(" LIMIT ${idx}"));
         }
 
         let mut query = sqlx::query(&sql);
         for val in &param_values {
             query = query.bind(val);
+        }
+        if let Some(lim) = capped_limit {
+            query = query.bind(lim);
         }
 
         let rows = query
