@@ -386,27 +386,27 @@ pub fn create_router(config: RouterConfig) -> Router {
     // Per-IP rate limiting via tower-governor (disabled when rate_limit_per_second == 0).
     // Requires ConnectInfo<SocketAddr> — the server must use
     // `into_make_service_with_connect_info::<SocketAddr>()`.
-    let router = if config.server.rate_limit_per_second > 0 {
-        let replenish_ms = 1000u64 / config.server.rate_limit_per_second;
-        match GovernorConfigBuilder::default()
-            .per_millisecond(replenish_ms)
-            .burst_size(config.server.rate_limit_burst)
-            .finish()
-        {
-            Some(governor_config) => router.layer(GovernorLayer::new(governor_config)),
-            None => {
-                // burst_size = 0 makes the config invalid; disable rate limiting and warn.
-                warn!(
-                    rate_limit_per_second = config.server.rate_limit_per_second,
-                    rate_limit_burst = config.server.rate_limit_burst,
-                    "invalid rate limit config (burst_size must be > 0); rate limiting disabled"
-                );
-                router
+    let router =
+        if let Some(replenish_ms) = 1000u64.checked_div(config.server.rate_limit_per_second) {
+            match GovernorConfigBuilder::default()
+                .per_millisecond(replenish_ms)
+                .burst_size(config.server.rate_limit_burst)
+                .finish()
+            {
+                Some(governor_config) => router.layer(GovernorLayer::new(governor_config)),
+                None => {
+                    // burst_size = 0 makes the config invalid; disable rate limiting and warn.
+                    warn!(
+                        rate_limit_per_second = config.server.rate_limit_per_second,
+                        rate_limit_burst = config.server.rate_limit_burst,
+                        "invalid rate limit config (burst_size must be > 0); rate limiting disabled"
+                    );
+                    router
+                }
             }
-        }
-    } else {
-        router
-    };
+        } else {
+            router
+        };
 
     router
         .layer(cors)
