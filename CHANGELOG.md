@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Add top-level `permissions: contents: read` to `.github/workflows/release.yml` so the `detect` job runs with a least-privilege `GITHUB_TOKEN`. The `release` job retains its explicit `contents: write` override. Resolves CodeQL alert `actions/missing-workflow-permissions`.
+
 ### Fixed
 
 - Bump `rustls-webpki` to 0.103.12 to address RUSTSEC-2026-0098 (URI name constraint bypass) and RUSTSEC-2026-0099 (wildcard name constraint bypass)
