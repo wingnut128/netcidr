@@ -60,3 +60,6 @@ Thumbs.db
 
 # Project-specific
 SPEC_TEMPLATE.md
+
+# Local-only Claude Code instructions
+CLAUDE.local.md
