@@ -12,14 +12,14 @@ ARG FEATURES=default
 ARG WITH_DASHBOARD=true
 
 # ---------- Dashboard build (skipped when WITH_DASHBOARD=false) -----------
-FROM oven/bun:1-alpine AS dashboard-build
+FROM oven/bun:1-alpine@sha256:26d8996560ca94eab9ce48afc0c7443825553c9a851f40ae574d47d20906826d AS dashboard-build
 WORKDIR /app/dashboard
 COPY dashboard/package.json dashboard/bun.lock ./
 RUN bun install --frozen-lockfile
 COPY dashboard/ ./
 RUN bun run build
 
-FROM alpine:3.23 AS dashboard-false
+FROM alpine:3.23@sha256:5b10f432ef3da1b8d4c7eb6c487f2f5a8f096bc91145e68878dd4a5019afde11 AS dashboard-false
 RUN mkdir -p /app/dashboard/dist
 
 FROM dashboard-build AS dashboard-true
@@ -28,7 +28,7 @@ FROM dashboard-build AS dashboard-true
 FROM dashboard-${WITH_DASHBOARD} AS dashboard
 
 # ---------- Rust build ---------------------------------------------------
-FROM rust:1.94-alpine3.23 AS builder
+FROM rust:1.94-alpine3.23@sha256:77237dd363a0b127bb5ef532c2d64c0deb380b738e43a9c4bdac73398d6d0a08 AS builder
 
 ARG FEATURES
 
@@ -57,7 +57,7 @@ RUN touch src/main.rs && \
     cargo build --release --no-default-features --features "${FEATURES}"
 
 # ---------- Runtime -------------------------------------------------------
-FROM alpine:3.23
+FROM alpine:3.23@sha256:5b10f432ef3da1b8d4c7eb6c487f2f5a8f096bc91145e68878dd4a5019afde11
 
 RUN apk add --no-cache ca-certificates
 
