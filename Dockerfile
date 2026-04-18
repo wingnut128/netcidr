@@ -28,7 +28,7 @@ FROM dashboard-build AS dashboard-true
 FROM dashboard-${WITH_DASHBOARD} AS dashboard
 
 # ---------- Rust build ---------------------------------------------------
-FROM rust:1.94-alpine3.23@sha256:77237dd363a0b127bb5ef532c2d64c0deb380b738e43a9c4bdac73398d6d0a08 AS builder
+FROM rust:1.95-alpine3.23@sha256:606fd313a0f49743ee2a7bd49a0914bab7deedb12791f3a846a34a4711db7ed2 AS builder
 
 ARG FEATURES
 
