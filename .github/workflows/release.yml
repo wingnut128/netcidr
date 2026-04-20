@@ -128,7 +128,7 @@ jobs:
           echo "Release notes:"
           cat release_notes.md
 
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - uses: step-security/setup-bun@c2c3ca3b28b446447c25a2a39061f4bd64b729c8 # v2.1.2
       - name: Build dashboard
         run: cd dashboard && bun install --frozen-lockfile && bun run build
 
