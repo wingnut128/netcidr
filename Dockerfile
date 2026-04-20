@@ -12,7 +12,7 @@ ARG FEATURES=default
 ARG WITH_DASHBOARD=true
 
 # ---------- Dashboard build (skipped when WITH_DASHBOARD=false) -----------
-FROM oven/bun:1-alpine@sha256:26d8996560ca94eab9ce48afc0c7443825553c9a851f40ae574d47d20906826d AS dashboard-build
+FROM oven/bun:1-alpine@sha256:4de475389889577f346c636f956b42a5c31501b654664e9ae5726f94d7bb5349 AS dashboard-build
 WORKDIR /app/dashboard
 COPY dashboard/package.json dashboard/bun.lock ./
 RUN bun install --frozen-lockfile
