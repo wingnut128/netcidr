@@ -7,7 +7,7 @@
 /// Fork the current process into the background, write a PID file, and
 /// redirect output to a log file (or /dev/null).
 pub fn daemonize_process(pid_file: &str, log_file: Option<&str>) -> crate::error::Result<()> {
-    let mut daemon = daemonize::Daemonize::new().pid_file(pid_file);
+    let mut daemon = daemonize_me::Daemon::new().pid_file(pid_file, Some(false));
 
     if let Some(path) = log_file {
         let stdout = std::fs::OpenOptions::new()
