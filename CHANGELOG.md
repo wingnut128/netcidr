@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - Add top-level `permissions: contents: read` to `.github/workflows/release.yml` so the `detect` job runs with a least-privilege `GITHUB_TOKEN`. The `release` job retains its explicit `contents: write` override. Resolves CodeQL alert `actions/missing-workflow-permissions`.
+- Drop top-level permissions in `.github/workflows/dependabot-automerge.yml` to `contents: read` + `pull-requests: read`. The auto-merge step uses `DEPENDABOT_PAT`, so the workflow's `GITHUB_TOKEN` does not need write access. Resolves Scorecard `TokenPermissionsID` alert (#68).
 
 ### Fixed
 
