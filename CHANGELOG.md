@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Bump `rustls-webpki` to 0.103.12 to address RUSTSEC-2026-0098 (URI name constraint bypass) and RUSTSEC-2026-0099 (wildcard name constraint bypass)
+- Bump `rustls-webpki` to 0.103.13 to address RUSTSEC-2026-0104 (reachable panic in certificate revocation list parsing). Supersedes the earlier 0.103.12 bump for RUSTSEC-2026-0098/0099.
 - Cap audit log `LIMIT` at 10,000 and bind it as a typed parameter in both SQLite and Postgres backends, preventing a full-table-scan DoS via `u32::MAX` (closes #53)
 - Validate `AuditFilter` fields (`entity_type`, `entity_id`, `action`) through the shared validation layer before reaching the store, consistent with all other IPAM operations (closes #53)
 - Sanitize `DatabaseError` responses in the HTTP API: raw DB messages (table names, file paths, constraint names) are now logged internally and replaced with generic strings for clients (closes #53)
