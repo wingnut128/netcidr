@@ -1,0 +1,108 @@
+name: Image Scan
+
+on:
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - 'Cargo.lock'
+      - '.github/workflows/image-scan.yml'
+  schedule:
+    # Weekly drift scan, Mondays 12:00 UTC
+    - cron: '0 12 * * 1'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Build + Grype + SBOM
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # for SARIF upload
+      id-token: write        # for attestations (release only)
+      attestations: write    # for attestations (release only)
+      issues: write          # for cron issue creation
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Build image
+        run: docker build -t netcidr:scan .
+
+      - name: Generate SBOM (CycloneDX)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: netcidr:scan
+          format: cyclonedx-json
+          output-file: sbom.cyclonedx.json
+          upload-artifact: true
+          upload-artifact-retention: 90
+
+      - name: Generate SBOM (SPDX)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: netcidr:scan
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: true
+          upload-artifact-retention: 90
+
+      - name: Scan image with Grype
+        id: grype
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          image: netcidr:scan
+          fail-build: ${{ github.event_name == 'pull_request' }}
+          severity-cutoff: high
+          only-fixed: true
+          output-format: sarif
+
+      - name: Upload SARIF to code-scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@ce64ddcb0d8d890d2df4a9d1c04ff297367dea2a # v3.35.2
+        with:
+          sarif_file: ${{ steps.grype.outputs.sarif }}
+          category: grype-image-scan
+
+      # ---- Release-only: attach + attest SBOMs ----
+      - name: Attest SBOM (CycloneDX)
+        if: github.event_name == 'release'
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: sbom.cyclonedx.json
+          sbom-path: sbom.cyclonedx.json
+
+      - name: Upload SBOMs to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            sbom.cyclonedx.json sbom.spdx.json --clobber
+
+      # ---- Cron-only: open/update drift tracking issue ----
+      - name: Open drift-tracking issue
+        if: github.event_name == 'schedule' && steps.grype.outputs.vulnerabilities != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          TITLE="Weekly image scan: new fixable CVEs detected"
+          BODY="Weekly Grype drift scan found fixable HIGH/CRITICAL CVEs in the built image. See the [workflow run]($RUN_URL) for the SARIF report. Bump the Chainguard digests in \`Dockerfile\` to pick up patched base images."
+          EXISTING=$(gh issue list --label image-scan-drift --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+          else
+            gh issue create --title "$TITLE" --body "$BODY" --label image-scan-drift
+          fi
