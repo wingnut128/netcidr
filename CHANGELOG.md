@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replace the unmaintained `daemonize` crate with the actively maintained `daemonize-me` 2.x fork. Resolves RUSTSEC-2025-0069. No user-visible change — `--daemonize` behavior is preserved.
 - New `.github/workflows/pin-check.yml` fails PRs that add tag-pinned GitHub Actions (e.g., `@v1` or `@main`). All `uses:` lines must be 40-char commit SHAs. Defense-in-depth against action-tag force-push attacks (c.f. aquasecurity/trivy-action, March 2026).
 
+### Removed
+
+- Removed `.github/workflows/dependency-review.yml` — redundant with `cargo-audit` (RUSTSEC DB, runs in CI) and Dependabot alerts (GHSA DB). Dropping this workflow reduces CI cost without reducing coverage. Dependabot still covers the cargo, npm, github-actions, and docker ecosystems.
+
 ### Fixed
 
 - Bump `rustls-webpki` to 0.103.13 to address RUSTSEC-2026-0104 (reachable panic in certificate revocation list parsing). Supersedes the earlier 0.103.12 bump for RUSTSEC-2026-0098/0099.
