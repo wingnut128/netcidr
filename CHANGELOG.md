@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add top-level `permissions: contents: read` to `.github/workflows/release.yml` so the `detect` job runs with a least-privilege `GITHUB_TOKEN`. The `release` job retains its explicit `contents: write` override. Resolves CodeQL alert `actions/missing-workflow-permissions`.
 - Drop top-level permissions in `.github/workflows/dependabot-automerge.yml` to `contents: read` + `pull-requests: read`. The auto-merge step uses `DEPENDABOT_PAT`, so the workflow's `GITHUB_TOKEN` does not need write access. Resolves Scorecard `TokenPermissionsID` alert (#68).
 - Replace the unmaintained `daemonize` crate with the actively maintained `daemonize-me` 2.x fork. Resolves RUSTSEC-2025-0069. No user-visible change — `--daemonize` behavior is preserved.
+- New `.github/workflows/pin-check.yml` fails PRs that add tag-pinned GitHub Actions (e.g., `@v1` or `@main`). All `uses:` lines must be 40-char commit SHAs. Defense-in-depth against action-tag force-push attacks (c.f. aquasecurity/trivy-action, March 2026).
 
 ### Fixed
 
