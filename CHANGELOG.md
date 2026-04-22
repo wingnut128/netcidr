@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - New `.github/workflows/image-scan.yml` — builds the Docker image on PRs touching `Dockerfile`/`Cargo.lock` and scans with Grype + Syft. Generates CycloneDX + SPDX SBOMs. Weekly cron detects new fixable CVEs in pinned base images and opens a tracking issue. Release events attach signed SBOM attestations via Sigstore (keyless — no signing keys required).
+- Release binaries now carry Sigstore-signed build provenance (`actions/attest-build-provenance`). Consumers verify with `gh attestation verify <binary> --owner wingnut128`. No signing keys — uses GitHub OIDC + Fulcio + Rekor.
 
 ### Changed
 
