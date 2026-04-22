@@ -2,13 +2,12 @@ name: Release
 
 on:
   push:
-    branches: [main]
-    paths:
-      - Cargo.toml
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
-      release_version:
-        description: "Release version (e.g. 0.15.0, no leading v)"
+      tag:
+        description: "Existing tag to build (e.g. v0.19.4)"
         required: true
         type: string
 
@@ -16,75 +15,22 @@ permissions:
   contents: read
 
 jobs:
-  detect:
-    name: Detect version bump
-    runs-on: ubuntu-latest
-    outputs:
-      release_version: ${{ steps.out.outputs.release_version }}
-      should_release: ${{ steps.out.outputs.should_release }}
-    steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
-        with:
-          egress-policy: audit
-
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 2
-
-      - id: out
-        name: Decide whether to release
-        run: |
-          set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VER="${{ inputs.release_version }}"
-            echo "release_version=$VER" >> "$GITHUB_OUTPUT"
-            echo "should_release=true" >> "$GITHUB_OUTPUT"
-            echo "Manual dispatch: releasing $VER"
-            exit 0
-          fi
-
-          NEW=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-          OLD=$(git show HEAD~1:Cargo.toml 2>/dev/null | grep '^version' | head -1 | sed 's/.*"\(.*\)".*/\1/' || echo "")
-
-          if [ "$NEW" = "$OLD" ]; then
-            echo "Cargo.toml version unchanged ($NEW); skipping release."
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if ! echo "$NEW" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "Version '$NEW' is not X.Y.Z; skipping release."
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if git ls-remote --tags origin "refs/tags/v$NEW" | grep -q "refs/tags/v$NEW"; then
-            echo "Tag v$NEW already exists on origin; skipping release."
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "Detected version bump: $OLD -> $NEW; releasing."
-          echo "release_version=$NEW" >> "$GITHUB_OUTPUT"
-          echo "should_release=true" >> "$GITHUB_OUTPUT"
-
-  release:
-    name: Build and Release
-    needs: detect
-    if: needs.detect.outputs.should_release == 'true'
+  build:
+    name: Build and attach binary
     runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
-      RELEASE_VERSION: ${{ needs.detect.outputs.release_version }}
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
         with:
           egress-policy: audit
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
@@ -97,36 +43,21 @@ jobs:
           key: release-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: release-${{ runner.os }}-
 
-      - name: Validate version format
+      - name: Validate tag format
         run: |
-          if ! echo "$RELEASE_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "ERROR: Invalid version format. Expected X.Y.Z (e.g. 0.15.0)"
+          if ! echo "$RELEASE_TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "ERROR: tag '$RELEASE_TAG' is not vX.Y.Z"
             exit 1
           fi
 
-      - name: Validate Cargo.toml version matches
+      - name: Validate Cargo.toml version matches tag
         run: |
+          VERSION="${RELEASE_TAG#v}"
           CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-          if [ "$CARGO_VERSION" != "$RELEASE_VERSION" ]; then
-            echo "ERROR: Cargo.toml version ($CARGO_VERSION) does not match release version ($RELEASE_VERSION)"
+          if [ "$CARGO_VERSION" != "$VERSION" ]; then
+            echo "ERROR: Cargo.toml version ($CARGO_VERSION) does not match tag ($VERSION)"
             exit 1
           fi
-
-      - name: Validate CHANGELOG entry exists
-        run: |
-          if ! grep -q "^## \[$RELEASE_VERSION\]" CHANGELOG.md; then
-            echo "ERROR: CHANGELOG.md has no entry for version $RELEASE_VERSION"
-            exit 1
-          fi
-
-      - name: Extract release notes
-        id: notes
-        run: |
-          awk -v ver="$RELEASE_VERSION" \
-            '/^## \[/{if($0 ~ "\\[" ver "\\]"){found=1; next} else if(found) exit} found{print}' \
-            CHANGELOG.md > release_notes.md
-          echo "Release notes:"
-          cat release_notes.md
 
       - uses: step-security/setup-bun@c2c3ca3b28b446447c25a2a39061f4bd64b729c8 # v2.1.2
       - name: Build dashboard
@@ -135,12 +66,13 @@ jobs:
       - name: Build release binary
         run: cargo build --release
 
-      - name: Create GitHub Release
+      - name: Upload binary and publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "v$RELEASE_VERSION" \
-            --title "netcidr v$RELEASE_VERSION" \
-            --notes-file release_notes.md \
-            --target main \
-            target/release/netcidr
+          set -euo pipefail
+          # release-plz created the release as a draft. Attach the
+          # binary, then flip it to non-draft.
+          gh release upload "$RELEASE_TAG" target/release/netcidr --clobber
+          gh release edit "$RELEASE_TAG" --draft=false

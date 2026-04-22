@@ -1,0 +1,21 @@
+[workspace]
+# Set to true only when ready to publish to crates.io (also add
+# CARGO_REGISTRY_TOKEN secret). Current behavior: GitHub Release only.
+publish = false
+# Create the tag and GitHub Release when the Release PR merges.
+git_release_enable = true
+git_tag_enable = true
+changelog_update = true
+# Create release as draft so the binary-build workflow can attach
+# artifacts before the release goes public. The publish workflow flips
+# it to non-draft after upload.
+git_release_draft = true
+
+[changelog]
+header = """# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+"""
