@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- New `.github/workflows/image-scan.yml` — builds the Docker image on PRs touching `Dockerfile`/`Cargo.lock` and scans with Grype + Syft. Generates CycloneDX + SPDX SBOMs. Weekly cron detects new fixable CVEs in pinned base images and opens a tracking issue. Release events attach signed SBOM attestations via Sigstore (keyless — no signing keys required).
+
 ### Changed
 
 - Migrate Dockerfile runtime to Chainguard's distroless `cgr.dev/chainguard/static` image (digest-pinned), producing a statically-linked musl binary on a near-zero-CVE rootfs. The Alpine-based Rust builder is retained because Chainguard's `rust:latest-dev` does not ship a musl `rust-std` target; the builder stage now also installs `curl`, which the `utoipa-swagger-ui` build script requires.
