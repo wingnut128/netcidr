@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Migrate Dockerfile runtime to Chainguard's distroless `cgr.dev/chainguard/static` image (digest-pinned). Produces a statically-linked musl binary on a near-zero-CVE runtime. The Alpine-based Rust builder is retained because Chainguard's `rust:latest-dev` does not ship a musl `rust-std` target. Image has no shell; container-level `HEALTHCHECK` is removed — orchestrators (Kubernetes probe, docker-compose TCP/HTTP probe on `:8080/health`) now own health checking. The builder stage also installs `curl`, which is required by the `utoipa-swagger-ui` build script.
+- Migrate Dockerfile runtime to Chainguard's distroless `cgr.dev/chainguard/static` image (digest-pinned), producing a statically-linked musl binary on a near-zero-CVE rootfs. The Alpine-based Rust builder is retained because Chainguard's `rust:latest-dev` does not ship a musl `rust-std` target; the builder stage now also installs `curl`, which the `utoipa-swagger-ui` build script requires.
+- Remove the container-level `HEALTHCHECK` directive — the distroless runtime has no shell, so in-container probes are delegated to the orchestrator (Kubernetes `httpGet` probe or a host-run check against `/health`).
+- Rework the README Docker section for the shell-less runtime: docker-compose ordering now uses `depends_on: { condition: service_started }` plus a host-run `curl http://localhost:8080/health`, with a Kubernetes `httpGet` probe snippet as the production-grade example.
 
 ### Security
 
