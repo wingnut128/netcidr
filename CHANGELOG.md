@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Migrate Dockerfile runtime to Chainguard's distroless `cgr.dev/chainguard/static` image (digest-pinned), producing a statically-linked musl binary on a near-zero-CVE rootfs. The Alpine-based Rust builder is retained because Chainguard's `rust:latest-dev` does not ship a musl `rust-std` target; the builder stage now also installs `curl`, which the `utoipa-swagger-ui` build script requires.
+- Remove the container-level `HEALTHCHECK` directive — the distroless runtime has no shell, so in-container probes are delegated to the orchestrator (Kubernetes `httpGet` probe or a host-run check against `/health`).
+- Rework the README Docker section for the shell-less runtime: docker-compose ordering now uses `depends_on: { condition: service_started }` plus a host-run `curl http://localhost:8080/health`, with a Kubernetes `httpGet` probe snippet as the production-grade example.
+
 ### Security
 
 - Add top-level `permissions: contents: read` to `.github/workflows/release.yml` so the `detect` job runs with a least-privilege `GITHUB_TOKEN`. The `release` job retains its explicit `contents: write` override. Resolves CodeQL alert `actions/missing-workflow-permissions`.
