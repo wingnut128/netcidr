@@ -80,6 +80,13 @@ jobs:
           subject-path: sbom.cyclonedx.json
           sbom-path: sbom.cyclonedx.json
 
+      - name: Attest SBOM (SPDX)
+        if: github.event_name == 'release'
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: sbom.spdx.json
+          sbom-path: sbom.spdx.json
+
       - name: Upload SBOMs to release
         if: github.event_name == 'release'
         env:
@@ -91,8 +98,20 @@ jobs:
             sbom.cyclonedx.json sbom.spdx.json --clobber
 
       # ---- Cron-only: open/update drift tracking issue ----
+      - name: Check for Grype findings
+        id: grype-findings
+        if: github.event_name == 'schedule'
+        env:
+          SARIF_PATH: ${{ steps.grype.outputs.sarif }}
+        run: |
+          if [ -f "$SARIF_PATH" ] && jq -e '[.runs[].results[]] | length > 0' "$SARIF_PATH" >/dev/null; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Open drift-tracking issue
-        if: github.event_name == 'schedule' && steps.grype.outputs.vulnerabilities != ''
+        if: github.event_name == 'schedule' && steps.grype-findings.outputs.found == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
