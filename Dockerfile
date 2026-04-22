@@ -1,12 +1,17 @@
 # syntax=docker/dockerfile:1
 #
 # Build args:
-#   FEATURES  - Cargo feature flags (default: "default" which includes swagger + dashboard)
+#   FEATURES       - Cargo feature flags (default: "default" which includes swagger + dashboard)
+#   WITH_DASHBOARD - "true" builds the React dashboard; "false" skips it (default: true)
 #
 # Examples:
 #   docker build .                                          # full build with dashboard
 #   docker build --build-arg FEATURES=swagger .             # no dashboard
 #   docker build --build-arg FEATURES="" .                  # slim: no swagger, no dashboard
+#
+# Runtime is Chainguard's distroless `static` image: no shell, no package manager,
+# minimal CVE surface. Because there is no shell, HEALTHCHECK is delegated to the
+# orchestrator (Kubernetes probe, docker-compose healthcheck with TCP probe, etc.).
 #
 ARG FEATURES=default
 ARG WITH_DASHBOARD=true
@@ -19,7 +24,9 @@ RUN bun install --frozen-lockfile
 COPY dashboard/ ./
 RUN bun run build
 
-FROM alpine:3.23@sha256:5b10f432ef3da1b8d4c7eb6c487f2f5a8f096bc91145e68878dd4a5019afde11 AS dashboard-false
+# When dashboards are disabled, use the same Rust builder image to create an empty
+# placeholder directory. Chainguard/static has no shell, so we can't `mkdir` there.
+FROM rust:1.95-alpine3.23@sha256:606fd313a0f49743ee2a7bd49a0914bab7deedb12791f3a846a34a4711db7ed2 AS dashboard-false
 RUN mkdir -p /app/dashboard/dist
 
 FROM dashboard-build AS dashboard-true
@@ -28,11 +35,17 @@ FROM dashboard-build AS dashboard-true
 FROM dashboard-${WITH_DASHBOARD} AS dashboard
 
 # ---------- Rust build ---------------------------------------------------
+# Alpine's official Rust image produces a fully statically-linked musl binary.
+# Chainguard's `rust:latest-dev` (Wolfi) does not ship a musl rust-std target,
+# so we keep Alpine for the build stage and rely on Chainguard only for the
+# runtime — the artifact copied into the final image is what matters for CVE
+# surface.
 FROM rust:1.95-alpine3.23@sha256:606fd313a0f49743ee2a7bd49a0914bab7deedb12791f3a846a34a4711db7ed2 AS builder
 
 ARG FEATURES
 
-RUN apk add --no-cache musl-dev
+# musl-dev: static linking; curl: required by utoipa-swagger-ui build script
+RUN apk add --no-cache musl-dev curl
 
 WORKDIR /app
 
@@ -57,23 +70,21 @@ RUN touch src/main.rs && \
     cargo build --release --no-default-features --features "${FEATURES}"
 
 # ---------- Runtime -------------------------------------------------------
-FROM alpine:3.23@sha256:5b10f432ef3da1b8d4c7eb6c487f2f5a8f096bc91145e68878dd4a5019afde11
-
-RUN apk add --no-cache ca-certificates
-
-RUN addgroup -g 1000 netcidr && \
-    adduser -u 1000 -G netcidr -s /bin/sh -D netcidr
-
-WORKDIR /app
+# cgr.dev/chainguard/static:latest — distroless, nonroot by default, CA bundle
+# bundled at /etc/ssl/certs/ca-certificates.crt, no shell, no package manager.
+FROM cgr.dev/chainguard/static@sha256:1f14279403150757d801f6308bb0f4b816b162fddce10b9bd342f10adc3cf7fa
 
 COPY --from=builder /app/target/release/netcidr /usr/local/bin/netcidr
 
-USER netcidr
+WORKDIR /app
+
+# Chainguard/static runs as uid 65532 (nonroot) by default.
+USER nonroot
 
 EXPOSE 8080
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD wget -qO- http://localhost:8080/health || exit 1
+# No HEALTHCHECK: the distroless runtime has no shell. Delegate to the
+# orchestrator (Kubernetes probe, docker-compose TCP/HTTP probe on :8080/health).
 
 ENTRYPOINT ["netcidr"]
 CMD ["--help"]

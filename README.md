@@ -565,6 +565,24 @@ docker run --rm netcidr 192.168.1.0/24
 docker run --rm -p 8080:8080 netcidr serve --address 0.0.0.0
 ```
 
+The runtime image is [Chainguard's distroless `static`](https://images.chainguard.dev/directory/image/static) base:
+a statically-linked musl binary on a near-zero-CVE rootfs with **no shell and no package manager**. Because
+there is no shell, the Dockerfile does **not** declare a `HEALTHCHECK`. Health checking is delegated to the
+orchestrator — for example, a Kubernetes probe or docker-compose healthcheck using a TCP probe on `:8080` or an
+HTTP probe against `/health`:
+
+```yaml
+# docker-compose excerpt
+services:
+  netcidr:
+    image: netcidr:latest
+    ports: ["8080:8080"]
+    healthcheck:
+      test: ["CMD-SHELL", "exit 0"]  # placeholder; use an external TCP/HTTP probe instead
+```
+
+For Kubernetes, use `httpGet` against `/health` on port 8080 for both liveness and readiness.
+
 ## Development
 
 ```bash

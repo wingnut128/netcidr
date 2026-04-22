@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Migrate Dockerfile runtime to Chainguard's distroless `cgr.dev/chainguard/static` image (digest-pinned). Produces a statically-linked musl binary on a near-zero-CVE runtime. The Alpine-based Rust builder is retained because Chainguard's `rust:latest-dev` does not ship a musl `rust-std` target. Image has no shell; container-level `HEALTHCHECK` is removed — orchestrators (Kubernetes probe, docker-compose TCP/HTTP probe on `:8080/health`) now own health checking. The builder stage also installs `curl`, which is required by the `utoipa-swagger-ui` build script.
+
 ### Security
 
 - Add top-level `permissions: contents: read` to `.github/workflows/release.yml` so the `detect` job runs with a least-privilege `GITHUB_TOKEN`. The `release` job retains its explicit `contents: write` override. Resolves CodeQL alert `actions/missing-workflow-permissions`.
