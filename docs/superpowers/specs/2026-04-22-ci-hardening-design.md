@@ -21,13 +21,15 @@ Once this lands end-to-end on netcidr, the same templates should graduate into t
 - Enforce SHA-pinning of all GitHub Actions on every PR.
 - Reduce base-image CVE surface by migrating to Chainguard images.
 - Emit a signed, verifiable SBOM with each release.
+- Emit signed, verifiable build provenance for each release binary.
 - Rationalize overlapping dep-scanning tools.
 - Codify all of the above into `repo-bootstrap` templates.
 
 ## Non-goals
 
-- Cosign/sigstore binary signing (separate spec).
-- Full SLSA provenance attestation for release binaries (separate spec).
+- Full SLSA L3 compliance (hermetic builds, reproducible builds — separate spec).
+- Long-lived cosign signing keys (explicitly avoided in favor of keyless Sigstore).
+- Container image signing (netcidr does not publish container images).
 - Semgrep-vs-CodeQL redundancy audit (tracked as a follow-up issue — needs 6 months of findings data to decide correctly).
 - Migration off GitHub-hosted runners / self-hosted runner firewalling.
 
@@ -56,6 +58,17 @@ Single workflow, three triggers:
   - Generate signed attestation via `actions/attest-sbom@<sha>` using GitHub OIDC — no key management.
 
 Actions used (all SHA-pinned): `anchore/sbom-action`, `anchore/scan-action`, `actions/upload-artifact`, `actions/attest-sbom`.
+
+### 2a. Release binary provenance
+
+In the existing `release.yml` release job (after binary tarballs are built, before `gh release upload`):
+
+- `actions/attest-build-provenance@<sha>` pointed at the built tarball(s). Same keyless Sigstore flow as `attest-sbom` — OIDC → Fulcio → Rekor.
+- Requires `permissions: id-token: write` + `attestations: write` on the release job (already needed for SBOM attestation in step 2).
+- Consumers verify with `gh attestation verify <tarball> --owner wingnut128`.
+- No key management. No rotation. Verifies the exact workflow run + repo + ref that produced the binary.
+
+Graduated into `repo-bootstrap` as part of the release-workflow template.
 
 ### 3. Action pin enforcement (`.github/workflows/pin-check.yml`)
 
