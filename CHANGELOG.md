@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Drop top-level permissions in `.github/workflows/dependabot-automerge.yml` to `contents: read` + `pull-requests: read`. The auto-merge step uses `DEPENDABOT_PAT`, so the workflow's `GITHUB_TOKEN` does not need write access. Resolves Scorecard `TokenPermissionsID` alert (#68).
 - Replace the unmaintained `daemonize` crate with the actively maintained `daemonize-me` 2.x fork. Resolves RUSTSEC-2025-0069. No user-visible change — `--daemonize` behavior is preserved.
 - New `.github/workflows/pin-check.yml` fails PRs that add tag-pinned GitHub Actions (e.g., `@v1` or `@main`). All `uses:` lines must be 40-char commit SHAs. Defense-in-depth against action-tag force-push attacks (c.f. aquasecurity/trivy-action, March 2026).
+- Drop `paths:` filter from `.github/workflows/pin-check.yml` so the check runs on every PR. Makes pin-check safe to mark as a required status check — with a `paths:` filter, GitHub leaves unrelated PRs in a permanent "expected — waiting for status" state and blocks merge. The check runs in ~20s so always-on has negligible cost.
 
 ### Removed
 
