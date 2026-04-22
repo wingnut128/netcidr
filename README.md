@@ -43,6 +43,25 @@ The binary will be at `target/release/netcidr`.
 cargo install --path .
 ```
 
+## Verifying release artifacts
+
+Starting with the first post-2026-04-22 release, the `netcidr` binary and the container image SBOMs are signed with [Sigstore](https://www.sigstore.dev/) via GitHub's keyless attestation flow — no public keys to manage.
+
+Verify a downloaded binary:
+
+```bash
+gh attestation verify netcidr --owner wingnut128
+```
+
+Verify the SBOM attached to a release:
+
+```bash
+gh release download vX.Y.Z --pattern 'sbom.cyclonedx.json'
+gh attestation verify sbom.cyclonedx.json --owner wingnut128
+```
+
+Requires `gh` 2.50+.
+
 ## Usage
 
 ### Subnet Calculation
