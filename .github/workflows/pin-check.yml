@@ -1,3 +1,12 @@
+# ===================================================================
+# Pin Check — fails PRs that introduce tag-pinned GitHub Actions.
+#
+# Defense-in-depth against action-tag force-push attacks
+# (e.g., aquasecurity/trivy-action, March 2026).
+#
+# Note: runs on every PR (not just workflow-touching ones) so it can
+# serve as a required status check without hanging unrelated PRs.
+# ===================================================================
 name: Pin Check
 
 on:
@@ -18,8 +27,18 @@ jobs:
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Run pinact
-        uses: suzuki-shunsuke/pinact-action@cf51507d80d4d6522a07348e3d58790290eaf0b6 # v2.0.0
-        with:
-          skip_push: true
-          fail_on_diff: true
+      - name: Verify all actions pinned by SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Find every `uses: owner/repo@ref` (excluding local `./` and docker:// refs)
+          # and fail if ref isn't a 40-char lowercase hex SHA. Inline commit comments
+          # like `# v1.2.3` are preserved by GitHub's parser and ignored here.
+          violations=$(grep -rHnE '^\s*-?\s*uses:\s*[^./@[:space:]][^@[:space:]]*@[^[:space:]#]+' .github/ \
+            | grep -vE '@[0-9a-f]{40}([[:space:]]|#|$)' || true)
+          if [ -n "$violations" ]; then
+            echo "::error::Actions must be pinned by 40-char commit SHA, not tag/branch:"
+            echo "$violations"
+            exit 1
+          fi
+          echo "All actions SHA-pinned."
