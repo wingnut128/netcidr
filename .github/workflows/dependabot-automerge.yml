@@ -4,8 +4,8 @@ on:
   pull_request:
 
 permissions:
-  contents: read
-  pull-requests: read
+  contents: write
+  pull-requests: write
 
 jobs:
   automerge:
@@ -29,4 +29,4 @@ jobs:
         run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.DEPENDABOT_PAT }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
