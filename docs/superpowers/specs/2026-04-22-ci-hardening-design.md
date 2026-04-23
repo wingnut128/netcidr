@@ -101,7 +101,7 @@ After all of 1–5 land and prove out on netcidr, graduate into `~/.claude/skill
 
 Order matters — later steps depend on earlier ones producing a clean signal:
 
-1. **Dockerfile → Chainguard** (one PR). Audit runtime deps, pick base, migrate, verify `make release` + smoke-test the built binary.
+1. **Dockerfile → Chainguard** (one PR). Audit runtime deps, pick base, migrate, verify `just release` + smoke-test the built binary.
 2. **`image-scan.yml`** (one PR). Lands with near-zero findings thanks to step 1 — proves the pipeline works rather than drowning in Alpine noise.
 3. **`pin-check.yml`** (one PR). Small, independent.
 4. **Drop `dependency-review.yml` + verify Dependabot config** (one PR).
