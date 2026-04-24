@@ -35,7 +35,7 @@ export function IpamSearch({
               onKeyDown={(e) => e.key === "Enter" && onFindIp(ip.trim())}
             />
             <button
-              className="font-mono text-[10px] font-bold uppercase px-3 py-1 border-2 border-cyan text-cyan hover:bg-cyan hover:text-bg transition-colors"
+              className="font-mono text-[10px] font-bold uppercase px-3 min-h-[44px] md:min-h-0 md:py-1 border-2 border-cyan text-cyan hover:bg-cyan hover:text-bg transition-colors"
               onClick={() => onFindIp(ip.trim())}
             >
               FIND
@@ -58,7 +58,7 @@ export function IpamSearch({
               }
             />
             <button
-              className="font-mono text-[10px] font-bold uppercase px-3 py-1 border-2 border-cyan text-cyan hover:bg-cyan hover:text-bg transition-colors"
+              className="font-mono text-[10px] font-bold uppercase px-3 min-h-[44px] md:min-h-0 md:py-1 border-2 border-cyan text-cyan hover:bg-cyan hover:text-bg transition-colors"
               onClick={() => onFindResource(resource.trim())}
             >
               FIND

@@ -102,17 +102,17 @@ export function Visualizer() {
       <ErrorBanner message={error} onDismiss={() => setError(null)} />
 
       <Panel title="Input">
-        <div className="flex gap-3">
+        <div className="flex flex-col sm:flex-row gap-3">
           <input
             type="text"
-            className="flex-1 font-mono text-[13px] px-3 py-2 bg-bg border-2 border-border text-text outline-none focus:border-cyan"
+            className="w-full sm:flex-1 font-mono text-[13px] px-3 py-2 bg-bg border-2 border-border text-text outline-none focus:border-cyan"
             placeholder="e.g. 10.0.0.0/16"
             value={cidr}
             onChange={(e) => setCidr(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && doVisualize()}
           />
           <button
-            className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] px-4 py-2 border-2 border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
+            className="w-full sm:w-auto font-mono text-[11px] font-bold uppercase tracking-[0.1em] px-4 min-h-[44px] md:min-h-0 md:py-2 border-2 border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
             onClick={doVisualize}
           >
             VISUALIZE

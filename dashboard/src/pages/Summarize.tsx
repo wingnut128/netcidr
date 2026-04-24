@@ -59,7 +59,7 @@ export function Summarize() {
           onChange={(e) => setInput(e.target.value)}
         />
         <button
-          className="mt-3 font-mono text-[11px] font-bold uppercase tracking-[0.1em] px-4 py-2 border-2 border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
+          className="mt-3 w-full sm:w-auto font-mono text-[11px] font-bold uppercase tracking-[0.1em] px-4 min-h-[44px] md:min-h-0 md:py-2 border-2 border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
           onClick={doSummarize}
         >
           SUMMARIZE

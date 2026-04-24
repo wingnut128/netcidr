@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Dashboard is now usable on mobile devices. The sidebar collapses into a slide-in drawer below the `md` (768px) breakpoint, with a sticky top bar and hamburger toggle. Backdrop tap and route changes close the drawer.
+- IPAM supernet and allocation tables render as stacked cards on narrow screens, preserving full information without horizontal scroll. Desktop `md:`+ retains the original table layout.
+
+### Changed
+
+- All primary action buttons and row actions enforce a 44px minimum touch target on mobile while keeping their compact desktop sizing.
+- Page input forms (Calculator, Splitter, Contains, From Range, Visualizer, Summarize) stack vertically on small viewports instead of overflowing.
+- Dropped hard `min-w` constraints on allocation filter inputs; they now fill width on mobile and restore their desktop sizing from `sm:`+.
+- Text inputs, selects, and textareas use 16px font-size on mobile to prevent iOS Safari auto-zoom on focus.
+- Main content padding is tighter on mobile (`p-4`) and expands to `p-6` on `md:`+.
+
 ## [0.20.0] - 2026-04-23
 
 ### Added

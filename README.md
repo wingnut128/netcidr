@@ -17,7 +17,7 @@ A fast IPv4 and IPv6 subnet calculator written in Rust. Available as a CLI tool,
 - **Batch processing**: process multiple CIDRs via positional arguments, `--stdin`, or the `POST /batch` API endpoint
 - **Multiple output formats**: JSON (default), plain text, CSV, and YAML
 - **File output**: write results directly to a file
-- **Web dashboard**: Full SPA at `http://localhost:8080/` with subnet calculator, splitter, contains check, summarize, from-range, IPAM dashboard, and subnet visualizer — served automatically when running `netcidr serve`
+- **Web dashboard**: Full SPA at `http://localhost:8080/` with subnet calculator, splitter, contains check, summarize, from-range, IPAM dashboard, and subnet visualizer — served automatically when running `netcidr serve`. Responsive on mobile: the sidebar collapses into a slide-in drawer, IPAM tables render as cards on narrow viewports, and inputs are sized to avoid iOS zoom-on-focus.
 - **HTTP API**: REST endpoints for all calculations
 - **OpenAPI documentation**: Machine-readable API specification for easy integration with tools like Swagger Editor, Postman, and Insomnia
 - **MCP server**: [Model Context Protocol](https://modelcontextprotocol.io) server for AI assistant integration (Claude, etc.) via Streamable HTTP or stdio

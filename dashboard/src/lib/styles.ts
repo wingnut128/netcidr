@@ -10,4 +10,4 @@ export const INPUT =
   "w-full font-mono text-[13px] px-3 py-2 bg-bg border-2 border-border text-text outline-none focus:border-cyan";
 
 export const BTN_PRIMARY =
-  "w-full font-mono text-[11px] font-bold uppercase tracking-[0.1em] px-4 py-2 border-2 border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors";
+  "w-full font-mono text-[11px] font-bold uppercase tracking-[0.1em] px-4 min-h-[44px] md:min-h-0 md:py-2 border-2 border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors";

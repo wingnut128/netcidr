@@ -57,3 +57,19 @@ body {
   background: var(--color-cyan);
   color: var(--color-bg);
 }
+
+/* Prevent iOS auto-zoom on focus: iOS Safari zooms when input font-size < 16px.
+ * Forces 16px on mobile while preserving the desktop 13px via Tailwind utilities. */
+@media (max-width: 767px) {
+  input[type="text"],
+  input[type="number"],
+  input[type="email"],
+  input[type="password"],
+  input[type="search"],
+  input[type="tel"],
+  input[type="url"],
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}

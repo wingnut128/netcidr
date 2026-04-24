@@ -104,7 +104,7 @@ export function AllocationDetailModal({
             onKeyDown={(e) => e.key === "Enter" && handleAddTag()}
           />
           <button
-            className="font-mono text-[10px] font-bold uppercase px-3 py-1 border border-cyan text-cyan hover:bg-cyan hover:text-bg transition-colors"
+            className="font-mono text-[10px] font-bold uppercase px-3 min-h-[44px] md:min-h-0 md:py-1 border border-cyan text-cyan hover:bg-cyan hover:text-bg transition-colors"
             onClick={handleAddTag}
           >
             ADD

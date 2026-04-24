@@ -51,8 +51,8 @@ export function Splitter() {
       <ErrorBanner message={error} onDismiss={() => setError(null)} />
 
       <Panel title="Input">
-        <div className="flex gap-3 items-end flex-wrap">
-          <div className="flex-[3] min-w-[200px]">
+        <div className="flex flex-col sm:flex-row sm:items-end sm:flex-wrap gap-3">
+          <div className="w-full sm:flex-[3] sm:min-w-[200px]">
             <label className="block text-[10px] font-bold uppercase tracking-[0.1em] text-text-muted mb-1">
               CIDR
             </label>
@@ -64,7 +64,7 @@ export function Splitter() {
               onChange={(e) => setCidr(e.target.value)}
             />
           </div>
-          <div className="flex-1 min-w-[100px]">
+          <div className="w-full sm:flex-1 sm:min-w-[100px]">
             <label className="block text-[10px] font-bold uppercase tracking-[0.1em] text-text-muted mb-1">
               Target Prefix
             </label>
@@ -78,7 +78,7 @@ export function Splitter() {
               onChange={(e) => setPrefix(e.target.value)}
             />
           </div>
-          <div className="flex-1 min-w-[100px]">
+          <div className="w-full sm:flex-1 sm:min-w-[100px]">
             <label className="block text-[10px] font-bold uppercase tracking-[0.1em] text-text-muted mb-1">
               Count
             </label>
@@ -92,8 +92,8 @@ export function Splitter() {
               disabled={max}
             />
           </div>
-          <div className="flex items-center gap-3">
-            <label className="text-[10px] text-text-muted whitespace-nowrap flex items-center gap-1 cursor-pointer">
+          <div className="flex items-center gap-3 w-full sm:w-auto">
+            <label className="text-[10px] text-text-muted whitespace-nowrap flex items-center gap-1 cursor-pointer min-h-[44px] md:min-h-0">
               <input
                 type="checkbox"
                 checked={max}
@@ -102,7 +102,7 @@ export function Splitter() {
               MAX
             </label>
             <button
-              className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] px-4 py-2 border-2 border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
+              className="flex-1 sm:flex-initial font-mono text-[11px] font-bold uppercase tracking-[0.1em] px-4 min-h-[44px] md:min-h-0 md:py-2 border-2 border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
               onClick={doSplit}
             >
               SPLIT
