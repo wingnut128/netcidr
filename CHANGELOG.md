@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-04-23
+
 ### Added
 
 - New `.github/workflows/image-scan.yml` — builds the Docker image on PRs touching `Dockerfile`/`Cargo.lock` and scans with Grype + Syft. Generates CycloneDX + SPDX SBOMs. Weekly cron detects new fixable CVEs in pinned base images and opens a tracking issue. Release events attach signed SBOM attestations via Sigstore (keyless — no signing keys required).

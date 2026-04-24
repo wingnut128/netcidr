@@ -11,6 +11,15 @@ changelog_update = true
 # it to non-draft after upload.
 git_release_draft = true
 
+[[package]]
+name = "netcidr"
+# Bump version based on conventional commits alone. cargo-semver-checks
+# (release-plz default) only bumps on actual public-API changes, so
+# releases driven by CI/Docker/docs commits — which deliberately avoid
+# touching the public API — never get cut. Disabling the check lets
+# `feat:`/`fix:` conventional commits drive the bump directly.
+semver_check = false
+
 [changelog]
 header = """# Changelog
 
