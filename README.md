@@ -255,8 +255,8 @@ The MCP server lets AI assistants like Claude use netcidr as a tool for subnet c
 # Build with MCP support
 cargo build --release --features mcp
 
-# Or use make
-make build-mcp
+# Or use just
+just build-mcp
 
 # Start MCP server (Streamable HTTP on 127.0.0.1:3000)
 netcidr mcp-serve
@@ -616,36 +616,36 @@ readinessProbe:
 
 ```bash
 # Setup git hooks (required for development)
-make setup
+just setup
 
 # Build
-make build
+just build
 
 # Run tests
-make test
+just test
 
 # Run linter
-make lint
+just lint
 
 # Build release binary
-make release
+just release
 
 # Build with MCP feature
-make build-mcp
+just build-mcp
 
 # Run MCP tests
-make test-mcp
+just test-mcp
 
 # Run semgrep security scanning
-make semgrep
+just semgrep
 
 # Build Docker image
-make docker
+just docker
 ```
 
-The `make setup` command installs a pre-commit hook that automatically runs `cargo fmt --check` and `cargo clippy` before each commit.
+The `just setup` command installs a pre-commit hook that automatically runs `cargo fmt --check` and `cargo clippy` before each commit.
 
-`make check` runs formatting, linting, all tests (including TUI and MCP), and Semgrep security scanning.
+`just check` runs formatting, linting, all tests (including TUI and MCP), and Semgrep security scanning.
 
 ### Fuzz Testing
 
@@ -662,10 +662,10 @@ cargo install cargo-fuzz
 
 ```bash
 # Run the default target (fuzz_cidr_parsing) for 60 seconds
-make fuzz
+just fuzz
 
 # Run a specific target for a custom duration
-make fuzz FUZZ_TARGET=fuzz_contains FUZZ_DURATION=30
+just fuzz fuzz_contains 30
 ```
 
 **Available targets:**
