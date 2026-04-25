@@ -12,21 +12,16 @@ const MAX_TIMEOUT_SECONDS: u64 = 300;
 const AUTH_TOKEN_ENV: &str = "NETCIDR_API_TOKEN";
 const OIDC_AUDIENCE_ENV: &str = "NETCIDR_OIDC_AUDIENCE";
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum AuthMode {
     /// No application-layer authentication. Only safe for loopback/local use.
+    #[default]
     None,
     /// Static bearer-token authentication for service-to-service/API usage.
     Bearer,
     /// OIDC/JWT authentication, intended for Cloud Run behind Google IAP.
     Oidc,
-}
-
-impl Default for AuthMode {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -158,7 +153,12 @@ impl ServerConfig {
     }
 
     pub fn validate(&self) -> Result<()> {
-        validate_range_usize("max_batch_size", self.max_batch_size, 1, MAX_BATCH_SIZE_LIMIT)?;
+        validate_range_usize(
+            "max_batch_size",
+            self.max_batch_size,
+            1,
+            MAX_BATCH_SIZE_LIMIT,
+        )?;
         validate_range_usize(
             "max_generated_cidrs",
             self.max_generated_cidrs,
@@ -184,7 +184,12 @@ impl ServerConfig {
             1,
             MAX_RATE_LIMIT_BURST,
         )?;
-        validate_range_u64("timeout_seconds", self.timeout_seconds, 1, MAX_TIMEOUT_SECONDS)?;
+        validate_range_u64(
+            "timeout_seconds",
+            self.timeout_seconds,
+            1,
+            MAX_TIMEOUT_SECONDS,
+        )?;
 
         if self
             .auth_token
@@ -271,9 +276,10 @@ impl ServerConfig {
                 )));
             }
             if self.require_auth_for_public_bind && !self.auth_configured() {
-                return Err(NetcidrError::InvalidInput(format!(
-                    "refusing to bind to non-loopback address '{bind_address}' without authentication; set auth_mode to 'bearer' or 'oidc' and configure its required settings"
-                )));
+                return Err(NetcidrError::InvalidInput(
+                    "refusing to bind to non-loopback address without authentication; set auth_mode to 'bearer' or 'oidc' and configure its required settings"
+                        .to_string(),
+                ));
             }
         }
 
