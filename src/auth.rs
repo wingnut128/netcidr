@@ -32,7 +32,11 @@ pub struct AuthConfig {
 }
 
 impl AuthConfig {
-    pub fn new(mode: AuthMode, bearer_token: Option<String>, oidc_audience: Option<String>) -> Self {
+    pub fn new(
+        mode: AuthMode,
+        bearer_token: Option<String>,
+        oidc_audience: Option<String>,
+    ) -> Self {
         Self {
             mode,
             bearer_token,
@@ -84,7 +88,10 @@ pub async fn require_bearer_auth(config: AuthConfig, request: Request, next: Nex
     require_auth(config, request, next).await
 }
 
-fn authenticate_bearer(headers: &HeaderMap, expected_token: Option<&str>) -> Option<AuthenticatedPrincipal> {
+fn authenticate_bearer(
+    headers: &HeaderMap,
+    expected_token: Option<&str>,
+) -> Option<AuthenticatedPrincipal> {
     let expected_token = expected_token?;
     let actual_token = bearer_token(headers.get(header::AUTHORIZATION))?;
     if !constant_time_eq(actual_token.as_bytes(), expected_token.as_bytes()) {
@@ -99,7 +106,10 @@ fn authenticate_bearer(headers: &HeaderMap, expected_token: Option<&str>) -> Opt
     })
 }
 
-fn authenticate_oidc(headers: &HeaderMap, expected_audience: Option<&str>) -> Option<AuthenticatedPrincipal> {
+fn authenticate_oidc(
+    headers: &HeaderMap,
+    expected_audience: Option<&str>,
+) -> Option<AuthenticatedPrincipal> {
     let expected_audience = expected_audience?;
     let jwt = headers.get(IAP_JWT_HEADER).and_then(header_to_str)?;
 
@@ -142,7 +152,11 @@ fn unauthorized(mode: AuthMode) -> Response {
         AuthMode::Oidc => "Bearer, error=\"invalid_token\"",
         AuthMode::None => "Bearer",
     };
-    (StatusCode::UNAUTHORIZED, [(header::WWW_AUTHENTICATE, authenticate)], "Unauthorized")
+    (
+        StatusCode::UNAUTHORIZED,
+        [(header::WWW_AUTHENTICATE, authenticate)],
+        "Unauthorized",
+    )
         .into_response()
 }
 
@@ -221,7 +235,8 @@ mod tests {
     }
 
     fn encode_base64_url(bytes: &[u8]) -> String {
-        const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        const TABLE: &[u8; 64] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
         let mut out = String::new();
         for chunk in bytes.chunks(3) {
             let b0 = chunk[0];
@@ -276,7 +291,10 @@ mod tests {
     #[test]
     fn auth_config_reports_modes() {
         assert!(!AuthConfig::disabled().enabled());
-        assert_eq!(AuthConfig::bearer(Some("t".to_string())).mode(), AuthMode::Bearer);
+        assert_eq!(
+            AuthConfig::bearer(Some("t".to_string())).mode(),
+            AuthMode::Bearer
+        );
         assert_eq!(
             AuthConfig::oidc(Some("aud".to_string())).mode(),
             AuthMode::Oidc
@@ -286,7 +304,10 @@ mod tests {
     #[test]
     fn bearer_auth_returns_service_principal() {
         let mut headers = HeaderMap::new();
-        headers.insert(header::AUTHORIZATION, HeaderValue::from_static("Bearer test-token"));
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer test-token"),
+        );
         let principal = authenticate_bearer(&headers, Some("test-token")).unwrap();
         assert_eq!(principal.kind, PrincipalKind::BearerToken);
         assert_eq!(principal.subject, "bearer-token");
@@ -295,7 +316,11 @@ mod tests {
 
     #[test]
     fn oidc_scaffold_checks_expected_audience_and_extracts_identity() {
-        let jwt = fake_jwt_with_claims("accounts.google.com:123", "expected-audience", Some("user@example.com"));
+        let jwt = fake_jwt_with_claims(
+            "accounts.google.com:123",
+            "expected-audience",
+            Some("user@example.com"),
+        );
         let mut headers = HeaderMap::new();
         headers.insert(IAP_JWT_HEADER, HeaderValue::from_str(&jwt).unwrap());
 
