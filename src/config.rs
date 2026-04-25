@@ -1,8 +1,16 @@
 use crate::error::{NetcidrError, Result};
 use serde::Deserialize;
 
+const MAX_BATCH_SIZE_LIMIT: usize = 100_000;
+const MAX_GENERATED_CIDRS_LIMIT: usize = 1_000_000;
+const MAX_SUMMARIZE_INPUTS_LIMIT: usize = 100_000;
+const MAX_BODY_SIZE_LIMIT: usize = 10_485_760; // 10 MiB
+const MAX_RATE_LIMIT_PER_SECOND: u64 = 10_000;
+const MAX_RATE_LIMIT_BURST: u32 = 100_000;
+const MAX_TIMEOUT_SECONDS: u64 = 300;
+
 #[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ServerConfig {
     /// Maximum CIDRs in a single batch request
     pub max_batch_size: usize,
@@ -71,6 +79,7 @@ impl ServerConfig {
         let contents = std::fs::read_to_string(path)?;
         let config: ServerConfig =
             toml::from_str(&contents).map_err(|e| NetcidrError::ConfigParse(e.to_string()))?;
+        config.validate()?;
         Ok(config)
     }
 
@@ -112,6 +121,70 @@ impl ServerConfig {
             self.ipam_db_url.clone_from(&overrides.ipam_db_url);
         }
     }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_range_usize("max_batch_size", self.max_batch_size, 1, MAX_BATCH_SIZE_LIMIT)?;
+        validate_range_usize(
+            "max_generated_cidrs",
+            self.max_generated_cidrs,
+            1,
+            MAX_GENERATED_CIDRS_LIMIT,
+        )?;
+        validate_range_usize(
+            "max_summarize_inputs",
+            self.max_summarize_inputs,
+            1,
+            MAX_SUMMARIZE_INPUTS_LIMIT,
+        )?;
+        validate_range_usize("max_body_size", self.max_body_size, 1, MAX_BODY_SIZE_LIMIT)?;
+        validate_range_u64(
+            "rate_limit_per_second",
+            self.rate_limit_per_second,
+            1,
+            MAX_RATE_LIMIT_PER_SECOND,
+        )?;
+        validate_range_u32(
+            "rate_limit_burst",
+            self.rate_limit_burst,
+            1,
+            MAX_RATE_LIMIT_BURST,
+        )?;
+        validate_range_u64("timeout_seconds", self.timeout_seconds, 1, MAX_TIMEOUT_SECONDS)?;
+
+        match self.ipam_backend.as_str() {
+            "sqlite" | "postgres" => Ok(()),
+            other => Err(NetcidrError::InvalidInput(format!(
+                "ipam_backend must be 'sqlite' or 'postgres' (got '{other}')"
+            ))),
+        }
+    }
+}
+
+fn validate_range_usize(name: &str, value: usize, min: usize, max: usize) -> Result<()> {
+    if value < min || value > max {
+        return Err(NetcidrError::InvalidInput(format!(
+            "{name} must be between {min} and {max} (got {value})"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_range_u64(name: &str, value: u64, min: u64, max: u64) -> Result<()> {
+    if value < min || value > max {
+        return Err(NetcidrError::InvalidInput(format!(
+            "{name} must be between {min} and {max} (got {value})"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_range_u32(name: &str, value: u32, min: u32, max: u32) -> Result<()> {
+    if value < min || value > max {
+        return Err(NetcidrError::InvalidInput(format!(
+            "{name} must be between {min} and {max} (got {value})"
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -129,6 +202,7 @@ mod tests {
         assert_eq!(config.rate_limit_burst, 50);
         assert_eq!(config.timeout_seconds, 30);
         assert!(!config.enable_swagger);
+        assert!(config.validate().is_ok());
     }
 
     #[test]
@@ -144,6 +218,7 @@ mod tests {
         assert_eq!(config.max_batch_size, 500);
         assert_eq!(config.max_generated_cidrs, 1_000_000); // unchanged
         assert_eq!(config.timeout_seconds, 60);
+        assert!(config.validate().is_ok());
     }
 
     #[test]
@@ -157,6 +232,7 @@ mod tests {
         assert!(config.enable_swagger);
         // defaults for unspecified fields
         assert_eq!(config.max_generated_cidrs, 1_000_000);
+        assert!(config.validate().is_ok());
     }
 
     #[test]
@@ -188,17 +264,13 @@ mod tests {
     }
 
     #[test]
-    fn test_unknown_fields_are_accepted() {
-        // serde(default) without deny_unknown_fields silently ignores unknown keys
+    fn test_unknown_fields_are_rejected() {
         let toml_str = r#"
             max_batch_size = 42
             totally_fake_field = "hello"
-            another_unknown = 999
         "#;
-        let config: ServerConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.max_batch_size, 42);
-        // other fields get defaults
-        assert_eq!(config.timeout_seconds, 30);
+        let result = toml::from_str::<ServerConfig>(toml_str);
+        assert!(result.is_err(), "unknown config fields should fail closed");
     }
 
     #[test]
@@ -218,7 +290,7 @@ mod tests {
         assert!(!config.ipam_enabled);
         assert_eq!(config.ipam_backend, "sqlite");
         assert!(config.ipam_db.is_none());
-        assert!(config.ipam_db_url.is_none());
+        assert!(config.validate().is_ok());
     }
 
     #[test]
@@ -229,10 +301,11 @@ mod tests {
         assert_eq!(config.timeout_seconds, defaults.timeout_seconds);
         assert_eq!(config.enable_swagger, defaults.enable_swagger);
         assert_eq!(config.ipam_backend, defaults.ipam_backend);
+        assert!(config.validate().is_ok());
     }
 
     #[test]
-    fn test_boundary_values_zero() {
+    fn test_boundary_values_zero_are_rejected_by_validation() {
         let toml_str = r#"
             max_batch_size = 0
             timeout_seconds = 0
@@ -241,22 +314,24 @@ mod tests {
             max_body_size = 0
         "#;
         let config: ServerConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.max_batch_size, 0);
-        assert_eq!(config.timeout_seconds, 0);
-        assert_eq!(config.rate_limit_per_second, 0);
-        assert_eq!(config.rate_limit_burst, 0);
-        assert_eq!(config.max_body_size, 0);
+        assert!(config.validate().is_err());
     }
 
     #[test]
-    fn test_boundary_value_large_numbers() {
+    fn test_boundary_value_large_numbers_are_rejected_by_validation() {
         let toml_str = r#"
             max_batch_size = 18446744073709551615
             timeout_seconds = 18446744073709551615
         "#;
         let config: ServerConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.max_batch_size, usize::MAX);
-        assert_eq!(config.timeout_seconds, u64::MAX);
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_invalid_ipam_backend_is_rejected() {
+        let mut config = ServerConfig::default();
+        config.ipam_backend = "mysql".to_string();
+        assert!(config.validate().is_err());
     }
 
     #[test]
@@ -295,6 +370,15 @@ mod tests {
     }
 
     #[test]
+    fn test_load_invalid_bounds_returns_invalid_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad-bounds.toml");
+        std::fs::write(&path, "timeout_seconds = 0\n").unwrap();
+        let result = ServerConfig::load(path.to_str().unwrap());
+        assert!(matches!(result, Err(NetcidrError::InvalidInput(_))));
+    }
+
+    #[test]
     fn test_merge_overrides_none_values_unchanged() {
         let mut config = ServerConfig::default();
         let original_batch = config.max_batch_size;
@@ -304,6 +388,7 @@ mod tests {
         assert_eq!(config.timeout_seconds, original_timeout);
         assert!(!config.enable_swagger);
         assert!(!config.ipam_enabled);
+        assert!(config.validate().is_ok());
     }
 
     #[test]
@@ -323,5 +408,6 @@ mod tests {
             config.ipam_db_url,
             Some("postgresql://localhost/test".to_string())
         );
+        assert!(config.validate().is_ok());
     }
 }
