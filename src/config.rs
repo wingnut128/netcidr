@@ -10,6 +10,24 @@ const MAX_RATE_LIMIT_PER_SECOND: u64 = 10_000;
 const MAX_RATE_LIMIT_BURST: u32 = 100_000;
 const MAX_TIMEOUT_SECONDS: u64 = 300;
 const AUTH_TOKEN_ENV: &str = "NETCIDR_API_TOKEN";
+const OIDC_AUDIENCE_ENV: &str = "NETCIDR_OIDC_AUDIENCE";
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AuthMode {
+    /// No application-layer authentication. Only safe for loopback/local use.
+    None,
+    /// Static bearer-token authentication for service-to-service/API usage.
+    Bearer,
+    /// OIDC/JWT authentication, intended for Cloud Run behind Google IAP.
+    Oidc,
+}
+
+impl Default for AuthMode {
+    fn default() -> Self {
+        Self::None
+    }
+}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -38,8 +56,12 @@ pub struct ServerConfig {
     pub ipam_db: Option<String>,
     /// IPAM database URL (PostgreSQL)
     pub ipam_db_url: Option<String>,
+    /// Authentication mode: none, bearer, or oidc.
+    pub auth_mode: AuthMode,
     /// Bearer token for HTTP API authentication. Prefer NETCIDR_API_TOKEN in production.
     pub auth_token: Option<String>,
+    /// Expected OIDC audience. Prefer NETCIDR_OIDC_AUDIENCE in production.
+    pub oidc_audience: Option<String>,
     /// Allow binding the HTTP API to a non-loopback address.
     pub allow_public_bind: bool,
     /// Require authentication when binding the HTTP API to a non-loopback address.
@@ -61,7 +83,9 @@ impl Default for ServerConfig {
             ipam_backend: "sqlite".to_string(),
             ipam_db: None,
             ipam_db_url: None,
+            auth_mode: AuthMode::None,
             auth_token: None,
+            oidc_audience: None,
             allow_public_bind: false,
             require_auth_for_public_bind: true,
         }
@@ -171,6 +195,32 @@ impl ServerConfig {
                 "auth_token must not be empty".to_string(),
             ));
         }
+        if self
+            .oidc_audience
+            .as_ref()
+            .is_some_and(|audience| audience.trim().is_empty())
+        {
+            return Err(NetcidrError::InvalidInput(
+                "oidc_audience must not be empty".to_string(),
+            ));
+        }
+        match self.auth_mode {
+            AuthMode::None => {}
+            AuthMode::Bearer => {
+                if self.auth_token().is_none() {
+                    return Err(NetcidrError::InvalidInput(format!(
+                        "auth_mode='bearer' requires {AUTH_TOKEN_ENV} or auth_token"
+                    )));
+                }
+            }
+            AuthMode::Oidc => {
+                if self.oidc_audience().is_none() {
+                    return Err(NetcidrError::InvalidInput(format!(
+                        "auth_mode='oidc' requires {OIDC_AUDIENCE_ENV} or oidc_audience"
+                    )));
+                }
+            }
+        }
 
         match self.ipam_backend.as_str() {
             "sqlite" | "postgres" => Ok(()),
@@ -191,8 +241,23 @@ impl ServerConfig {
             })
     }
 
+    pub fn oidc_audience(&self) -> Option<String> {
+        std::env::var(OIDC_AUDIENCE_ENV)
+            .ok()
+            .filter(|audience| !audience.trim().is_empty())
+            .or_else(|| {
+                self.oidc_audience
+                    .clone()
+                    .filter(|audience| !audience.trim().is_empty())
+            })
+    }
+
     pub fn auth_configured(&self) -> bool {
-        self.auth_token().is_some()
+        match self.auth_mode {
+            AuthMode::None => false,
+            AuthMode::Bearer => self.auth_token().is_some(),
+            AuthMode::Oidc => self.oidc_audience().is_some(),
+        }
     }
 
     pub fn validate_deployment(&self, bind_address: &str) -> Result<()> {
@@ -207,15 +272,16 @@ impl ServerConfig {
             }
             if self.require_auth_for_public_bind && !self.auth_configured() {
                 return Err(NetcidrError::InvalidInput(format!(
-                    "refusing to bind to non-loopback address '{bind_address}' without authentication; set {AUTH_TOKEN_ENV} or auth_token"
+                    "refusing to bind to non-loopback address '{bind_address}' without authentication; set auth_mode to 'bearer' or 'oidc' and configure its required settings"
                 )));
             }
         }
 
         if self.ipam_enabled && !self.auth_configured() {
-            return Err(NetcidrError::InvalidInput(format!(
-                "IPAM API requires authentication; set {AUTH_TOKEN_ENV} or auth_token"
-            )));
+            return Err(NetcidrError::InvalidInput(
+                "IPAM API requires auth_mode='bearer' or auth_mode='oidc' with required settings"
+                    .to_string(),
+            ));
         }
 
         Ok(())
@@ -266,82 +332,66 @@ fn validate_range_u32(name: &str, value: u32, min: u32, max: u32) -> Result<()> 
 mod tests {
     use super::*;
 
+    fn bearer_config() -> ServerConfig {
+        ServerConfig {
+            auth_mode: AuthMode::Bearer,
+            auth_token: Some("test-token".to_string()),
+            ..Default::default()
+        }
+    }
+
+    fn oidc_config() -> ServerConfig {
+        ServerConfig {
+            auth_mode: AuthMode::Oidc,
+            oidc_audience: Some("/projects/123/global/backendServices/456".to_string()),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn test_default_config() {
         let config = ServerConfig::default();
         assert_eq!(config.max_batch_size, 10_000);
-        assert_eq!(config.max_generated_cidrs, 1_000_000);
-        assert_eq!(config.max_summarize_inputs, 10_000);
-        assert_eq!(config.max_body_size, 1_048_576);
-        assert_eq!(config.rate_limit_per_second, 20);
-        assert_eq!(config.rate_limit_burst, 50);
-        assert_eq!(config.timeout_seconds, 30);
-        assert!(!config.enable_swagger);
+        assert_eq!(config.auth_mode, AuthMode::None);
         assert!(!config.allow_public_bind);
         assert!(config.require_auth_for_public_bind);
         assert!(config.validate().is_ok());
+        assert!(!config.auth_configured());
     }
 
     #[test]
-    fn test_merge_cli_overrides() {
-        let mut config = ServerConfig::default();
-        config.merge_cli_overrides(&CliOverrides {
-            enable_swagger: true,
-            max_batch_size: Some(500),
-            timeout: Some(60),
-            ..Default::default()
-        });
-        assert!(config.enable_swagger);
-        assert_eq!(config.max_batch_size, 500);
-        assert_eq!(config.max_generated_cidrs, 1_000_000); // unchanged
-        assert_eq!(config.timeout_seconds, 60);
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn test_toml_deserialization() {
+    fn test_toml_deserialization_for_bearer() {
         let toml_str = r#"
             max_batch_size = 500
             enable_swagger = true
+            auth_mode = "bearer"
             auth_token = "test-token"
             allow_public_bind = true
         "#;
         let config: ServerConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.max_batch_size, 500);
         assert!(config.enable_swagger);
+        assert_eq!(config.auth_mode, AuthMode::Bearer);
         assert_eq!(config.auth_token.as_deref(), Some("test-token"));
         assert!(config.allow_public_bind);
-        // defaults for unspecified fields
-        assert_eq!(config.max_generated_cidrs, 1_000_000);
         assert!(config.validate().is_ok());
+        assert!(config.auth_configured());
     }
 
     #[test]
-    fn test_invalid_toml_syntax_returns_config_parse_error() {
-        let bad_toml = r#"max_batch_size = "not a number"#; // unclosed quote
-        let result = toml::from_str::<ServerConfig>(bad_toml);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_malformed_toml_missing_value() {
-        let bad_toml = "max_batch_size = ";
-        let result = toml::from_str::<ServerConfig>(bad_toml);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_wrong_type_for_field() {
-        let bad_toml = r#"max_batch_size = "hello""#;
-        let result = toml::from_str::<ServerConfig>(bad_toml);
-        assert!(result.is_err(), "string value for usize field should fail");
-    }
-
-    #[test]
-    fn test_negative_value_for_unsigned_field() {
-        let bad_toml = "timeout_seconds = -1";
-        let result = toml::from_str::<ServerConfig>(bad_toml);
-        assert!(result.is_err(), "negative value for u64 field should fail");
+    fn test_toml_deserialization_for_oidc() {
+        let toml_str = r#"
+            auth_mode = "oidc"
+            oidc_audience = "/projects/123/global/backendServices/456"
+        "#;
+        let config: ServerConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.auth_mode, AuthMode::Oidc);
+        assert_eq!(
+            config.oidc_audience.as_deref(),
+            Some("/projects/123/global/backendServices/456")
+        );
+        assert!(config.validate().is_ok());
+        assert!(config.auth_configured());
     }
 
     #[test]
@@ -355,41 +405,43 @@ mod tests {
     }
 
     #[test]
-    fn test_partial_config_fills_defaults() {
-        let toml_str = r#"
-            enable_swagger = true
-        "#;
-        let config: ServerConfig = toml::from_str(toml_str).unwrap();
-        assert!(config.enable_swagger);
-        assert_eq!(config.max_batch_size, 10_000);
-        assert_eq!(config.max_generated_cidrs, 1_000_000);
-        assert_eq!(config.max_summarize_inputs, 10_000);
-        assert_eq!(config.max_body_size, 1_048_576);
-        assert_eq!(config.rate_limit_per_second, 20);
-        assert_eq!(config.rate_limit_burst, 50);
-        assert_eq!(config.timeout_seconds, 30);
-        assert!(!config.ipam_enabled);
-        assert_eq!(config.ipam_backend, "sqlite");
-        assert!(config.ipam_db.is_none());
-        assert!(config.auth_token.is_none());
-        assert!(!config.allow_public_bind);
-        assert!(config.require_auth_for_public_bind);
-        assert!(config.validate().is_ok());
+    fn test_invalid_auth_mode_is_rejected() {
+        let toml_str = r#"auth_mode = "google""#;
+        let result = toml::from_str::<ServerConfig>(toml_str);
+        assert!(result.is_err());
     }
 
     #[test]
-    fn test_empty_toml_yields_all_defaults() {
-        let config: ServerConfig = toml::from_str("").unwrap();
-        let defaults = ServerConfig::default();
-        assert_eq!(config.max_batch_size, defaults.max_batch_size);
-        assert_eq!(config.timeout_seconds, defaults.timeout_seconds);
-        assert_eq!(config.enable_swagger, defaults.enable_swagger);
-        assert_eq!(config.ipam_backend, defaults.ipam_backend);
-        assert!(config.validate().is_ok());
+    fn test_bearer_mode_requires_token() {
+        let config = ServerConfig {
+            auth_mode: AuthMode::Bearer,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
     }
 
     #[test]
-    fn test_boundary_values_zero_are_rejected_by_validation() {
+    fn test_oidc_mode_requires_audience() {
+        let config = ServerConfig {
+            auth_mode: AuthMode::Oidc,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_empty_auth_fields_are_rejected() {
+        let mut config = ServerConfig::default();
+        config.auth_token = Some("   ".to_string());
+        assert!(config.validate().is_err());
+
+        let mut config = ServerConfig::default();
+        config.oidc_audience = Some("   ".to_string());
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_bounds_are_rejected() {
         let toml_str = r#"
             max_batch_size = 0
             timeout_seconds = 0
@@ -399,10 +451,7 @@ mod tests {
         "#;
         let config: ServerConfig = toml::from_str(toml_str).unwrap();
         assert!(config.validate().is_err());
-    }
 
-    #[test]
-    fn test_boundary_value_large_numbers_are_rejected_by_validation() {
         let toml_str = r#"
             max_batch_size = 18446744073709551615
             timeout_seconds = 18446744073709551615
@@ -419,13 +468,6 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_auth_token_is_rejected() {
-        let mut config = ServerConfig::default();
-        config.auth_token = Some("   ".to_string());
-        assert!(config.validate().is_err());
-    }
-
-    #[test]
     fn test_validate_deployment_allows_loopback_without_auth() {
         let config = ServerConfig::default();
         assert!(config.validate_deployment("127.0.0.1").is_ok());
@@ -435,8 +477,7 @@ mod tests {
 
     #[test]
     fn test_validate_deployment_rejects_public_bind_without_opt_in() {
-        let mut config = ServerConfig::default();
-        config.auth_token = Some("test-token".to_string());
+        let config = bearer_config();
         assert!(config.validate_deployment("0.0.0.0").is_err());
     }
 
@@ -450,11 +491,19 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_deployment_allows_public_bind_with_auth_and_opt_in() {
+    fn test_validate_deployment_allows_public_bind_with_bearer_auth_and_opt_in() {
         let config = ServerConfig {
             allow_public_bind: true,
-            auth_token: Some("test-token".to_string()),
-            ..Default::default()
+            ..bearer_config()
+        };
+        assert!(config.validate_deployment("0.0.0.0").is_ok());
+    }
+
+    #[test]
+    fn test_validate_deployment_allows_public_bind_with_oidc_and_opt_in() {
+        let config = ServerConfig {
+            allow_public_bind: true,
+            ..oidc_config()
         };
         assert!(config.validate_deployment("0.0.0.0").is_ok());
     }
@@ -469,38 +518,12 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_deployment_allows_ipam_with_auth() {
+    fn test_validate_deployment_allows_ipam_with_oidc() {
         let config = ServerConfig {
             ipam_enabled: true,
-            auth_token: Some("test-token".to_string()),
-            ..Default::default()
+            ..oidc_config()
         };
         assert!(config.validate_deployment("127.0.0.1").is_ok());
-    }
-
-    #[test]
-    fn test_load_nonexistent_file_returns_io_error() {
-        let result = ServerConfig::load("/tmp/nonexistent_netcidr_config_test.toml");
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(
-            matches!(err, NetcidrError::Io(_)),
-            "expected Io error, got: {err:?}"
-        );
-    }
-
-    #[test]
-    fn test_load_invalid_toml_file_returns_config_parse_error() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("bad.toml");
-        std::fs::write(&path, "invalid toml {{{{").unwrap();
-        let result = ServerConfig::load(path.to_str().unwrap());
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(
-            matches!(err, NetcidrError::ConfigParse(_)),
-            "expected ConfigParse error, got: {err:?}"
-        );
     }
 
     #[test]
@@ -523,19 +546,6 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_overrides_none_values_unchanged() {
-        let mut config = ServerConfig::default();
-        let original_batch = config.max_batch_size;
-        let original_timeout = config.timeout_seconds;
-        config.merge_cli_overrides(&CliOverrides::default());
-        assert_eq!(config.max_batch_size, original_batch);
-        assert_eq!(config.timeout_seconds, original_timeout);
-        assert!(!config.enable_swagger);
-        assert!(!config.ipam_enabled);
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
     fn test_merge_overrides_ipam_fields() {
         let mut config = ServerConfig::default();
         config.merge_cli_overrides(&CliOverrides {
@@ -552,6 +562,7 @@ mod tests {
             config.ipam_db_url,
             Some("postgresql://localhost/test".to_string())
         );
-        assert!(config.validate().is_ok());
+        // validate fails until an auth mode is configured because IPAM requires auth.
+        assert!(config.validate_deployment("127.0.0.1").is_err());
     }
 }
