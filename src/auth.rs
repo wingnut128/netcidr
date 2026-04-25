@@ -4,10 +4,25 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
+use serde::Deserialize;
 
 use crate::config::AuthMode;
 
 const IAP_JWT_HEADER: &str = "x-goog-iap-jwt-assertion";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PrincipalKind {
+    BearerToken,
+    Oidc,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuthenticatedPrincipal {
+    pub kind: PrincipalKind,
+    pub subject: String,
+    pub email: Option<String>,
+    pub audience: Option<String>,
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct AuthConfig {
@@ -46,21 +61,22 @@ impl AuthConfig {
     }
 }
 
-pub async fn require_auth(config: AuthConfig, request: Request, next: Next) -> Response {
+pub async fn require_auth(config: AuthConfig, mut request: Request, next: Next) -> Response {
     if is_public_path(request.uri().path()) || !config.enabled() {
         return next.run(request).await;
     }
 
-    let authorized = match config.mode {
-        AuthMode::None => true,
-        AuthMode::Bearer => authorize_bearer(request.headers(), config.bearer_token.as_deref()),
-        AuthMode::Oidc => authorize_oidc(request.headers(), config.oidc_audience.as_deref()),
+    let principal = match config.mode {
+        AuthMode::None => None,
+        AuthMode::Bearer => authenticate_bearer(request.headers(), config.bearer_token.as_deref()),
+        AuthMode::Oidc => authenticate_oidc(request.headers(), config.oidc_audience.as_deref()),
     };
 
-    if !authorized {
+    let Some(principal) = principal else {
         return unauthorized(config.mode);
-    }
+    };
 
+    request.extensions_mut().insert(principal);
     next.run(request).await
 }
 
@@ -68,28 +84,39 @@ pub async fn require_bearer_auth(config: AuthConfig, request: Request, next: Nex
     require_auth(config, request, next).await
 }
 
-fn authorize_bearer(headers: &HeaderMap, expected_token: Option<&str>) -> bool {
-    let Some(expected_token) = expected_token else {
-        return false;
-    };
-    let Some(actual_token) = bearer_token(headers.get(header::AUTHORIZATION)) else {
-        return false;
-    };
-    constant_time_eq(actual_token.as_bytes(), expected_token.as_bytes())
+fn authenticate_bearer(headers: &HeaderMap, expected_token: Option<&str>) -> Option<AuthenticatedPrincipal> {
+    let expected_token = expected_token?;
+    let actual_token = bearer_token(headers.get(header::AUTHORIZATION))?;
+    if !constant_time_eq(actual_token.as_bytes(), expected_token.as_bytes()) {
+        return None;
+    }
+
+    Some(AuthenticatedPrincipal {
+        kind: PrincipalKind::BearerToken,
+        subject: "bearer-token".to_string(),
+        email: None,
+        audience: None,
+    })
 }
 
-fn authorize_oidc(headers: &HeaderMap, expected_audience: Option<&str>) -> bool {
-    let Some(expected_audience) = expected_audience else {
-        return false;
-    };
-    let Some(jwt) = headers.get(IAP_JWT_HEADER).and_then(header_to_str) else {
-        return false;
-    };
+fn authenticate_oidc(headers: &HeaderMap, expected_audience: Option<&str>) -> Option<AuthenticatedPrincipal> {
+    let expected_audience = expected_audience?;
+    let jwt = headers.get(IAP_JWT_HEADER).and_then(header_to_str)?;
 
     // TODO: Validate the signed IAP JWT using Google's public keys before relying on
-    // identity claims. This initial scaffold validates only JWT shape and expected
-    // audience so the config/middleware paths can be wired safely first.
-    jwt_has_audience(jwt, expected_audience)
+    // identity claims. This scaffold parses claims and enforces audience so the
+    // router, tenant, and authorization paths can be wired next.
+    let claims = decode_unverified_jwt_claims(jwt)?;
+    if claims.aud != expected_audience {
+        return None;
+    }
+
+    Some(AuthenticatedPrincipal {
+        kind: PrincipalKind::Oidc,
+        subject: claims.sub,
+        email: claims.email,
+        audience: Some(claims.aud),
+    })
 }
 
 fn is_public_path(path: &str) -> bool {
@@ -132,20 +159,21 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     diff == 0
 }
 
-fn jwt_has_audience(jwt: &str, expected_audience: &str) -> bool {
+#[derive(Debug, Deserialize)]
+struct OidcClaims {
+    sub: String,
+    aud: String,
+    email: Option<String>,
+}
+
+fn decode_unverified_jwt_claims(jwt: &str) -> Option<OidcClaims> {
     let parts: Vec<&str> = jwt.split('.').collect();
     if parts.len() != 3 {
-        return false;
+        return None;
     }
 
-    let Some(payload) = decode_base64_url(parts[1]) else {
-        return false;
-    };
-    let Ok(payload) = std::str::from_utf8(&payload) else {
-        return false;
-    };
-
-    payload.contains(&format!("\"aud\":\"{expected_audience}\""))
+    let payload = decode_base64_url(parts[1])?;
+    serde_json::from_slice(&payload).ok()
 }
 
 fn decode_base64_url(input: &str) -> Option<Vec<u8>> {
@@ -184,8 +212,11 @@ fn decode_base64_url(input: &str) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
 
-    fn fake_jwt_with_aud(audience: &str) -> String {
-        let payload = format!(r#"{{"aud":"{audience}","email":"user@example.com"}}"#);
+    fn fake_jwt_with_claims(subject: &str, audience: &str, email: Option<&str>) -> String {
+        let email_field = email
+            .map(|email| format!(r#", "email":"{email}""#))
+            .unwrap_or_default();
+        let payload = format!(r#"{{"sub":"{subject}","aud":"{audience}"{email_field}}}"#);
         format!("e30.{}.sig", encode_base64_url(payload.as_bytes()))
     }
 
@@ -253,10 +284,33 @@ mod tests {
     }
 
     #[test]
-    fn oidc_scaffold_checks_expected_audience() {
-        let jwt = fake_jwt_with_aud("expected-audience");
-        assert!(jwt_has_audience(&jwt, "expected-audience"));
-        assert!(!jwt_has_audience(&jwt, "other-audience"));
-        assert!(!jwt_has_audience("not-a-jwt", "expected-audience"));
+    fn bearer_auth_returns_service_principal() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, HeaderValue::from_static("Bearer test-token"));
+        let principal = authenticate_bearer(&headers, Some("test-token")).unwrap();
+        assert_eq!(principal.kind, PrincipalKind::BearerToken);
+        assert_eq!(principal.subject, "bearer-token");
+        assert_eq!(principal.email, None);
+    }
+
+    #[test]
+    fn oidc_scaffold_checks_expected_audience_and_extracts_identity() {
+        let jwt = fake_jwt_with_claims("accounts.google.com:123", "expected-audience", Some("user@example.com"));
+        let mut headers = HeaderMap::new();
+        headers.insert(IAP_JWT_HEADER, HeaderValue::from_str(&jwt).unwrap());
+
+        let principal = authenticate_oidc(&headers, Some("expected-audience")).unwrap();
+        assert_eq!(principal.kind, PrincipalKind::Oidc);
+        assert_eq!(principal.subject, "accounts.google.com:123");
+        assert_eq!(principal.email.as_deref(), Some("user@example.com"));
+        assert_eq!(principal.audience.as_deref(), Some("expected-audience"));
+
+        assert!(authenticate_oidc(&headers, Some("other-audience")).is_none());
+    }
+
+    #[test]
+    fn unverified_claims_parser_rejects_bad_jwt() {
+        assert!(decode_unverified_jwt_claims("not-a-jwt").is_none());
+        assert!(decode_unverified_jwt_claims("a.b.c").is_none());
     }
 }
