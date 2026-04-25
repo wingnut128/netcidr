@@ -10,16 +10,23 @@ interface Features {
 
 export function MainLayout() {
   const [ipamEnabled, setIpamEnabled] = useState(false);
+  const [swaggerEnabled, setSwaggerEnabled] = useState(false);
 
   useEffect(() => {
     get<Features>("/features")
-      .then((f) => setIpamEnabled(f.ipam))
-      .catch(() => setIpamEnabled(false));
+      .then((f) => {
+        setIpamEnabled(f.ipam);
+        setSwaggerEnabled(f.swagger);
+      })
+      .catch(() => {
+        setIpamEnabled(false);
+        setSwaggerEnabled(false);
+      });
   }, []);
 
   return (
     <div className="min-h-screen bg-bg">
-      <Sidebar ipamEnabled={ipamEnabled} />
+      <Sidebar ipamEnabled={ipamEnabled} swaggerEnabled={swaggerEnabled} />
       <main className="ml-48 p-6">
         <Outlet />
       </main>

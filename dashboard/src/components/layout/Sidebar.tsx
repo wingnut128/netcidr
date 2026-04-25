@@ -11,9 +11,10 @@ const baseNavItems = [
 
 interface SidebarProps {
   ipamEnabled: boolean;
+  swaggerEnabled: boolean;
 }
 
-export function Sidebar({ ipamEnabled }: SidebarProps) {
+export function Sidebar({ ipamEnabled, swaggerEnabled }: SidebarProps) {
   const navItems = ipamEnabled
     ? [...baseNavItems, { to: "/ipam", label: "IPAM" }]
     : baseNavItems;
@@ -42,6 +43,18 @@ export function Sidebar({ ipamEnabled }: SidebarProps) {
           </NavLink>
         ))}
       </div>
+      {swaggerEnabled && (
+        <div className="px-2 pb-2">
+          <a
+            href="/swagger-ui"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block px-3 py-2 text-xs tracking-wider uppercase border border-transparent text-text-muted hover:text-cyan hover:border-border transition-colors"
+          >
+            API Docs ↗
+          </a>
+        </div>
+      )}
       <div className="px-4 py-3 border-t border-border">
         <p className="text-text-muted text-[10px]" id="version-display">
           &nbsp;
