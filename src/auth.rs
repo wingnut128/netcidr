@@ -214,9 +214,9 @@ mod tests {
 
     fn fake_jwt_with_claims(subject: &str, audience: &str, email: Option<&str>) -> String {
         let email_field = email
-            .map(|email| format!(r#", "email":"{email}""#))
+            .map(|email| format!(",\"email\":\"{email}\""))
             .unwrap_or_default();
-        let payload = format!(r#"{{"sub":"{subject}","aud":"{audience}"{email_field}}}"#);
+        let payload = format!("{{\"sub\":\"{subject}\",\"aud\":\"{audience}\"{email_field}}}");
         format!("e30.{}.sig", encode_base64_url(payload.as_bytes()))
     }
 
