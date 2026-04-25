@@ -1,5 +1,6 @@
 use crate::error::{NetcidrError, Result};
 use serde::Deserialize;
+use std::net::IpAddr;
 
 const MAX_BATCH_SIZE_LIMIT: usize = 100_000;
 const MAX_GENERATED_CIDRS_LIMIT: usize = 1_000_000;
@@ -8,6 +9,7 @@ const MAX_BODY_SIZE_LIMIT: usize = 10_485_760; // 10 MiB
 const MAX_RATE_LIMIT_PER_SECOND: u64 = 10_000;
 const MAX_RATE_LIMIT_BURST: u32 = 100_000;
 const MAX_TIMEOUT_SECONDS: u64 = 300;
+const AUTH_TOKEN_ENV: &str = "NETCIDR_API_TOKEN";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -36,6 +38,12 @@ pub struct ServerConfig {
     pub ipam_db: Option<String>,
     /// IPAM database URL (PostgreSQL)
     pub ipam_db_url: Option<String>,
+    /// Bearer token for HTTP API authentication. Prefer NETCIDR_API_TOKEN in production.
+    pub auth_token: Option<String>,
+    /// Allow binding the HTTP API to a non-loopback address.
+    pub allow_public_bind: bool,
+    /// Require authentication when binding the HTTP API to a non-loopback address.
+    pub require_auth_for_public_bind: bool,
 }
 
 impl Default for ServerConfig {
@@ -53,6 +61,9 @@ impl Default for ServerConfig {
             ipam_backend: "sqlite".to_string(),
             ipam_db: None,
             ipam_db_url: None,
+            auth_token: None,
+            allow_public_bind: false,
+            require_auth_for_public_bind: true,
         }
     }
 }
@@ -151,6 +162,16 @@ impl ServerConfig {
         )?;
         validate_range_u64("timeout_seconds", self.timeout_seconds, 1, MAX_TIMEOUT_SECONDS)?;
 
+        if self
+            .auth_token
+            .as_ref()
+            .is_some_and(|token| token.trim().is_empty())
+        {
+            return Err(NetcidrError::InvalidInput(
+                "auth_token must not be empty".to_string(),
+            ));
+        }
+
         match self.ipam_backend.as_str() {
             "sqlite" | "postgres" => Ok(()),
             other => Err(NetcidrError::InvalidInput(format!(
@@ -158,6 +179,60 @@ impl ServerConfig {
             ))),
         }
     }
+
+    pub fn auth_token(&self) -> Option<String> {
+        std::env::var(AUTH_TOKEN_ENV)
+            .ok()
+            .filter(|token| !token.trim().is_empty())
+            .or_else(|| {
+                self.auth_token
+                    .clone()
+                    .filter(|token| !token.trim().is_empty())
+            })
+    }
+
+    pub fn auth_configured(&self) -> bool {
+        self.auth_token().is_some()
+    }
+
+    pub fn validate_deployment(&self, bind_address: &str) -> Result<()> {
+        self.validate()?;
+
+        let is_loopback = is_loopback_bind_address(bind_address)?;
+        if !is_loopback {
+            if !self.allow_public_bind {
+                return Err(NetcidrError::InvalidInput(format!(
+                    "refusing to bind to non-loopback address '{bind_address}' unless allow_public_bind=true"
+                )));
+            }
+            if self.require_auth_for_public_bind && !self.auth_configured() {
+                return Err(NetcidrError::InvalidInput(format!(
+                    "refusing to bind to non-loopback address '{bind_address}' without authentication; set {AUTH_TOKEN_ENV} or auth_token"
+                )));
+            }
+        }
+
+        if self.ipam_enabled && !self.auth_configured() {
+            return Err(NetcidrError::InvalidInput(format!(
+                "IPAM API requires authentication; set {AUTH_TOKEN_ENV} or auth_token"
+            )));
+        }
+
+        Ok(())
+    }
+}
+
+fn is_loopback_bind_address(bind_address: &str) -> Result<bool> {
+    let trimmed = bind_address.trim();
+    let host = trimmed
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(trimmed);
+
+    let ip: IpAddr = host.parse().map_err(|_| {
+        NetcidrError::InvalidInput(format!("invalid bind address '{bind_address}'"))
+    })?;
+    Ok(ip.is_loopback())
 }
 
 fn validate_range_usize(name: &str, value: usize, min: usize, max: usize) -> Result<()> {
@@ -202,6 +277,8 @@ mod tests {
         assert_eq!(config.rate_limit_burst, 50);
         assert_eq!(config.timeout_seconds, 30);
         assert!(!config.enable_swagger);
+        assert!(!config.allow_public_bind);
+        assert!(config.require_auth_for_public_bind);
         assert!(config.validate().is_ok());
     }
 
@@ -226,10 +303,14 @@ mod tests {
         let toml_str = r#"
             max_batch_size = 500
             enable_swagger = true
+            auth_token = "test-token"
+            allow_public_bind = true
         "#;
         let config: ServerConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.max_batch_size, 500);
         assert!(config.enable_swagger);
+        assert_eq!(config.auth_token.as_deref(), Some("test-token"));
+        assert!(config.allow_public_bind);
         // defaults for unspecified fields
         assert_eq!(config.max_generated_cidrs, 1_000_000);
         assert!(config.validate().is_ok());
@@ -290,6 +371,9 @@ mod tests {
         assert!(!config.ipam_enabled);
         assert_eq!(config.ipam_backend, "sqlite");
         assert!(config.ipam_db.is_none());
+        assert!(config.auth_token.is_none());
+        assert!(!config.allow_public_bind);
+        assert!(config.require_auth_for_public_bind);
         assert!(config.validate().is_ok());
     }
 
@@ -332,6 +416,66 @@ mod tests {
         let mut config = ServerConfig::default();
         config.ipam_backend = "mysql".to_string();
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_empty_auth_token_is_rejected() {
+        let mut config = ServerConfig::default();
+        config.auth_token = Some("   ".to_string());
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_deployment_allows_loopback_without_auth() {
+        let config = ServerConfig::default();
+        assert!(config.validate_deployment("127.0.0.1").is_ok());
+        assert!(config.validate_deployment("::1").is_ok());
+        assert!(config.validate_deployment("[::1]").is_ok());
+    }
+
+    #[test]
+    fn test_validate_deployment_rejects_public_bind_without_opt_in() {
+        let mut config = ServerConfig::default();
+        config.auth_token = Some("test-token".to_string());
+        assert!(config.validate_deployment("0.0.0.0").is_err());
+    }
+
+    #[test]
+    fn test_validate_deployment_rejects_public_bind_without_auth() {
+        let config = ServerConfig {
+            allow_public_bind: true,
+            ..Default::default()
+        };
+        assert!(config.validate_deployment("0.0.0.0").is_err());
+    }
+
+    #[test]
+    fn test_validate_deployment_allows_public_bind_with_auth_and_opt_in() {
+        let config = ServerConfig {
+            allow_public_bind: true,
+            auth_token: Some("test-token".to_string()),
+            ..Default::default()
+        };
+        assert!(config.validate_deployment("0.0.0.0").is_ok());
+    }
+
+    #[test]
+    fn test_validate_deployment_rejects_ipam_without_auth() {
+        let config = ServerConfig {
+            ipam_enabled: true,
+            ..Default::default()
+        };
+        assert!(config.validate_deployment("127.0.0.1").is_err());
+    }
+
+    #[test]
+    fn test_validate_deployment_allows_ipam_with_auth() {
+        let config = ServerConfig {
+            ipam_enabled: true,
+            auth_token: Some("test-token".to_string()),
+            ..Default::default()
+        };
+        assert!(config.validate_deployment("127.0.0.1").is_ok());
     }
 
     #[test]
