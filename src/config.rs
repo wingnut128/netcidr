@@ -437,12 +437,16 @@ mod tests {
 
     #[test]
     fn test_empty_auth_fields_are_rejected() {
-        let mut config = ServerConfig::default();
-        config.auth_token = Some("   ".to_string());
+        let config = ServerConfig {
+            auth_token: Some("   ".to_string()),
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
 
-        let mut config = ServerConfig::default();
-        config.oidc_audience = Some("   ".to_string());
+        let config = ServerConfig {
+            oidc_audience: Some("   ".to_string()),
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
@@ -468,8 +472,10 @@ mod tests {
 
     #[test]
     fn test_invalid_ipam_backend_is_rejected() {
-        let mut config = ServerConfig::default();
-        config.ipam_backend = "mysql".to_string();
+        let config = ServerConfig {
+            ipam_backend: "mysql".to_string(),
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
