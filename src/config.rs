@@ -265,6 +265,10 @@ impl ServerConfig {
         }
     }
 
+    pub fn auth_config(&self) -> crate::auth::AuthConfig {
+        crate::auth::AuthConfig::new(self.auth_mode, self.auth_token(), self.oidc_audience())
+    }
+
     pub fn validate_deployment(&self, bind_address: &str) -> Result<()> {
         self.validate()?;
 

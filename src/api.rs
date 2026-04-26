@@ -5,6 +5,7 @@ use axum::{
     Extension, Router,
     extract::Query,
     http::{HeaderValue, StatusCode, header},
+    middleware,
     response::{IntoResponse, Json, Response},
     routing::{get, post},
 };
@@ -22,6 +23,7 @@ use utoipa::{IntoParams, OpenApi, ToSchema};
 #[cfg(feature = "swagger")]
 use utoipa_swagger_ui::SwaggerUi;
 
+use crate::auth::require_auth;
 #[cfg(feature = "swagger")]
 use crate::batch::BatchResult;
 use crate::batch::process_batch_with_limit;
@@ -312,6 +314,7 @@ fn format_response<T: Serialize + TextOutput + CsvOutput>(
 
 pub fn create_router(config: RouterConfig) -> Router {
     let config_ext = Arc::new(config.server.clone());
+    let auth_config = config.server.auth_config();
 
     let router = Router::new()
         .route("/health", get(health))
@@ -372,9 +375,13 @@ pub fn create_router(config: RouterConfig) -> Router {
             Vec::<HeaderValue>::new(),
         ))
         .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
-        .allow_headers([header::CONTENT_TYPE]);
+        .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
 
     let router = router
+        .layer(middleware::from_fn(move |request, next| {
+            let auth_config = auth_config.clone();
+            async move { require_auth(auth_config, request, next).await }
+        }))
         .layer(Extension(config_ext))
         .layer(TraceLayer::new_for_http())
         .layer(RequestBodyLimitLayer::new(config.server.max_body_size))

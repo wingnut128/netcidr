@@ -3,7 +3,7 @@ use axum::http::{Request, StatusCode, header};
 use axum::response::Response;
 use http_body_util::BodyExt;
 use netcidr::api::{RouterConfig, create_router};
-use netcidr::config::ServerConfig;
+use netcidr::config::{AuthMode, ServerConfig};
 use tower::ServiceExt;
 
 /// Default config with rate limiting disabled (oneshot tests lack ConnectInfo).
@@ -11,6 +11,18 @@ fn test_config() -> RouterConfig {
     RouterConfig {
         server: ServerConfig {
             rate_limit_per_second: 0,
+            ..ServerConfig::default()
+        },
+        ..RouterConfig::default()
+    }
+}
+
+fn bearer_test_config() -> RouterConfig {
+    RouterConfig {
+        server: ServerConfig {
+            rate_limit_per_second: 0,
+            auth_mode: AuthMode::Bearer,
+            auth_token: Some("test-token".to_string()),
             ..ServerConfig::default()
         },
         ..RouterConfig::default()
@@ -30,6 +42,24 @@ async fn get_with_headers(uri: &str) -> (StatusCode, String, axum::http::HeaderM
     let app = create_router(test_config());
     let req = Request::builder().uri(uri).body(Body::empty()).unwrap();
     let resp: Response = app.oneshot(req).await.unwrap();
+    let status = resp.status();
+    let headers = resp.headers().clone();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    (status, String::from_utf8(body.to_vec()).unwrap(), headers)
+}
+
+async fn get_with_config_and_auth(
+    uri: &str,
+    config: RouterConfig,
+    token: Option<&str>,
+) -> (StatusCode, String, axum::http::HeaderMap) {
+    let app = create_router(config);
+    let mut req = Request::builder().uri(uri);
+    if let Some(token) = token {
+        req = req.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+
+    let resp: Response = app.oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
     let status = resp.status();
     let headers = resp.headers().clone();
     let body = resp.into_body().collect().await.unwrap().to_bytes();
@@ -84,6 +114,46 @@ async fn test_version() {
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(json["name"], "netcidr");
     assert!(json["version"].is_string());
+}
+
+// ── Authentication ─────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_bearer_auth_leaves_public_paths_open() {
+    let (status, body, _) = get_with_config_and_auth("/health", bearer_test_config(), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, "OK");
+
+    let (status, body, _) = get_with_config_and_auth("/version", bearer_test_config(), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(json["name"], "netcidr");
+}
+
+#[tokio::test]
+async fn test_bearer_auth_blocks_protected_paths_without_token() {
+    let (status, body, headers) =
+        get_with_config_and_auth("/features", bearer_test_config(), None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body, "Unauthorized");
+    assert_eq!(headers.get(header::WWW_AUTHENTICATE).unwrap(), "Bearer");
+}
+
+#[tokio::test]
+async fn test_bearer_auth_blocks_invalid_token() {
+    let (status, body, _) =
+        get_with_config_and_auth("/features", bearer_test_config(), Some("wrong-token")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body, "Unauthorized");
+}
+
+#[tokio::test]
+async fn test_bearer_auth_allows_valid_token() {
+    let (status, body, _) =
+        get_with_config_and_auth("/features", bearer_test_config(), Some("test-token")).await;
+    assert_eq!(status, StatusCode::OK);
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(json["ipam"].is_boolean());
 }
 
 // ── IPv4 ────────────────────────────────────────────────────────────
