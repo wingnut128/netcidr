@@ -92,3 +92,26 @@ jobs:
         with:
           tool: cargo-audit
       - run: cargo audit
+
+  ci-status:
+    name: CI Status
+    needs: [changes, verify, audit]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Aggregate required job results
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          VERIFY_RESULT: ${{ needs.verify.result }}
+          AUDIT_RESULT: ${{ needs.audit.result }}
+        run: |
+          fail=0
+          for job in changes verify audit; do
+            var="${job^^}_RESULT"
+            result="${!var}"
+            case "$result" in
+              success|skipped) echo "$job: $result" ;;
+              *) echo "$job: $result (FAIL)"; fail=1 ;;
+            esac
+          done
+          exit "$fail"
