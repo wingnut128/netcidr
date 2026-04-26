@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Dashboard sidebar shows an "API Docs ↗" link to `/swagger-ui` when the server reports the `swagger` feature enabled (via `/features`).
+- New `CI Status` aggregator job in `.github/workflows/ci.yml` that always runs (even when `verify`/`audit` are skipped by the `Detect Changes` paths filter) and aggregates their results. This gives branch protection a single stable required-check name that handles the skipped-required-check trap, replacing the per-job names (`Format & Lint`, `Test`, `Analyze (rust)`) that were renamed/removed when the CI jobs were consolidated in #111.
 
 ## [0.20.0] - 2026-04-23
 
