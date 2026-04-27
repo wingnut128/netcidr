@@ -340,9 +340,15 @@ pub fn create_router(config: RouterConfig) -> Router {
     #[cfg(not(feature = "dashboard"))]
     let router = router;
 
-    // Conditionally mount IPAM routes
+    // Conditionally mount IPAM routes — auth applies only to /ipam/*.
     let router = if let Some(ops) = config.ipam_ops {
-        let ipam_router = crate::ipam_api::create_ipam_router().layer(Extension(ops));
+        let ipam_auth = auth_config.clone();
+        let ipam_router = crate::ipam_api::create_ipam_router()
+            .layer(Extension(ops))
+            .layer(middleware::from_fn(move |request, next| {
+                let auth_config = ipam_auth.clone();
+                async move { require_auth(auth_config, request, next).await }
+            }));
         router.nest("/ipam", ipam_router)
     } else {
         router
@@ -377,11 +383,9 @@ pub fn create_router(config: RouterConfig) -> Router {
         .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
         .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
 
+    let _ = auth_config; // auth is now scoped to /ipam/* above; non-IPAM routes are public.
+
     let router = router
-        .layer(middleware::from_fn(move |request, next| {
-            let auth_config = auth_config.clone();
-            async move { require_auth(auth_config, request, next).await }
-        }))
         .layer(Extension(config_ext))
         .layer(TraceLayer::new_for_http())
         .layer(RequestBodyLimitLayer::new(config.server.max_body_size))

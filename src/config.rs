@@ -11,6 +11,7 @@ const MAX_RATE_LIMIT_BURST: u32 = 100_000;
 const MAX_TIMEOUT_SECONDS: u64 = 300;
 const AUTH_TOKEN_ENV: &str = "NETCIDR_API_TOKEN";
 const OIDC_AUDIENCE_ENV: &str = "NETCIDR_OIDC_AUDIENCE";
+const OIDC_ALLOWED_EMAILS_ENV: &str = "NETCIDR_OIDC_ALLOWED_EMAILS";
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
@@ -57,6 +58,11 @@ pub struct ServerConfig {
     pub auth_token: Option<String>,
     /// Expected OIDC audience. Prefer NETCIDR_OIDC_AUDIENCE in production.
     pub oidc_audience: Option<String>,
+    /// Allowlist of email addresses authorized to call protected endpoints.
+    /// Empty means no allowlist enforcement (any verified principal allowed).
+    /// Prefer NETCIDR_OIDC_ALLOWED_EMAILS (comma-separated) in production.
+    #[serde(default)]
+    pub oidc_allowed_emails: Vec<String>,
     /// Allow binding the HTTP API to a non-loopback address.
     pub allow_public_bind: bool,
     /// Require authentication when binding the HTTP API to a non-loopback address.
@@ -81,6 +87,7 @@ impl Default for ServerConfig {
             auth_mode: AuthMode::None,
             auth_token: None,
             oidc_audience: None,
+            oidc_allowed_emails: Vec::new(),
             allow_public_bind: false,
             require_auth_for_public_bind: true,
         }
@@ -265,8 +272,33 @@ impl ServerConfig {
         }
     }
 
+    pub fn oidc_allowed_emails(&self) -> Vec<String> {
+        let from_env = std::env::var(OIDC_ALLOWED_EMAILS_ENV)
+            .ok()
+            .filter(|s| !s.trim().is_empty());
+        let raw = match from_env {
+            Some(v) => v
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>(),
+            None => self
+                .oidc_allowed_emails
+                .iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>(),
+        };
+        raw.into_iter().map(|s| s.to_ascii_lowercase()).collect()
+    }
+
     pub fn auth_config(&self) -> crate::auth::AuthConfig {
-        crate::auth::AuthConfig::new(self.auth_mode, self.auth_token(), self.oidc_audience())
+        crate::auth::AuthConfig::new(
+            self.auth_mode,
+            self.auth_token(),
+            self.oidc_audience(),
+            self.oidc_allowed_emails(),
+        )
     }
 
     pub fn validate_deployment(&self, bind_address: &str) -> Result<()> {

@@ -14,9 +14,8 @@ use tracing::warn;
 
 use crate::config::AuthMode;
 
-const IAP_JWT_HEADER: &str = "x-goog-iap-jwt-assertion";
-const IAP_ISSUER: &str = "https://cloud.google.com/iap";
-const IAP_PUBLIC_KEYS_URL: &str = "https://www.gstatic.com/iap/verify/public_key";
+const GOOGLE_ISSUERS: &[&str] = &["https://accounts.google.com", "accounts.google.com"];
+const GOOGLE_JWKS_URL: &str = "https://www.googleapis.com/oauth2/v3/certs";
 const DEFAULT_KEY_TTL: Duration = Duration::from_secs(60 * 60);
 const MIN_KEY_TTL: Duration = Duration::from_secs(60);
 const CLOCK_SKEW_SECONDS: u64 = 60;
@@ -40,6 +39,7 @@ pub struct AuthConfig {
     mode: AuthMode,
     bearer_token: Option<String>,
     oidc_audience: Option<String>,
+    allowed_emails: Vec<String>,
 }
 
 impl AuthConfig {
@@ -47,11 +47,16 @@ impl AuthConfig {
         mode: AuthMode,
         bearer_token: Option<String>,
         oidc_audience: Option<String>,
+        allowed_emails: Vec<String>,
     ) -> Self {
         Self {
             mode,
             bearer_token,
             oidc_audience,
+            allowed_emails: allowed_emails
+                .into_iter()
+                .map(|e| e.to_ascii_lowercase())
+                .collect(),
         }
     }
 
@@ -60,11 +65,19 @@ impl AuthConfig {
     }
 
     pub fn bearer(token: Option<String>) -> Self {
-        Self::new(AuthMode::Bearer, token, None)
+        Self::new(AuthMode::Bearer, token, None, Vec::new())
     }
 
     pub fn oidc(audience: Option<String>) -> Self {
-        Self::new(AuthMode::Oidc, None, audience)
+        Self::new(AuthMode::Oidc, None, audience, Vec::new())
+    }
+
+    pub fn with_allowed_emails(mut self, emails: Vec<String>) -> Self {
+        self.allowed_emails = emails
+            .into_iter()
+            .map(|e| e.to_ascii_lowercase())
+            .collect();
+        self
     }
 
     pub fn enabled(&self) -> bool {
@@ -74,10 +87,23 @@ impl AuthConfig {
     pub fn mode(&self) -> AuthMode {
         self.mode
     }
+
+    fn email_allowed(&self, email: Option<&str>) -> bool {
+        if self.allowed_emails.is_empty() {
+            return true;
+        }
+        match email {
+            Some(addr) => self
+                .allowed_emails
+                .iter()
+                .any(|allowed| allowed == &addr.to_ascii_lowercase()),
+            None => false,
+        }
+    }
 }
 
 pub async fn require_auth(config: AuthConfig, mut request: Request, next: Next) -> Response {
-    if is_public_path(request.uri().path()) || !config.enabled() {
+    if !config.enabled() {
         return next.run(request).await;
     }
 
@@ -92,6 +118,14 @@ pub async fn require_auth(config: AuthConfig, mut request: Request, next: Next) 
     let Some(principal) = principal else {
         return unauthorized(config.mode);
     };
+
+    if !config.email_allowed(principal.email.as_deref()) {
+        warn!(
+            email = principal.email.as_deref().unwrap_or("<none>"),
+            "rejecting authenticated principal not in allowlist"
+        );
+        return forbidden();
+    }
 
     request.extensions_mut().insert(principal);
     next.run(request).await
@@ -124,20 +158,18 @@ async fn authenticate_oidc(
     expected_audience: Option<&str>,
 ) -> Option<AuthenticatedPrincipal> {
     let expected_audience = expected_audience?;
-    let jwt = headers.get(IAP_JWT_HEADER).and_then(header_to_str)?;
-    let keys = iap_public_keys().await.ok()?;
-    let claims = validate_iap_jwt(jwt, expected_audience, &keys)?;
+    let jwt = bearer_token(headers.get(header::AUTHORIZATION))?;
+    let keys = google_public_keys().await.ok()?;
+    let claims = validate_google_id_token(jwt, expected_audience, &keys)?;
 
     Some(AuthenticatedPrincipal {
         kind: PrincipalKind::Oidc,
         subject: claims.sub,
-        email: claims.email,
+        email: claims
+            .email
+            .filter(|_| claims.email_verified.unwrap_or(false)),
         audience: Some(claims.aud),
     })
-}
-
-fn is_public_path(path: &str) -> bool {
-    matches!(path, "/health" | "/version")
 }
 
 fn bearer_token(header_value: Option<&HeaderValue>) -> Option<&str> {
@@ -167,6 +199,10 @@ fn unauthorized(mode: AuthMode) -> Response {
         .into_response()
 }
 
+fn forbidden() -> Response {
+    (StatusCode::FORBIDDEN, "Forbidden").into_response()
+}
+
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     let max_len = a.len().max(b.len());
     let mut diff = a.len() ^ b.len();
@@ -186,25 +222,32 @@ struct OidcClaims {
     sub: String,
     aud: String,
     email: Option<String>,
+    email_verified: Option<bool>,
     exp: usize,
     iat: usize,
     nbf: Option<usize>,
     iss: String,
 }
 
+#[derive(Clone, Debug)]
+struct GoogleKey {
+    n: String,
+    e: String,
+}
+
 #[derive(Debug, Default)]
-struct IapKeyCache {
-    keys: HashMap<String, String>,
+struct GoogleKeyCache {
+    keys: HashMap<String, GoogleKey>,
     expires_at: Option<Instant>,
 }
 
-static IAP_KEYS: OnceLock<RwLock<IapKeyCache>> = OnceLock::new();
+static GOOGLE_KEYS: OnceLock<RwLock<GoogleKeyCache>> = OnceLock::new();
 
-fn key_cache() -> &'static RwLock<IapKeyCache> {
-    IAP_KEYS.get_or_init(|| RwLock::new(IapKeyCache::default()))
+fn key_cache() -> &'static RwLock<GoogleKeyCache> {
+    GOOGLE_KEYS.get_or_init(|| RwLock::new(GoogleKeyCache::default()))
 }
 
-async fn iap_public_keys() -> Result<HashMap<String, String>, ()> {
+async fn google_public_keys() -> Result<HashMap<String, GoogleKey>, ()> {
     let now = Instant::now();
     {
         let cache = key_cache().read().await;
@@ -213,8 +256,8 @@ async fn iap_public_keys() -> Result<HashMap<String, String>, ()> {
         }
     }
 
-    let (keys, ttl) = fetch_iap_public_keys().await.map_err(|err| {
-        warn!(error = %err, "failed to refresh Google IAP public keys");
+    let (keys, ttl) = fetch_google_public_keys().await.map_err(|err| {
+        warn!(error = %err, "failed to refresh Google OAuth public keys");
     })?;
 
     let mut cache = key_cache().write().await;
@@ -223,9 +266,24 @@ async fn iap_public_keys() -> Result<HashMap<String, String>, ()> {
     Ok(keys)
 }
 
-async fn fetch_iap_public_keys() -> Result<(HashMap<String, String>, Duration), reqwest::Error> {
+#[derive(Debug, Deserialize)]
+struct JwkSet {
+    keys: Vec<Jwk>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Jwk {
+    kid: String,
+    #[serde(default)]
+    kty: String,
+    n: String,
+    e: String,
+}
+
+async fn fetch_google_public_keys()
+-> Result<(HashMap<String, GoogleKey>, Duration), reqwest::Error> {
     let response = reqwest::Client::new()
-        .get(IAP_PUBLIC_KEYS_URL)
+        .get(GOOGLE_JWKS_URL)
         .send()
         .await?
         .error_for_status()?;
@@ -235,7 +293,13 @@ async fn fetch_iap_public_keys() -> Result<(HashMap<String, String>, Duration), 
         .and_then(|value| value.to_str().ok())
         .and_then(cache_control_max_age)
         .unwrap_or(DEFAULT_KEY_TTL);
-    let keys = response.json::<HashMap<String, String>>().await?;
+    let jwk_set = response.json::<JwkSet>().await?;
+    let keys = jwk_set
+        .keys
+        .into_iter()
+        .filter(|k| k.kty == "RSA" || k.kty.is_empty())
+        .map(|k| (k.kid, GoogleKey { n: k.n, e: k.e }))
+        .collect();
     Ok((keys, ttl))
 }
 
@@ -248,22 +312,22 @@ fn cache_control_max_age(value: &str) -> Option<Duration> {
         .map(Duration::from_secs)
 }
 
-fn validate_iap_jwt(
+fn validate_google_id_token(
     jwt: &str,
     expected_audience: &str,
-    keys: &HashMap<String, String>,
+    keys: &HashMap<String, GoogleKey>,
 ) -> Option<OidcClaims> {
     let header = decode_header(jwt).ok()?;
-    if header.alg != Algorithm::ES256 {
+    if header.alg != Algorithm::RS256 {
         return None;
     }
     let kid = header.kid.as_deref()?;
-    let pem = keys.get(kid)?;
-    let decoding_key = DecodingKey::from_ec_pem(pem.as_bytes()).ok()?;
+    let key = keys.get(kid)?;
+    let decoding_key = DecodingKey::from_rsa_components(&key.n, &key.e).ok()?;
 
-    let mut validation = Validation::new(Algorithm::ES256);
+    let mut validation = Validation::new(Algorithm::RS256);
     validation.set_audience(&[expected_audience]);
-    validation.set_issuer(&[IAP_ISSUER]);
+    validation.set_issuer(GOOGLE_ISSUERS);
     validation.leeway = CLOCK_SKEW_SECONDS;
     validation.validate_exp = true;
     validation.validate_nbf = true;
@@ -287,18 +351,21 @@ fn issued_in_future(iat: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
     use jsonwebtoken::{EncodingKey, Header, encode};
+    use rsa::pkcs8::EncodePrivateKey;
+    use rsa::traits::PublicKeyParts;
+    use rsa::{RsaPrivateKey, RsaPublicKey};
     use serde::Serialize;
 
     const TEST_KEY_ID: &str = "test-key";
-    const TEST_PRIVATE_KEY: &str = include_str!("../tests/fixtures/iap-test-private.pem");
-    const TEST_PUBLIC_KEY: &str = include_str!("../tests/fixtures/iap-test-public.pem");
 
     #[derive(Serialize)]
     struct TestClaims {
         sub: String,
         aud: String,
         email: Option<String>,
+        email_verified: Option<bool>,
         iss: String,
         exp: usize,
         iat: usize,
@@ -311,45 +378,52 @@ mod tests {
             .as_secs() as usize
     }
 
-    fn key_map() -> HashMap<String, String> {
-        HashMap::from([(TEST_KEY_ID.to_string(), TEST_PUBLIC_KEY.to_string())])
+    fn b64url(bytes: &[u8]) -> String {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
     }
 
-    fn signed_iap_jwt(subject: &str, audience: &str, issuer: &str, exp: usize) -> String {
-        signed_iap_jwt_with_iat(subject, audience, issuer, exp, now_seconds())
+    fn test_keypair() -> (RsaPrivateKey, RsaPublicKey) {
+        let mut rng = rand::thread_rng();
+        let private = RsaPrivateKey::new(&mut rng, 2048).expect("generate test RSA key");
+        let public = RsaPublicKey::from(&private);
+        (private, public)
     }
 
-    fn signed_iap_jwt_with_iat(
+    fn key_map(public: &RsaPublicKey) -> HashMap<String, GoogleKey> {
+        let n = b64url(&public.n().to_bytes_be());
+        let e = b64url(&public.e().to_bytes_be());
+        HashMap::from([(TEST_KEY_ID.to_string(), GoogleKey { n, e })])
+    }
+
+    fn signed_id_token(
+        private: &RsaPrivateKey,
         subject: &str,
         audience: &str,
         issuer: &str,
         exp: usize,
         iat: usize,
+        email_verified: Option<bool>,
     ) -> String {
-        let mut header = Header::new(Algorithm::ES256);
+        let mut header = Header::new(Algorithm::RS256);
         header.kid = Some(TEST_KEY_ID.to_string());
         let claims = TestClaims {
             sub: subject.to_string(),
             aud: audience.to_string(),
             email: Some("user@example.com".to_string()),
+            email_verified,
             iss: issuer.to_string(),
             exp,
             iat,
         };
+        let pem = private
+            .to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)
+            .expect("encode private key");
         encode(
             &header,
             &claims,
-            &EncodingKey::from_ec_pem(TEST_PRIVATE_KEY.as_bytes()).unwrap(),
+            &EncodingKey::from_rsa_pem(pem.as_bytes()).expect("decoding key"),
         )
-        .unwrap()
-    }
-
-    #[test]
-    fn public_paths_do_not_require_auth() {
-        assert!(is_public_path("/health"));
-        assert!(is_public_path("/version"));
-        assert!(!is_public_path("/features"));
-        assert!(!is_public_path("/ipam/supernets"));
+        .expect("sign jwt")
     }
 
     #[test]
@@ -404,34 +478,135 @@ mod tests {
     }
 
     #[test]
-    fn iap_jwt_validation_accepts_valid_signed_token() {
-        let jwt = signed_iap_jwt(
-            "accounts.google.com:123",
+    fn google_id_token_validation_accepts_valid_signed_token() {
+        let (private, public) = test_keypair();
+        let issuer = "https://accounts.google.com";
+        let jwt = signed_id_token(
+            &private,
+            "117290938723847238472",
             "expected-audience",
-            IAP_ISSUER,
+            issuer,
             now_seconds() + 3600,
+            now_seconds(),
+            Some(true),
         );
-        let claims = validate_iap_jwt(&jwt, "expected-audience", &key_map()).unwrap();
-        assert_eq!(claims.sub, "accounts.google.com:123");
-        assert_eq!(claims.email.as_deref(), Some("user@example.com"));
+        let claims = validate_google_id_token(&jwt, "expected-audience", &key_map(&public)).unwrap();
+        assert_eq!(claims.sub, "117290938723847238472");
         assert_eq!(claims.aud, "expected-audience");
     }
 
-    #[tokio::test]
-    async fn oidc_auth_extracts_identity_from_valid_iap_jwt() {
-        let jwt = signed_iap_jwt(
-            "accounts.google.com:123",
+    #[test]
+    fn google_id_token_validation_accepts_short_form_issuer() {
+        let (private, public) = test_keypair();
+        let jwt = signed_id_token(
+            &private,
+            "117290938723847238472",
             "expected-audience",
-            IAP_ISSUER,
+            "accounts.google.com",
             now_seconds() + 3600,
+            now_seconds(),
+            Some(true),
+        );
+        assert!(validate_google_id_token(&jwt, "expected-audience", &key_map(&public)).is_some());
+    }
+
+    #[test]
+    fn google_id_token_validation_rejects_bad_audience() {
+        let (private, public) = test_keypair();
+        let jwt = signed_id_token(
+            &private,
+            "117290938723847238472",
+            "expected-audience",
+            "https://accounts.google.com",
+            now_seconds() + 3600,
+            now_seconds(),
+            Some(true),
+        );
+        assert!(validate_google_id_token(&jwt, "other-audience", &key_map(&public)).is_none());
+    }
+
+    #[test]
+    fn google_id_token_validation_rejects_bad_issuer() {
+        let (private, public) = test_keypair();
+        let jwt = signed_id_token(
+            &private,
+            "117290938723847238472",
+            "expected-audience",
+            "https://issuer.example.com",
+            now_seconds() + 3600,
+            now_seconds(),
+            Some(true),
+        );
+        assert!(validate_google_id_token(&jwt, "expected-audience", &key_map(&public)).is_none());
+    }
+
+    #[test]
+    fn google_id_token_validation_rejects_unknown_key_id() {
+        let (private, _public) = test_keypair();
+        let jwt = signed_id_token(
+            &private,
+            "117290938723847238472",
+            "expected-audience",
+            "https://accounts.google.com",
+            now_seconds() + 3600,
+            now_seconds(),
+            Some(true),
+        );
+        assert!(validate_google_id_token(&jwt, "expected-audience", &HashMap::new()).is_none());
+    }
+
+    #[test]
+    fn google_id_token_validation_rejects_expired_token() {
+        let (private, public) = test_keypair();
+        let jwt = signed_id_token(
+            &private,
+            "117290938723847238472",
+            "expected-audience",
+            "https://accounts.google.com",
+            now_seconds() - 3600,
+            now_seconds() - 7200,
+            Some(true),
+        );
+        assert!(validate_google_id_token(&jwt, "expected-audience", &key_map(&public)).is_none());
+    }
+
+    #[test]
+    fn google_id_token_validation_rejects_future_issued_token() {
+        let (private, public) = test_keypair();
+        let future = now_seconds() + 3600;
+        let jwt = signed_id_token(
+            &private,
+            "117290938723847238472",
+            "expected-audience",
+            "https://accounts.google.com",
+            future,
+            future,
+            Some(true),
+        );
+        assert!(validate_google_id_token(&jwt, "expected-audience", &key_map(&public)).is_none());
+    }
+
+    #[tokio::test]
+    async fn oidc_auth_extracts_identity_from_valid_id_token() {
+        let (private, public) = test_keypair();
+        let jwt = signed_id_token(
+            &private,
+            "117290938723847238472",
+            "expected-audience",
+            "https://accounts.google.com",
+            now_seconds() + 3600,
+            now_seconds(),
+            Some(true),
         );
         let mut headers = HeaderMap::new();
-        headers.insert(IAP_JWT_HEADER, HeaderValue::from_str(&jwt).unwrap());
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {jwt}")).unwrap(),
+        );
 
-        let cache = key_cache();
         {
-            let mut cache = cache.write().await;
-            cache.keys = key_map();
+            let mut cache = key_cache().write().await;
+            cache.keys = key_map(&public);
             cache.expires_at = Some(Instant::now() + DEFAULT_KEY_TTL);
         }
 
@@ -439,69 +614,43 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(principal.kind, PrincipalKind::Oidc);
-        assert_eq!(principal.subject, "accounts.google.com:123");
+        assert_eq!(principal.subject, "117290938723847238472");
         assert_eq!(principal.email.as_deref(), Some("user@example.com"));
         assert_eq!(principal.audience.as_deref(), Some("expected-audience"));
     }
 
-    #[test]
-    fn iap_jwt_validation_rejects_bad_audience() {
-        let jwt = signed_iap_jwt(
-            "accounts.google.com:123",
+    #[tokio::test]
+    async fn oidc_auth_drops_email_when_unverified() {
+        let (private, public) = test_keypair();
+        let jwt = signed_id_token(
+            &private,
+            "117290938723847238472",
             "expected-audience",
-            IAP_ISSUER,
+            "https://accounts.google.com",
             now_seconds() + 3600,
+            now_seconds(),
+            Some(false),
         );
-        assert!(validate_iap_jwt(&jwt, "other-audience", &key_map()).is_none());
-    }
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {jwt}")).unwrap(),
+        );
 
-    #[test]
-    fn iap_jwt_validation_rejects_bad_issuer() {
-        let jwt = signed_iap_jwt(
-            "accounts.google.com:123",
-            "expected-audience",
-            "https://issuer.example.com",
-            now_seconds() + 3600,
-        );
-        assert!(validate_iap_jwt(&jwt, "expected-audience", &key_map()).is_none());
-    }
+        {
+            let mut cache = key_cache().write().await;
+            cache.keys = key_map(&public);
+            cache.expires_at = Some(Instant::now() + DEFAULT_KEY_TTL);
+        }
 
-    #[test]
-    fn iap_jwt_validation_rejects_unknown_key_id() {
-        let jwt = signed_iap_jwt(
-            "accounts.google.com:123",
-            "expected-audience",
-            IAP_ISSUER,
-            now_seconds() + 3600,
-        );
-        assert!(validate_iap_jwt(&jwt, "expected-audience", &HashMap::new()).is_none());
-    }
-
-    #[test]
-    fn iap_jwt_validation_rejects_expired_token() {
-        let jwt = signed_iap_jwt(
-            "accounts.google.com:123",
-            "expected-audience",
-            IAP_ISSUER,
-            now_seconds() - 3600,
-        );
-        assert!(validate_iap_jwt(&jwt, "expected-audience", &key_map()).is_none());
-    }
-
-    #[test]
-    fn iap_jwt_validation_rejects_future_issued_token() {
-        let jwt = signed_iap_jwt_with_iat(
-            "accounts.google.com:123",
-            "expected-audience",
-            IAP_ISSUER,
-            now_seconds() + 3600,
-            now_seconds() + 3600,
-        );
-        assert!(validate_iap_jwt(&jwt, "expected-audience", &key_map()).is_none());
+        let principal = authenticate_oidc(&headers, Some("expected-audience"))
+            .await
+            .unwrap();
+        assert_eq!(principal.email, None);
     }
 
     #[tokio::test]
-    async fn oidc_auth_rejects_missing_iap_header() {
+    async fn oidc_auth_rejects_missing_authorization_header() {
         let headers = HeaderMap::new();
         assert!(
             authenticate_oidc(&headers, Some("expected-audience"))
@@ -511,9 +660,10 @@ mod tests {
     }
 
     #[test]
-    fn iap_jwt_validation_rejects_malformed_jwt() {
-        assert!(validate_iap_jwt("not-a-jwt", "expected-audience", &key_map()).is_none());
-        assert!(validate_iap_jwt("a.b.c", "expected-audience", &key_map()).is_none());
+    fn google_id_token_validation_rejects_malformed_jwt() {
+        let (_private, public) = test_keypair();
+        assert!(validate_google_id_token("not-a-jwt", "expected-audience", &key_map(&public)).is_none());
+        assert!(validate_google_id_token("a.b.c", "expected-audience", &key_map(&public)).is_none());
     }
 
     #[test]
@@ -523,5 +673,23 @@ mod tests {
             Some(Duration::from_secs(123))
         );
         assert_eq!(cache_control_max_age("no-cache"), None);
+    }
+
+    #[test]
+    fn email_allowlist_permits_listed_addresses() {
+        let config = AuthConfig::oidc(Some("aud".to_string()))
+            .with_allowed_emails(vec!["alice@example.com".to_string(), "BOB@EXAMPLE.COM".to_string()]);
+        assert!(config.email_allowed(Some("alice@example.com")));
+        assert!(config.email_allowed(Some("ALICE@example.com")));
+        assert!(config.email_allowed(Some("bob@example.com")));
+        assert!(!config.email_allowed(Some("eve@example.com")));
+        assert!(!config.email_allowed(None));
+    }
+
+    #[test]
+    fn empty_allowlist_permits_anyone() {
+        let config = AuthConfig::oidc(Some("aud".to_string()));
+        assert!(config.email_allowed(Some("anyone@example.com")));
+        assert!(config.email_allowed(None));
     }
 }

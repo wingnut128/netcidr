@@ -1,10 +1,31 @@
+use std::sync::Arc;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use axum::response::Response;
 use http_body_util::BodyExt;
 use netcidr::api::{RouterConfig, create_router};
 use netcidr::config::{AuthMode, ServerConfig};
+use netcidr::ipam::operations::IpamOps;
+use netcidr::ipam::sqlite::SqliteStore;
+use netcidr::ipam::store::IpamStore;
 use tower::ServiceExt;
+
+async fn bearer_ipam_test_config() -> RouterConfig {
+    let store = SqliteStore::in_memory().unwrap();
+    store.initialize().await.unwrap();
+    store.migrate().await.unwrap();
+    let ops = Arc::new(IpamOps::new(Arc::new(store)));
+    RouterConfig {
+        server: ServerConfig {
+            rate_limit_per_second: 0,
+            auth_mode: AuthMode::Bearer,
+            auth_token: Some("test-token".to_string()),
+            ..ServerConfig::default()
+        },
+        ipam_ops: Some(ops),
+    }
+}
 
 /// Default config with rate limiting disabled (oneshot tests lack ConnectInfo).
 fn test_config() -> RouterConfig {
@@ -131,29 +152,43 @@ async fn test_bearer_auth_leaves_public_paths_open() {
 }
 
 #[tokio::test]
-async fn test_bearer_auth_blocks_protected_paths_without_token() {
+async fn test_bearer_auth_blocks_ipam_without_token() {
     let (status, body, headers) =
-        get_with_config_and_auth("/features", bearer_test_config(), None).await;
+        get_with_config_and_auth("/ipam/supernets", bearer_ipam_test_config().await, None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(body, "Unauthorized");
     assert_eq!(headers.get(header::WWW_AUTHENTICATE).unwrap(), "Bearer");
 }
 
 #[tokio::test]
-async fn test_bearer_auth_blocks_invalid_token() {
-    let (status, body, _) =
-        get_with_config_and_auth("/features", bearer_test_config(), Some("wrong-token")).await;
+async fn test_bearer_auth_blocks_ipam_with_invalid_token() {
+    let (status, body, _) = get_with_config_and_auth(
+        "/ipam/supernets",
+        bearer_ipam_test_config().await,
+        Some("wrong-token"),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(body, "Unauthorized");
 }
 
 #[tokio::test]
-async fn test_bearer_auth_allows_valid_token() {
-    let (status, body, _) =
-        get_with_config_and_auth("/features", bearer_test_config(), Some("test-token")).await;
+async fn test_bearer_auth_allows_ipam_with_valid_token() {
+    let (status, _body, _) = get_with_config_and_auth(
+        "/ipam/supernets",
+        bearer_ipam_test_config().await,
+        Some("test-token"),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
-    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
-    assert!(json["ipam"].is_boolean());
+}
+
+#[tokio::test]
+async fn test_non_ipam_routes_are_public_even_when_auth_configured() {
+    // Auth is scoped to /ipam/* — calculator/health/version remain public.
+    let (status, _body, _) =
+        get_with_config_and_auth("/features", bearer_ipam_test_config().await, None).await;
+    assert_eq!(status, StatusCode::OK);
 }
 
 // ── IPv4 ────────────────────────────────────────────────────────────

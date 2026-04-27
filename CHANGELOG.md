@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Dashboard sidebar shows an "API Docs ↗" link to `/swagger-ui` when the server reports the `swagger` feature enabled (via `/features`).
+- `oidc_allowed_emails` config field and `NETCIDR_OIDC_ALLOWED_EMAILS` env var (comma-separated) — when set, only verified Google identities whose email matches the allowlist may call `/ipam/*`.
+
+### Changed
+
+- OIDC mode now validates Google OAuth ID tokens (RS256, JWKS at `https://www.googleapis.com/oauth2/v3/certs`, issuer `accounts.google.com`) read from `Authorization: Bearer <id_token>`. Replaces the previous IAP JWT validation against `x-goog-iap-jwt-assertion`. The expected audience (`oidc_audience` / `NETCIDR_OIDC_AUDIENCE`) is now your Google OAuth Web Client ID.
+- HTTP authentication is now scoped to `/ipam/*` only. Calculator, split, contains, summarize, from-range, batch, health, version, and features endpoints are public regardless of `auth_mode`.
 
 ## [0.20.0] - 2026-04-23
 
