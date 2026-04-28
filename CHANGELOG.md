@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dashboard now signs in to Google directly via `oidc-client-ts` (implicit `id_token` flow) and attaches `Authorization: Bearer <id_token>` to `/ipam/*` requests. Configure with `VITE_OAUTH_WEB_CLIENT_ID` at build time. Server serves the SPA at `/auth/callback` and `/auth/silent-callback` so the OAuth redirect can complete.
 - Dashboard light/dark theme toggle in the sidebar (also `⌘+J` / `Ctrl+J`). Light is the default; first-visit theme follows the OS `prefers-color-scheme`; choice persists in `localStorage`.
 - Inline Google sign-in card on the IPAM tab when unauthenticated; the public tools (Calc/Split/Contains/Summarize/Range/Visualize) remain available without sign-in.
+- New `lambda` Cargo feature and `lambda` binary (`src/bin/lambda.rs`) that wraps the Axum router with `lambda_http` for AWS Lambda deployment. Reads runtime config from env vars (`NETCIDR_AUTH_MODE`, `NETCIDR_OIDC_AUDIENCE`, `NETCIDR_OIDC_ALLOWED_EMAILS`, `NETCIDR_DATABASE_URL`, `NETCIDR_IPAM_BACKEND`, `NETCIDR_IPAM_ENABLED`). Build with `cargo lambda build --release --arm64 --bin lambda --features lambda,ipam-postgres`. The standard `netcidr` binary is unchanged.
 
 ### Changed
 
