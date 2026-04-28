@@ -43,6 +43,11 @@ async fn main() -> Result<(), Error> {
         ipam_backend: env_or("NETCIDR_IPAM_BACKEND", "postgres"),
         ipam_db_url: std::env::var("NETCIDR_DATABASE_URL").ok(),
         enable_swagger: false,
+        // Disable the per-IP rate limiter under Lambda. tower_governor needs
+        // ConnectInfo<SocketAddr> from a real TCP peer, which lambda_http
+        // doesn't provide — every request would 500 with "Unable To Extract
+        // Key!". AWS Lambda's own concurrency limits cover throttling.
+        rate_limit_per_second: 0,
         ..ServerConfig::default()
     };
 
