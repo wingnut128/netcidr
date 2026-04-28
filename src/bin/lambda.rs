@@ -42,7 +42,7 @@ async fn main() -> Result<(), Error> {
         ipam_enabled: env_or("NETCIDR_IPAM_ENABLED", "true") == "true",
         ipam_backend: env_or("NETCIDR_IPAM_BACKEND", "postgres"),
         ipam_db_url: std::env::var("NETCIDR_DATABASE_URL").ok(),
-        enable_swagger: false,
+        enable_swagger: env_or("NETCIDR_ENABLE_SWAGGER", "true") == "true",
         // Disable the per-IP rate limiter under Lambda. tower_governor needs
         // ConnectInfo<SocketAddr> from a real TCP peer, which lambda_http
         // doesn't provide — every request would 500 with "Unable To Extract
