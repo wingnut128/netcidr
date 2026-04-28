@@ -1,34 +1,77 @@
 @import "tailwindcss";
 
 /*
- * Design system: Brutalist Industrial (dark terminal aesthetic)
- * Migrated from the original dashboard.html CSS variables.
+ * Theme tokens are exposed to Tailwind via @theme as `var(...)` references,
+ * so the actual color values can switch at runtime by toggling
+ * `data-theme="dark"` on <html>. Light is the default.
+ *
+ * The token *names* (bg, surface, cyan, …) are kept stable so existing
+ * utility classes like `bg-bg`, `text-cyan`, `border-border` still work
+ * unchanged across themes. Color *roles* in the dark theme stay close to
+ * the original brutalist palette; the light theme reinterprets them as a
+ * cleaner indigo-on-neutral look.
  */
-@theme {
-  --color-bg: #0a0a0a;
-  --color-surface: #111111;
-  --color-surface2: #1a1a1a;
-  --color-border: #333333;
-  --color-border-thick: #444444;
-  --color-text: #e8e8e8;
-  --color-text-muted: #777777;
-  --color-cyan: #00ffcc;
-  --color-red: #ff3333;
-  --color-yellow: #ffcc00;
-  --color-green: #33ff33;
-  --color-orange: #ff8800;
-  --color-purple: #cc66ff;
+@theme inline {
+  --color-bg: var(--c-bg);
+  --color-surface: var(--c-surface);
+  --color-surface2: var(--c-surface2);
+  --color-border: var(--c-border);
+  --color-border-thick: var(--c-border-thick);
+  --color-text: var(--c-text);
+  --color-text-muted: var(--c-text-muted);
+  --color-cyan: var(--c-accent);
+  --color-red: var(--c-danger);
+  --color-yellow: var(--c-warning);
+  --color-green: var(--c-success);
+  --color-orange: var(--c-orange);
+  --color-purple: var(--c-purple);
 
   --font-mono: ui-monospace, "SFMono-Regular", "Cascadia Code",
     "JetBrains Mono", Menlo, monospace;
+}
+
+/* Light theme (default) — clean indigo-on-neutral. */
+:root {
+  --c-bg: #ffffff;
+  --c-surface: #f8f9fb;
+  --c-surface2: #f1f3f6;
+  --c-border: #e3e6eb;
+  --c-border-thick: #cdd2da;
+  --c-text: #0d1117;
+  --c-text-muted: #5b6470;
+  --c-accent: #5b5bd6;
+  --c-success: #1f9d55;
+  --c-warning: #b76e00;
+  --c-danger: #d12a4a;
+  --c-orange: #c2410c;
+  --c-purple: #7c3aed;
+  color-scheme: light;
+}
+
+/* Dark theme — softened from the original neon palette. */
+:root[data-theme="dark"] {
+  --c-bg: #0a0a0a;
+  --c-surface: #111111;
+  --c-surface2: #1a1a1a;
+  --c-border: #333333;
+  --c-border-thick: #444444;
+  --c-text: #e8e8e8;
+  --c-text-muted: #777777;
+  --c-accent: #00ffcc;
+  --c-success: #33ff33;
+  --c-warning: #ffcc00;
+  --c-danger: #ff3333;
+  --c-orange: #ff8800;
+  --c-purple: #cc66ff;
+  color-scheme: dark;
 }
 
 /* Base styles */
 body {
   margin: 0;
   padding: 0;
-  background: var(--color-bg);
-  color: var(--color-text);
+  background: var(--c-bg);
+  color: var(--c-text);
   font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.5;
@@ -42,18 +85,18 @@ body {
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--color-bg);
+  background: var(--c-bg);
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--color-border);
+  background: var(--c-border);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-border-thick);
+  background: var(--c-border-thick);
 }
 
 /* Selection */
 ::selection {
-  background: var(--color-cyan);
-  color: var(--color-bg);
+  background: var(--c-accent);
+  color: var(--c-bg);
 }

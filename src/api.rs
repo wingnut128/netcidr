@@ -336,7 +336,11 @@ pub fn create_router(config: RouterConfig) -> Router {
     #[cfg(feature = "dashboard")]
     let router = router
         .route("/dashboard", get(dashboard))
-        .route("/", get(dashboard));
+        .route("/", get(dashboard))
+        // OAuth redirect targets — the SPA boot script reads the URL
+        // fragment, completes the sign-in, then bounces to the hash route.
+        .route("/auth/callback", get(dashboard))
+        .route("/auth/silent-callback", get(dashboard));
     #[cfg(not(feature = "dashboard"))]
     let router = router;
 

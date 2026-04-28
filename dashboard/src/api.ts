@@ -13,15 +13,20 @@ export class ApiError extends Error {
   }
 }
 
+import { getCurrentIdToken } from "./auth/oidc";
+
 async function request<T>(
   method: string,
   path: string,
   body?: unknown,
 ): Promise<T> {
-  const opts: RequestInit = {
-    method,
-    headers: { "Content-Type": "application/json" },
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
   };
+  const idToken = getCurrentIdToken();
+  if (idToken) headers["Authorization"] = `Bearer ${idToken}`;
+
+  const opts: RequestInit = { method, headers };
   if (body !== undefined) {
     opts.body = JSON.stringify(body);
   }
