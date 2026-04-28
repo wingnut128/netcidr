@@ -7,6 +7,7 @@ import { Summarize } from "./pages/Summarize";
 import { FromRange } from "./pages/FromRange";
 import { Ipam } from "./pages/Ipam";
 import { Visualizer } from "./pages/Visualizer";
+import { AllowlistAdmin } from "./pages/AllowlistAdmin";
 
 export function App() {
   return (
@@ -20,6 +21,7 @@ export function App() {
           <Route path="from-range" element={<FromRange />} />
           <Route path="visualizer" element={<Visualizer />} />
           <Route path="ipam" element={<Ipam />} />
+          <Route path="admin/allowlist" element={<AllowlistAdmin />} />
         </Route>
       </Routes>
     </HashRouter>

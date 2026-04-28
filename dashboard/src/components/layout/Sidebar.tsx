@@ -37,6 +37,9 @@ export function Sidebar({ ipamEnabled, swaggerEnabled }: SidebarProps) {
   const navItems = ipamEnabled
     ? [...baseNavItems, { to: "/ipam", label: "IPAM" }]
     : baseNavItems;
+  const adminItems = auth.isAdmin
+    ? [{ to: "/admin/allowlist", label: "Allowlist" }]
+    : [];
 
   return (
     <nav className="fixed left-0 top-0 h-full w-52 bg-surface border-r border-border flex flex-col z-50">
@@ -63,6 +66,26 @@ export function Sidebar({ ipamEnabled, swaggerEnabled }: SidebarProps) {
             {item.label}
           </NavLink>
         ))}
+        {adminItems.length > 0 && (
+          <>
+            <p className="text-text-muted text-xs px-4 mt-4 mb-1">Admin</p>
+            {adminItems.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) =>
+                  `relative block pl-4 pr-3 py-2 text-sm rounded-md transition-colors ${
+                    isActive
+                      ? "text-text font-semibold bg-surface2 before:content-[''] before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-0.5 before:rounded-r before:bg-cyan"
+                      : "text-text-muted hover:text-text hover:bg-surface2/60"
+                  }`
+                }
+              >
+                {item.label}
+              </NavLink>
+            ))}
+          </>
+        )}
       </div>
 
       {auth.status === "authenticated" && auth.email && (

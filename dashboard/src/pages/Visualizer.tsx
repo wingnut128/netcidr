@@ -3,30 +3,20 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { Panel } from "../components/ui/Panel";
 import { StatCard } from "../components/ui/StatCard";
 import { ErrorBanner } from "../components/ui/ErrorBanner";
-import { SignInCard } from "../components/auth/SignInCard";
+import { AuthGate } from "../components/auth/AuthGate";
 import { AllocationMap } from "../components/visualizer/AllocationMap";
 import { WhatIfPanel } from "../components/visualizer/WhatIfPanel";
 import { AllocationDetailModal } from "../components/ipam/modals/AllocationDetailModal";
 import { useIpam } from "../hooks/useIpam";
-import { useAuth } from "../auth/AuthContext";
 import type { Allocation } from "../types";
 import type { ParsedCidr } from "../lib/cidr";
 
 export function Visualizer() {
-  const auth = useAuth();
-
-  if (auth.status === "loading") {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh] text-text-muted text-xs">
-        Loading…
-      </div>
-    );
-  }
-  if (auth.status !== "authenticated") {
-    return <SignInCard />;
-  }
-
-  return <VisualizerInner />;
+  return (
+    <AuthGate>
+      <VisualizerInner />
+    </AuthGate>
+  );
 }
 
 function VisualizerInner() {

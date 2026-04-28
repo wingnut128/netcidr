@@ -40,6 +40,7 @@ pub struct AuthConfig {
     bearer_token: Option<String>,
     oidc_audience: Option<String>,
     allowed_emails: Vec<String>,
+    admin_emails: Vec<String>,
 }
 
 impl AuthConfig {
@@ -57,6 +58,7 @@ impl AuthConfig {
                 .into_iter()
                 .map(|e| e.to_ascii_lowercase())
                 .collect(),
+            admin_emails: Vec::new(),
         }
     }
 
@@ -75,6 +77,52 @@ impl AuthConfig {
     pub fn with_allowed_emails(mut self, emails: Vec<String>) -> Self {
         self.allowed_emails = emails.into_iter().map(|e| e.to_ascii_lowercase()).collect();
         self
+    }
+
+    pub fn with_admin_emails(mut self, emails: Vec<String>) -> Self {
+        self.admin_emails = emails.into_iter().map(|e| e.to_ascii_lowercase()).collect();
+        self
+    }
+
+    pub fn allowed_emails(&self) -> &[String] {
+        &self.allowed_emails
+    }
+
+    pub fn admin_emails(&self) -> &[String] {
+        &self.admin_emails
+    }
+
+    pub fn oidc_audience(&self) -> Option<&str> {
+        self.oidc_audience.as_deref()
+    }
+
+    pub fn is_admin(&self, email: Option<&str>) -> bool {
+        if self.admin_emails.is_empty() {
+            return false;
+        }
+        match email {
+            Some(addr) => {
+                let needle = addr.to_ascii_lowercase();
+                self.admin_emails.iter().any(|a| a == &needle)
+            }
+            None => false,
+        }
+    }
+
+    /// Validate the request's bearer token without enforcing the email
+    /// allowlist. Returns the principal on success, or None if the token is
+    /// missing/invalid. Callers (e.g. /me) use this when they want to know
+    /// "is this user signed in at all?" independent of allowlist status.
+    pub async fn authenticate(&self, headers: &HeaderMap) -> Option<AuthenticatedPrincipal> {
+        match self.mode {
+            AuthMode::None => None,
+            AuthMode::Bearer => authenticate_bearer(headers, self.bearer_token.as_deref()),
+            AuthMode::Oidc => authenticate_oidc(headers, self.oidc_audience.as_deref()).await,
+        }
+    }
+
+    pub fn email_is_allowed(&self, email: Option<&str>) -> bool {
+        self.email_allowed(email)
     }
 
     pub fn enabled(&self) -> bool {

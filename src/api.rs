@@ -369,6 +369,14 @@ pub fn create_router(config: RouterConfig) -> Router {
         get(move || async move { Json(features.clone()) }),
     );
 
+    // /me + admin allowlist read endpoint. Both are auth-aware but live
+    // outside the /ipam middleware (so an unallowlisted user can hit /me
+    // and get a 200 with `is_allowlisted: false` instead of a 403).
+    let router = router
+        .route("/me", get(me_handler))
+        .route("/admin/allowlist", get(allowlist_handler))
+        .layer(Extension(auth_config.clone()));
+
     #[cfg(feature = "swagger")]
     let router = if config.server.enable_swagger {
         router.merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
@@ -972,6 +980,74 @@ async fn batch_handler(
 struct FeaturesResponse {
     ipam: bool,
     swagger: bool,
+}
+
+#[derive(Serialize)]
+struct MeResponse {
+    /// Verified email of the signed-in principal (may be null for bearer tokens).
+    email: Option<String>,
+    /// Whether the email passes the configured allowlist.
+    is_allowlisted: bool,
+    /// Whether the email matches the admin allowlist.
+    is_admin: bool,
+    /// First configured admin email — surfaced so unallowlisted users have
+    /// someone to contact for access. Null when no admins are configured.
+    admin_contact: Option<String>,
+}
+
+#[derive(Serialize)]
+struct AllowlistResponse {
+    /// Email addresses authorized to call /ipam/*.
+    emails: Vec<String>,
+    /// Email addresses with administrative access.
+    admins: Vec<String>,
+    /// How the allowlist is managed. Currently always "env" — sourced from
+    /// the NETCIDR_OIDC_ALLOWED_EMAILS environment variable / config file.
+    /// To add or remove an email, edit `samconfig.toml.tpl` (or the deploy
+    /// equivalent) and redeploy.
+    management: &'static str,
+}
+
+async fn me_handler(
+    Extension(auth_config): Extension<crate::auth::AuthConfig>,
+    request: axum::extract::Request,
+) -> Response {
+    let principal = match auth_config.authenticate(request.headers()).await {
+        Some(p) => p,
+        None => {
+            return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
+        }
+    };
+    let email = principal.email.clone();
+    let is_allowlisted = auth_config.email_is_allowed(email.as_deref());
+    let is_admin = auth_config.is_admin(email.as_deref());
+    let admin_contact = auth_config.admin_emails().first().cloned();
+    Json(MeResponse {
+        email,
+        is_allowlisted,
+        is_admin,
+        admin_contact,
+    })
+    .into_response()
+}
+
+async fn allowlist_handler(
+    Extension(auth_config): Extension<crate::auth::AuthConfig>,
+    request: axum::extract::Request,
+) -> Response {
+    let principal = match auth_config.authenticate(request.headers()).await {
+        Some(p) => p,
+        None => return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response(),
+    };
+    if !auth_config.is_admin(principal.email.as_deref()) {
+        return (StatusCode::FORBIDDEN, "Admin access required").into_response();
+    }
+    Json(AllowlistResponse {
+        emails: auth_config.allowed_emails().to_vec(),
+        admins: auth_config.admin_emails().to_vec(),
+        management: "env",
+    })
+    .into_response()
 }
 
 #[cfg(feature = "dashboard")]
