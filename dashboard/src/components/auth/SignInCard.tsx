@@ -14,9 +14,9 @@ export function SignInCard() {
           Sign in to IPAM
         </h2>
         <p className="text-text-muted text-sm mb-6 leading-relaxed">
-          The IPAM dashboard is restricted to allowlisted Google accounts.
-          The other tools (Calc, Split, Contains, Summarize, Range, Visualize)
-          are available without signing in.
+          The IPAM dashboard and the allocation Visualizer are restricted to
+          allowlisted Google accounts. The calculator tools (Calc, Split,
+          Contains, Summarize, Range) are available without signing in.
         </p>
         {isAuthConfigured ? (
           <div className="flex justify-center">
