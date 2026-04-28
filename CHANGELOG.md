@@ -7,8 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-04-28
+
 ### Added
 
+- IPAM-aware **Allocation Map** (replaces the standalone Subnet Visualizer): pick a supernet, render its full address space as a horizontal strip with each allocation colored by status (active / reserved / released / free). Auto multi-row layout for larger supernets so even small allocations stay visible. Hover for details, click an allocation to drill into its detail modal.
+- **What-if overlay** on the Allocation Map: paste candidate CIDRs in the new "What if" panel and they render as outlined overlays — cyan dashed = fits, red dashed = conflicts, plus a per-CIDR verdict list (Fits / Conflict / Outside / Invalid). Useful for sanity-checking a proposed allocation before committing it.
 - Dashboard sidebar shows an "API Docs ↗" link to `/swagger-ui` when the server reports the `swagger` feature enabled (via `/features`).
 - `oidc_allowed_emails` config field and `NETCIDR_OIDC_ALLOWED_EMAILS` env var (comma-separated) — when set, only verified Google identities whose email matches the allowlist may call `/ipam/*`.
 - Dashboard now signs in to Google directly via `oidc-client-ts` (implicit `id_token` flow) and attaches `Authorization: Bearer <id_token>` to `/ipam/*` requests. Configure with `VITE_OAUTH_WEB_CLIENT_ID` at build time. Server serves the SPA at `/auth/callback` and `/auth/silent-callback` so the OAuth redirect can complete.
@@ -23,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - HTTP authentication is now scoped to `/ipam/*` only. Calculator, split, contains, summarize, from-range, batch, health, version, and features endpoints are public regardless of `auth_mode`.
 - Dashboard color tokens (`bg-bg`, `text-text`, `text-cyan`, …) now resolve through CSS variables on `:root[data-theme]`, so the same utility classes paint correctly in both themes without duplication.
 - Dashboard visual refresh: switched body/UI typography to **Inter** (variable, bundled via `@fontsource-variable/inter`) and dropped the brutalist all-caps + tight tracking. Borders softened from 2px to 1px, cards get rounded corners + a subtle shadow, sidebar active state is now a left accent bar instead of an inverted block. Dark palette desaturated from the original neon to a softer cyan/slate set. JetBrains Mono is no longer bundled — system mono fallback is fine for the small amount of technical data still rendered in mono.
+
+### Removed
+
+- `recharts` dropped from the dashboard bundle — the new Allocation Map is pure SVG/CSS, and the old Visualizer's bar chart is gone. Saves ~100 kB gzipped.
 
 ## [0.20.0] - 2026-04-23
 
