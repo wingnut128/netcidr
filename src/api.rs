@@ -5,6 +5,7 @@ use axum::{
     Extension, Router,
     extract::Query,
     http::{HeaderValue, StatusCode, header},
+    middleware,
     response::{IntoResponse, Json, Response},
     routing::{get, post},
 };
@@ -22,6 +23,7 @@ use utoipa::{IntoParams, OpenApi, ToSchema};
 #[cfg(feature = "swagger")]
 use utoipa_swagger_ui::SwaggerUi;
 
+use crate::auth::require_auth;
 #[cfg(feature = "swagger")]
 use crate::batch::BatchResult;
 use crate::batch::process_batch_with_limit;
@@ -312,6 +314,7 @@ fn format_response<T: Serialize + TextOutput + CsvOutput>(
 
 pub fn create_router(config: RouterConfig) -> Router {
     let config_ext = Arc::new(config.server.clone());
+    let auth_config = config.server.auth_config();
 
     let router = Router::new()
         .route("/health", get(health))
@@ -333,13 +336,23 @@ pub fn create_router(config: RouterConfig) -> Router {
     #[cfg(feature = "dashboard")]
     let router = router
         .route("/dashboard", get(dashboard))
-        .route("/", get(dashboard));
+        .route("/", get(dashboard))
+        // OAuth redirect targets — the SPA boot script reads the URL
+        // fragment, completes the sign-in, then bounces to the hash route.
+        .route("/auth/callback", get(dashboard))
+        .route("/auth/silent-callback", get(dashboard));
     #[cfg(not(feature = "dashboard"))]
     let router = router;
 
-    // Conditionally mount IPAM routes
+    // Conditionally mount IPAM routes — auth applies only to /ipam/*.
     let router = if let Some(ops) = config.ipam_ops {
-        let ipam_router = crate::ipam_api::create_ipam_router().layer(Extension(ops));
+        let ipam_auth = auth_config.clone();
+        let ipam_router = crate::ipam_api::create_ipam_router()
+            .layer(Extension(ops))
+            .layer(middleware::from_fn(move |request, next| {
+                let auth_config = ipam_auth.clone();
+                async move { require_auth(auth_config, request, next).await }
+            }));
         router.nest("/ipam", ipam_router)
     } else {
         router
@@ -372,7 +385,9 @@ pub fn create_router(config: RouterConfig) -> Router {
             Vec::<HeaderValue>::new(),
         ))
         .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
-        .allow_headers([header::CONTENT_TYPE]);
+        .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
+
+    let _ = auth_config; // auth is now scoped to /ipam/* above; non-IPAM routes are public.
 
     let router = router
         .layer(Extension(config_ext))

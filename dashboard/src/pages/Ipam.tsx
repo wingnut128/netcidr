@@ -11,8 +11,33 @@ import { CreateSupernetModal } from "../components/ipam/modals/CreateSupernetMod
 import { AllocateSpecificModal } from "../components/ipam/modals/AllocateSpecificModal";
 import { AutoAllocateModal } from "../components/ipam/modals/AutoAllocateModal";
 import { AllocationDetailModal } from "../components/ipam/modals/AllocationDetailModal";
+import { useAuth } from "../auth/AuthContext";
+import { isAuthConfigured } from "../auth/oidc";
+import { SignInCard } from "../components/auth/SignInCard";
 
 export function Ipam() {
+  const auth = useAuth();
+
+  if (auth.status === "loading") {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh] text-text-muted text-xs">
+        Loading…
+      </div>
+    );
+  }
+
+  if (auth.status === "anonymous") {
+    return (
+      <SignInCard onSignIn={() => void auth.signIn()} configured={isAuthConfigured} />
+    );
+  }
+
+  // "disabled" (no client id baked in) — fall through to the dashboard;
+  // the backend may still 401, in which case the existing ErrorBanner shows.
+  return <IpamDashboard />;
+}
+
+function IpamDashboard() {
   const ipam = useIpam();
 
   return (

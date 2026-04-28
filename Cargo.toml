@@ -7,6 +7,7 @@ description = "A fast IPv4 and IPv6 subnet calculator CLI and API"
 repository = "https://gitlab.com/mlapane/netcidr"
 keywords = ["ip", "subnet", "calculator", "ipv4", "ipv6"]
 categories = ["command-line-utilities", "network-programming"]
+default-run = "netcidr"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -36,11 +37,14 @@ rmcp = { version = "1.5", features = ["server", "transport-io", "transport-strea
 daemonize-me = "2"
 tokio-util = { version = "0.7", features = ["rt"], optional = true }
 schemars = { version = "1", optional = true }
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "query"], optional = true }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "query"] }
+jsonwebtoken = { version = "10.3", features = ["rust_crypto"] }
+base64 = "0.22"
 ratatui = { version = "0.30", optional = true }
 crossterm = { version = "0.29", optional = true }
 ipnet = { version = "2", optional = true }
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"], optional = true }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "tls-rustls"], optional = true }
+lambda_http = { version = "0.13", optional = true }
 
 # OpenAPI/Swagger dependencies
 utoipa = { version = "5", features = ["axum_extras"], optional = true }
@@ -53,14 +57,22 @@ tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 proptest = "1"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+rsa = { version = "0.9", features = ["pem"] }
+rand = "0.8"
 
 [features]
 default = ["swagger", "dashboard"]
 dashboard = []
 swagger = ["dep:utoipa", "dep:utoipa-swagger-ui"]
 tui = ["dep:ratatui", "dep:crossterm", "dep:ipnet"]
-mcp = ["dep:rmcp", "dep:schemars", "dep:reqwest", "dep:tokio-util"]
+mcp = ["dep:rmcp", "dep:schemars", "dep:tokio-util"]
 ipam-postgres = ["dep:sqlx"]
+lambda = ["dep:lambda_http"]
+
+[[bin]]
+name = "lambda"
+path = "src/bin/lambda.rs"
+required-features = ["lambda"]
 
 [profile.release]
 lto = true

@@ -337,6 +337,11 @@ async fn async_main(cli: Cli) {
                 ipam_db_url,
             });
 
+            if let Err(e) = server_config.validate_deployment(&address) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+
             // Bind-address warning
             if address != "127.0.0.1" && address != "::1" {
                 warn!(

@@ -10,7 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Dashboard sidebar shows an "API Docs ↗" link to `/swagger-ui` when the server reports the `swagger` feature enabled (via `/features`).
+- `oidc_allowed_emails` config field and `NETCIDR_OIDC_ALLOWED_EMAILS` env var (comma-separated) — when set, only verified Google identities whose email matches the allowlist may call `/ipam/*`.
+- Dashboard now signs in to Google directly via `oidc-client-ts` (implicit `id_token` flow) and attaches `Authorization: Bearer <id_token>` to `/ipam/*` requests. Configure with `VITE_OAUTH_WEB_CLIENT_ID` at build time. Server serves the SPA at `/auth/callback` and `/auth/silent-callback` so the OAuth redirect can complete.
+- Dashboard light/dark theme toggle in the sidebar (also `⌘+J` / `Ctrl+J`). Light is the default; first-visit theme follows the OS `prefers-color-scheme`; choice persists in `localStorage`.
+- Inline Google sign-in card on the IPAM tab when unauthenticated; the public tools (Calc/Split/Contains/Summarize/Range/Visualize) remain available without sign-in.
+- New `lambda` Cargo feature and `lambda` binary (`src/bin/lambda.rs`) that wraps the Axum router with `lambda_http` for AWS Lambda deployment. Reads runtime config from env vars (`NETCIDR_AUTH_MODE`, `NETCIDR_OIDC_AUDIENCE`, `NETCIDR_OIDC_ALLOWED_EMAILS`, `NETCIDR_DATABASE_URL`, `NETCIDR_IPAM_BACKEND`, `NETCIDR_IPAM_ENABLED`). Build with `cargo lambda build --release --arm64 --bin lambda --features lambda,ipam-postgres`. The standard `netcidr` binary is unchanged.
 - New `CI Status` aggregator job in `.github/workflows/ci.yml` that always runs (even when `verify`/`audit` are skipped by the `Detect Changes` paths filter) and aggregates their results. This gives branch protection a single stable required-check name that handles the skipped-required-check trap, replacing the per-job names (`Format & Lint`, `Test`, `Analyze (rust)`) that were renamed/removed when the CI jobs were consolidated in #111.
+
+### Changed
+
+- OIDC mode now validates Google OAuth ID tokens (RS256, JWKS at `https://www.googleapis.com/oauth2/v3/certs`, issuer `accounts.google.com`) read from `Authorization: Bearer <id_token>`. Replaces the previous IAP JWT validation against `x-goog-iap-jwt-assertion`. The expected audience (`oidc_audience` / `NETCIDR_OIDC_AUDIENCE`) is now your Google OAuth Web Client ID.
+- HTTP authentication is now scoped to `/ipam/*` only. Calculator, split, contains, summarize, from-range, batch, health, version, and features endpoints are public regardless of `auth_mode`.
+- Dashboard color tokens (`bg-bg`, `text-text`, `text-cyan`, …) now resolve through CSS variables on `:root[data-theme]`, so the same utility classes paint correctly in both themes without duplication.
 
 ## [0.20.0] - 2026-04-23
 
