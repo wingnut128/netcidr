@@ -7,6 +7,7 @@ description = "A fast IPv4 and IPv6 subnet calculator CLI and API"
 repository = "https://gitlab.com/mlapane/netcidr"
 keywords = ["ip", "subnet", "calculator", "ipv4", "ipv6"]
 categories = ["command-line-utilities", "network-programming"]
+default-run = "netcidr"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -43,6 +44,7 @@ ratatui = { version = "0.30", optional = true }
 crossterm = { version = "0.29", optional = true }
 ipnet = { version = "2", optional = true }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"], optional = true }
+lambda_http = { version = "0.13", optional = true }
 
 # OpenAPI/Swagger dependencies
 utoipa = { version = "5", features = ["axum_extras"], optional = true }
@@ -65,6 +67,12 @@ swagger = ["dep:utoipa", "dep:utoipa-swagger-ui"]
 tui = ["dep:ratatui", "dep:crossterm", "dep:ipnet"]
 mcp = ["dep:rmcp", "dep:schemars", "dep:tokio-util"]
 ipam-postgres = ["dep:sqlx"]
+lambda = ["dep:lambda_http"]
+
+[[bin]]
+name = "lambda"
+path = "src/bin/lambda.rs"
+required-features = ["lambda"]
 
 [profile.release]
 lto = true
