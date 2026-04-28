@@ -73,10 +73,7 @@ impl AuthConfig {
     }
 
     pub fn with_allowed_emails(mut self, emails: Vec<String>) -> Self {
-        self.allowed_emails = emails
-            .into_iter()
-            .map(|e| e.to_ascii_lowercase())
-            .collect();
+        self.allowed_emails = emails.into_iter().map(|e| e.to_ascii_lowercase()).collect();
         self
     }
 
@@ -280,8 +277,8 @@ struct Jwk {
     e: String,
 }
 
-async fn fetch_google_public_keys()
--> Result<(HashMap<String, GoogleKey>, Duration), reqwest::Error> {
+async fn fetch_google_public_keys() -> Result<(HashMap<String, GoogleKey>, Duration), reqwest::Error>
+{
     let response = reqwest::Client::new()
         .get(GOOGLE_JWKS_URL)
         .send()
@@ -490,7 +487,8 @@ mod tests {
             now_seconds(),
             Some(true),
         );
-        let claims = validate_google_id_token(&jwt, "expected-audience", &key_map(&public)).unwrap();
+        let claims =
+            validate_google_id_token(&jwt, "expected-audience", &key_map(&public)).unwrap();
         assert_eq!(claims.sub, "117290938723847238472");
         assert_eq!(claims.aud, "expected-audience");
     }
@@ -662,8 +660,12 @@ mod tests {
     #[test]
     fn google_id_token_validation_rejects_malformed_jwt() {
         let (_private, public) = test_keypair();
-        assert!(validate_google_id_token("not-a-jwt", "expected-audience", &key_map(&public)).is_none());
-        assert!(validate_google_id_token("a.b.c", "expected-audience", &key_map(&public)).is_none());
+        assert!(
+            validate_google_id_token("not-a-jwt", "expected-audience", &key_map(&public)).is_none()
+        );
+        assert!(
+            validate_google_id_token("a.b.c", "expected-audience", &key_map(&public)).is_none()
+        );
     }
 
     #[test]
@@ -677,8 +679,10 @@ mod tests {
 
     #[test]
     fn email_allowlist_permits_listed_addresses() {
-        let config = AuthConfig::oidc(Some("aud".to_string()))
-            .with_allowed_emails(vec!["alice@example.com".to_string(), "BOB@EXAMPLE.COM".to_string()]);
+        let config = AuthConfig::oidc(Some("aud".to_string())).with_allowed_emails(vec![
+            "alice@example.com".to_string(),
+            "BOB@EXAMPLE.COM".to_string(),
+        ]);
         assert!(config.email_allowed(Some("alice@example.com")));
         assert!(config.email_allowed(Some("ALICE@example.com")));
         assert!(config.email_allowed(Some("bob@example.com")));
