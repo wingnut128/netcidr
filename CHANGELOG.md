@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Dashboard audit pass against the `netcidr-design` skill. All mechanical drift fixes:
+  - `font-bold` swapped to `font-medium` (form labels, secondary headings) or `font-semibold` (table headers) to match the skill's typography hierarchy. ~22 occurrences across `Splitter`, `FromRange`, `Contains`, `Summarize`, `IpamSearch`, `Modal`, and `AllocationDetailModal`.
+  - Modal titles converted from Title Case to sentence case: "Create supernet", "Allocate specific block", "Auto-allocate", "Allocation detail".
+  - Panel titles converted: "Free blocks", "Audit log", "Bit visualization".
+  - SignInCard's `shadow-sm` replaced with the canonical hairline `shadow-[0_1px_2px_rgba(15,23,42,0.04)]` — the only ambient shadow the system uses.
+  - Modal inline error badges normalized to the system's tinted-background recipe (`border border-red/40 bg-red/10 text-red rounded-md`) to match StatusBadge and the Calculator scope pill.
+
 ### Added
 
 - **Allowlist onboarding flow.** Three coordinated surfaces, all using the existing visual primitives:

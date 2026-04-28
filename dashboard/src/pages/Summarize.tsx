@@ -49,7 +49,7 @@ export function Summarize() {
       <ErrorBanner message={error} onDismiss={() => setError(null)} />
 
       <Panel title="Input CIDRs">
-        <label className="block text-xs font-bold text-text-muted mb-1">
+        <label className="block text-xs font-medium text-text-muted mb-1">
           One CIDR per line (or comma-separated)
         </label>
         <textarea

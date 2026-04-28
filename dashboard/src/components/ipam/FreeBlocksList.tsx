@@ -4,7 +4,7 @@ import type { FreeBlock } from "../../types";
 
 export function FreeBlocksList({ blocks }: { blocks: FreeBlock[] }) {
   return (
-    <Panel title="Free Blocks" collapsible>
+    <Panel title="Free blocks" collapsible>
       {blocks.length === 0 ? (
         <p className="text-text-muted text-center py-4">No free blocks.</p>
       ) : (
