@@ -12,6 +12,7 @@ const MAX_TIMEOUT_SECONDS: u64 = 300;
 const AUTH_TOKEN_ENV: &str = "NETCIDR_API_TOKEN";
 const OIDC_AUDIENCE_ENV: &str = "NETCIDR_OIDC_AUDIENCE";
 const OIDC_ALLOWED_EMAILS_ENV: &str = "NETCIDR_OIDC_ALLOWED_EMAILS";
+const ADMIN_EMAILS_ENV: &str = "NETCIDR_ADMIN_EMAILS";
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
@@ -63,6 +64,10 @@ pub struct ServerConfig {
     /// Prefer NETCIDR_OIDC_ALLOWED_EMAILS (comma-separated) in production.
     #[serde(default)]
     pub oidc_allowed_emails: Vec<String>,
+    /// Email addresses with administrative access (e.g. allowlist viewer).
+    /// Prefer NETCIDR_ADMIN_EMAILS (comma-separated) in production.
+    #[serde(default)]
+    pub admin_emails: Vec<String>,
     /// Allow binding the HTTP API to a non-loopback address.
     pub allow_public_bind: bool,
     /// Require authentication when binding the HTTP API to a non-loopback address.
@@ -88,6 +93,7 @@ impl Default for ServerConfig {
             auth_token: None,
             oidc_audience: None,
             oidc_allowed_emails: Vec::new(),
+            admin_emails: Vec::new(),
             allow_public_bind: false,
             require_auth_for_public_bind: true,
         }
@@ -292,6 +298,26 @@ impl ServerConfig {
         raw.into_iter().map(|s| s.to_ascii_lowercase()).collect()
     }
 
+    pub fn admin_emails(&self) -> Vec<String> {
+        let from_env = std::env::var(ADMIN_EMAILS_ENV)
+            .ok()
+            .filter(|s| !s.trim().is_empty());
+        let raw = match from_env {
+            Some(v) => v
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>(),
+            None => self
+                .admin_emails
+                .iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>(),
+        };
+        raw.into_iter().map(|s| s.to_ascii_lowercase()).collect()
+    }
+
     pub fn auth_config(&self) -> crate::auth::AuthConfig {
         crate::auth::AuthConfig::new(
             self.auth_mode,
@@ -299,6 +325,7 @@ impl ServerConfig {
             self.oidc_audience(),
             self.oidc_allowed_emails(),
         )
+        .with_admin_emails(self.admin_emails())
     }
 
     pub fn validate_deployment(&self, bind_address: &str) -> Result<()> {

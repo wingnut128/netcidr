@@ -11,23 +11,14 @@ import { CreateSupernetModal } from "../components/ipam/modals/CreateSupernetMod
 import { AllocateSpecificModal } from "../components/ipam/modals/AllocateSpecificModal";
 import { AutoAllocateModal } from "../components/ipam/modals/AutoAllocateModal";
 import { AllocationDetailModal } from "../components/ipam/modals/AllocationDetailModal";
-import { useAuth } from "../auth/AuthContext";
-import { SignInCard } from "../components/auth/SignInCard";
+import { AuthGate } from "../components/auth/AuthGate";
 
 export function Ipam() {
-  const auth = useAuth();
-
-  if (auth.status === "loading") {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh] text-text-muted text-xs">
-        Loading…
-      </div>
-    );
-  }
-  if (auth.status !== "authenticated") {
-    return <SignInCard />;
-  }
-  return <IpamDashboard />;
+  return (
+    <AuthGate>
+      <IpamDashboard />
+    </AuthGate>
+  );
 }
 
 function IpamDashboard() {

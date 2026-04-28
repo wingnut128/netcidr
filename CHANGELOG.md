@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Allowlist onboarding flow.** Three coordinated surfaces, all using the existing visual primitives:
+  - **Sign-in card** — entry point for anonymous users, unchanged content but now part of the gate.
+  - **Request-access card** — shown when a Google-authenticated user is *not* on the allowlist. Displays the user's verified email, a copy-able admin contact, and a clear sign-out path. Honest about the env-var-managed reality of the allowlist; no fake "pending approval" copy.
+  - **Allowlist admin page** at `/admin/allowlist` — viewable only by users in `NETCIDR_ADMIN_EMAILS`. Lists every allowlisted email, marks admins, and includes step-by-step instructions for adding/removing emails via `samconfig.toml.tpl` + redeploy. The sidebar shows an "Admin" section with a link to this page only when the signed-in user is an admin.
+- New `GET /me` HTTP endpoint — returns `{ email, is_allowlisted, is_admin, admin_contact }` for any authenticated principal (independent of the allowlist gate). Powers the new `unallowlisted` auth state in the dashboard so the UI can route to the request-access card without first failing every IPAM API call.
+- New `GET /admin/allowlist` HTTP endpoint — admin-only. Returns the configured allowlist + admin emails sourced from env vars / config.
+- `NETCIDR_ADMIN_EMAILS` env var (comma-separated) and `admin_emails` config field. Members of this list see the Admin section in the sidebar and can hit `/admin/allowlist`.
+
+### Changed
+
+- `AuthContext` adds two new states: `unallowlisted` (token valid, email not on list) and surfaces `isAdmin` + `adminContact` for downstream components. After sign-in, the context calls `/me` to determine the right state.
+- Ipam and Visualizer pages now use a shared `<AuthGate>` component instead of duplicating the routing logic. AuthGate routes by status: loading → spinner, anonymous/disabled → SignInCard, unallowlisted (or admin-only with non-admin) → RequestAccessCard, allowed → children.
+
 ## [0.21.0] - 2026-04-28
 
 ### Added
