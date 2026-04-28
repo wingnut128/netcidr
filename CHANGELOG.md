@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dashboard light/dark theme toggle in the sidebar (also `⌘+J` / `Ctrl+J`). Light is the default; first-visit theme follows the OS `prefers-color-scheme`; choice persists in `localStorage`.
 - Inline Google sign-in card on the IPAM tab when unauthenticated; the public tools (Calc/Split/Contains/Summarize/Range/Visualize) remain available without sign-in.
 - New `lambda` Cargo feature and `lambda` binary (`src/bin/lambda.rs`) that wraps the Axum router with `lambda_http` for AWS Lambda deployment. Reads runtime config from env vars (`NETCIDR_AUTH_MODE`, `NETCIDR_OIDC_AUDIENCE`, `NETCIDR_OIDC_ALLOWED_EMAILS`, `NETCIDR_DATABASE_URL`, `NETCIDR_IPAM_BACKEND`, `NETCIDR_IPAM_ENABLED`). Build with `cargo lambda build --release --arm64 --bin lambda --features lambda,ipam-postgres`. The standard `netcidr` binary is unchanged.
+- New `CI Status` aggregator job in `.github/workflows/ci.yml` that always runs (even when `verify`/`audit` are skipped by the `Detect Changes` paths filter) and aggregates their results. This gives branch protection a single stable required-check name that handles the skipped-required-check trap, replacing the per-job names (`Format & Lint`, `Test`, `Analyze (rust)`) that were renamed/removed when the CI jobs were consolidated in #111.
 
 ### Changed
 

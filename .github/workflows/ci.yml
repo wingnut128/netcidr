@@ -40,8 +40,8 @@ jobs:
               - "Dockerfile"
               - ".github/workflows/**"
 
-  lint:
-    name: Format & Lint
+  verify:
+    name: Format, Lint & Test
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
@@ -60,38 +60,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           components: rustfmt, clippy
-      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: |
-            ~/.cargo/registry/
-            ~/.cargo/git/
-            target/
-          key: lint-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: lint-${{ runner.os }}-
-      - uses: step-security/setup-bun@c2c3ca3b28b446447c25a2a39061f4bd64b729c8 # v2.1.2
-      - name: Build dashboard
-        run: cd dashboard && bun install --frozen-lockfile && bun run build
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --all-targets --all-features -- -D warnings
-
-  test:
-    name: Test
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
-        with:
-          egress-policy: audit
-
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Free runner disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL >/dev/null 2>&1
-          sudo docker image prune -af >/dev/null 2>&1
-          df -h / | tail -1
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
       - uses: taiki-e/install-action@dfd6a81ff1efc1c100332d760e0c9edfe2ae0a51 # nextest
       - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
@@ -99,11 +67,13 @@ jobs:
             ~/.cargo/registry/
             ~/.cargo/git/
             target/
-          key: test-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: test-${{ runner.os }}-
+          key: verify-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: verify-${{ runner.os }}-
       - uses: step-security/setup-bun@c2c3ca3b28b446447c25a2a39061f4bd64b729c8 # v2.1.2
       - name: Build dashboard
         run: cd dashboard && bun install --frozen-lockfile && bun run build
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo nextest run --features mcp,tui
 
   audit:
@@ -123,3 +93,30 @@ jobs:
           tool: cargo-audit
       - run: cargo audit
 
+  ci-status:
+    name: CI Status
+    needs: [changes, verify, audit]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - name: Aggregate required job results
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          VERIFY_RESULT: ${{ needs.verify.result }}
+          AUDIT_RESULT: ${{ needs.audit.result }}
+        run: |
+          fail=0
+          for job in changes verify audit; do
+            var="${job^^}_RESULT"
+            result="${!var}"
+            case "$result" in
+              success|skipped) echo "$job: $result" ;;
+              *) echo "$job: $result (FAIL)"; fail=1 ;;
+            esac
+          done
+          exit "$fail"
