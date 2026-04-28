@@ -15,7 +15,7 @@ export function FreeBlocksList({ blocks }: { blocks: FreeBlock[] }) {
               className="flex justify-between py-1 border-b border-border"
             >
               <span className="text-cyan">{b.cidr}</span>
-              <span className="text-text-muted text-[11px]">
+              <span className="text-text-muted text-xs">
                 {fmtNum(b.size)} addresses
               </span>
             </div>

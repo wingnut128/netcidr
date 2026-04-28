@@ -6,9 +6,11 @@ interface SignInCardProps {
 export function SignInCard({ onSignIn, configured }: SignInCardProps) {
   return (
     <div className="flex items-center justify-center min-h-[60vh]">
-      <div className="bg-surface border border-border rounded-md p-8 max-w-md w-full text-center">
-        <h2 className="text-text text-base font-bold mb-2">Sign in to IPAM</h2>
-        <p className="text-text-muted text-xs mb-6 leading-relaxed">
+      <div className="bg-surface border border-border rounded-lg shadow-sm p-8 max-w-md w-full text-center">
+        <h2 className="text-text text-lg font-semibold mb-2">
+          Sign in to IPAM
+        </h2>
+        <p className="text-text-muted text-sm mb-6 leading-relaxed">
           The IPAM dashboard is restricted to allowlisted Google accounts.
           The other tools (Calc, Split, Contains, Summarize, Range, Visualize)
           are available without signing in.
@@ -17,13 +19,13 @@ export function SignInCard({ onSignIn, configured }: SignInCardProps) {
           <button
             type="button"
             onClick={onSignIn}
-            className="inline-flex items-center justify-center gap-2 px-4 py-2 border border-cyan text-cyan hover:bg-cyan hover:text-bg transition-colors text-xs font-bold tracking-wider rounded-md cursor-pointer"
+            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 border border-cyan text-cyan hover:bg-cyan hover:text-bg transition-colors text-sm font-medium rounded-md cursor-pointer"
           >
             <GoogleGlyph />
             Sign in with Google
           </button>
         ) : (
-          <p className="text-red text-xs">
+          <p className="text-red text-sm">
             Sign-in is not configured for this build (missing
             VITE_OAUTH_WEB_CLIENT_ID).
           </p>

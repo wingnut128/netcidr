@@ -27,7 +27,7 @@ export function MainLayout() {
   return (
     <div className="min-h-screen bg-bg">
       <Sidebar ipamEnabled={ipamEnabled} swaggerEnabled={swaggerEnabled} />
-      <main className="ml-48 p-6">
+      <main className="ml-52 p-8 max-w-screen-2xl">
         <Outlet />
       </main>
     </div>

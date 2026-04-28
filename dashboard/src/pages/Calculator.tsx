@@ -48,14 +48,14 @@ export function Calculator() {
         <div className="flex gap-3">
           <input
             type="text"
-            className="flex-1 font-mono text-[13px] px-3 py-2 bg-bg border-2 border-border text-text outline-none focus:border-cyan"
+            className="flex-1 font-mono text-sm px-3 py-2 bg-bg border border-border text-text outline-none focus:border-cyan"
             placeholder="e.g. 192.168.1.0/24 or 2001:db8::/48"
             value={cidr}
             onChange={(e) => setCidr(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && doCalc()}
           />
           <button
-            className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] px-4 py-2 border-2 border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
+            className="text-xs font-medium rounded-md px-4 py-2 border border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
             onClick={doCalc}
           >
             CALC
@@ -70,7 +70,7 @@ export function Calculator() {
             <Panel
               title="Bit Visualization"
               actions={
-                <span className="text-[11px] text-text-muted">
+                <span className="text-xs text-text-muted">
                   <span className="text-cyan">NETWORK</span> /{" "}
                   <span>HOST</span>
                 </span>
@@ -103,12 +103,12 @@ export function Calculator() {
                     {result.last_address}
                   </DataRow>
                   <DataRow label="Full Address">
-                    <span className="text-[10px]">
+                    <span className="text-xs">
                       {result.network_address_full}
                     </span>
                   </DataRow>
                   <DataRow label="Last Full">
-                    <span className="text-[10px]">
+                    <span className="text-xs">
                       {result.last_address_full}
                     </span>
                   </DataRow>
@@ -136,10 +136,10 @@ export function Calculator() {
                   <DataRow label="Class">{result.network_class}</DataRow>
                   <DataRow label="Scope">
                     <span
-                      className={`inline-block px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.1em] border-2 ${
+                      className={`inline-block px-2.5 py-0.5 text-xs font-medium rounded-md border ${
                         result.is_private
-                          ? "border-green text-green"
-                          : "border-yellow text-yellow"
+                          ? "border-green/40 text-green bg-green/10"
+                          : "border-yellow/40 text-yellow bg-yellow/10"
                       }`}
                     >
                       {result.is_private ? "PRIVATE" : "PUBLIC"}
@@ -168,7 +168,7 @@ export function Calculator() {
                 {result.hextets.map((h, i) => (
                   <div
                     key={i}
-                    className="px-2 py-1 border border-border text-[13px] font-semibold"
+                    className="px-2 py-1 border border-border text-sm font-semibold"
                   >
                     {h}
                   </div>

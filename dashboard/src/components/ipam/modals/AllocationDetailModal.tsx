@@ -40,7 +40,7 @@ export function AllocationDetailModal({
     <Modal open={open} onClose={onClose} title="Allocation Detail">
       <div className="space-y-1">
         <DataRow label="ID">
-          <span className="text-[10px] text-text-muted">{allocation.id}</span>
+          <span className="text-xs text-text-muted">{allocation.id}</span>
         </DataRow>
         <DataRow label="CIDR">
           <span className="text-cyan">{allocation.cidr}</span>
@@ -71,40 +71,40 @@ export function AllocationDetailModal({
 
       {/* Tags */}
       <div className="mt-4 pt-4 border-t border-border">
-        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-text-muted mb-2">
+        <p className="text-xs font-bold text-text-muted mb-2">
           Tags
         </p>
         <div className="flex flex-wrap gap-1 mb-3">
           {(allocation.tags ?? []).map((t) => (
             <span
               key={t.key + t.value}
-              className="inline-block px-2 py-0.5 text-[10px] border border-border text-text-muted"
+              className="inline-block px-2 py-0.5 text-xs border border-border text-text-muted"
             >
               {t.key}={t.value}
             </span>
           ))}
           {(!allocation.tags || allocation.tags.length === 0) && (
-            <span className="text-text-muted text-[11px]">No tags</span>
+            <span className="text-text-muted text-xs">No tags</span>
           )}
         </div>
         <div className="flex gap-2">
           <input
             type="text"
-            className="flex-1 font-mono text-[12px] px-2 py-1 bg-bg border border-border text-text outline-none focus:border-cyan"
+            className="flex-1 font-mono text-sm px-2 py-1 bg-bg border border-border text-text outline-none focus:border-cyan"
             placeholder="key"
             value={tagKey}
             onChange={(e) => setTagKey(e.target.value)}
           />
           <input
             type="text"
-            className="flex-1 font-mono text-[12px] px-2 py-1 bg-bg border border-border text-text outline-none focus:border-cyan"
+            className="flex-1 font-mono text-sm px-2 py-1 bg-bg border border-border text-text outline-none focus:border-cyan"
             placeholder="value"
             value={tagValue}
             onChange={(e) => setTagValue(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleAddTag()}
           />
           <button
-            className="font-mono text-[10px] font-bold uppercase px-3 py-1 border border-cyan text-cyan hover:bg-cyan hover:text-bg transition-colors"
+            className="text-xs font-medium rounded-md px-3 py-1 border border-cyan text-cyan hover:bg-cyan hover:text-bg transition-colors"
             onClick={handleAddTag}
           >
             ADD

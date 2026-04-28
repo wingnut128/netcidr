@@ -30,7 +30,7 @@ export function SupernetTable({
       collapsible
       actions={
         <button
-          className="font-mono text-[10px] font-bold uppercase tracking-[0.1em] px-3 py-1 border-2 border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
+          className="text-xs font-medium rounded-md px-3 py-1 border border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
           onClick={onCreateClick}
         >
           + CREATE
@@ -76,7 +76,7 @@ export function SupernetTable({
                           style={{ width: `${Math.min(pct, 100)}%` }}
                         />
                       </div>
-                      <span className="text-[10px] text-text-muted w-10 text-right">
+                      <span className="text-xs text-text-muted w-10 text-right">
                         {pct.toFixed(1)}%
                       </span>
                     </div>
@@ -84,13 +84,13 @@ export function SupernetTable({
                   <td className="px-3 py-2 border-b border-border">
                     <div className="flex gap-1">
                       <button
-                        className="font-mono text-[10px] font-bold uppercase px-2 py-0.5 border border-border text-text-muted hover:text-cyan hover:border-cyan transition-colors"
+                        className="text-xs font-medium rounded-md px-2 py-0.5 border border-border text-text-muted hover:text-cyan hover:border-cyan transition-colors"
                         onClick={() => onSelect(sn.id)}
                       >
                         VIEW
                       </button>
                       <button
-                        className="font-mono text-[10px] font-bold uppercase px-2 py-0.5 border border-border text-text-muted hover:text-red hover:border-red transition-colors"
+                        className="text-xs font-medium rounded-md px-2 py-0.5 border border-border text-text-muted hover:text-red hover:border-red transition-colors"
                         onClick={() => onDelete(sn.id)}
                       >
                         DEL

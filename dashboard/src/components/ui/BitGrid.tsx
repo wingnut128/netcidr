@@ -23,7 +23,7 @@ export function BitGrid({ prefixLength, totalBits }: BitGridProps) {
           );
         })}
       </div>
-      <p className="text-[11px] text-text-muted mt-2">
+      <p className="text-xs text-text-muted mt-2">
         {prefixLength} network bits / {totalBits - prefixLength} host bits
       </p>
     </div>

@@ -1,13 +1,17 @@
 /** Shared CSS class constants to avoid duplication across components. */
 
 export const TABLE_HEADER =
-  "text-left px-3 py-2 font-bold text-[10px] uppercase tracking-[0.1em] text-text-muted bg-surface2 border-b-2 border-border";
+  "text-left px-3 py-2 text-xs font-semibold text-text-muted bg-surface2 border-b border-border";
 
 export const FORM_LABEL =
-  "block text-[10px] font-bold uppercase tracking-[0.1em] text-text-muted mb-1";
+  "block text-xs font-medium text-text-muted mb-1.5";
 
 export const INPUT =
-  "w-full font-mono text-[13px] px-3 py-2 bg-bg border-2 border-border text-text outline-none focus:border-cyan";
+  "w-full text-sm px-3 py-2 bg-bg border border-border rounded-md text-text outline-none focus:border-cyan focus:ring-2 focus:ring-cyan/20 transition-colors";
 
 export const BTN_PRIMARY =
-  "w-full font-mono text-[11px] font-bold uppercase tracking-[0.1em] px-4 py-2 border-2 border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors";
+  "inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-cyan text-cyan bg-transparent rounded-md cursor-pointer hover:bg-cyan hover:text-bg transition-colors";
+
+/** Card / panel surface used by sections, modals, lists. */
+export const CARD =
+  "bg-surface border border-border rounded-md shadow-[0_1px_2px_rgba(15,23,42,0.04)]";

@@ -46,7 +46,7 @@ export function CreateSupernetModal({
     <Modal open={open} onClose={onClose} title="Create Supernet">
       <div className="space-y-3">
         {error && (
-          <div className="bg-red/10 border-2 border-red text-red px-3 py-2 text-xs">
+          <div className="bg-red/10 border border-red text-red px-3 py-2 text-xs">
             {error}
           </div>
         )}
