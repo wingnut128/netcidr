@@ -17,9 +17,9 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="bg-surface border-2 border-border w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+      <div className="bg-surface border border-border w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-4 py-3 border-b-2 border-border bg-surface2">
-          <h3 className="text-[11px] font-bold uppercase tracking-[0.15em] text-text-muted">
+          <h3 className="text-xs font-bold text-text-muted">
             {title}
           </h3>
           <button

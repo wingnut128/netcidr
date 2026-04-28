@@ -5,11 +5,11 @@
  * so the actual color values can switch at runtime by toggling
  * `data-theme="dark"` on <html>. Light is the default.
  *
- * The token *names* (bg, surface, cyan, …) are kept stable so existing
+ * Color *names* (bg, surface, cyan, …) are kept stable so existing
  * utility classes like `bg-bg`, `text-cyan`, `border-border` still work
- * unchanged across themes. Color *roles* in the dark theme stay close to
- * the original brutalist palette; the light theme reinterprets them as a
- * cleaner indigo-on-neutral look.
+ * unchanged across themes. Two font families are exposed: `font-sans`
+ * (Inter) for UI/copy and `font-mono` (JetBrains Mono) for technical data
+ * (CIDRs, IPs, identifiers).
  */
 @theme inline {
   --color-bg: var(--c-bg);
@@ -26,8 +26,10 @@
   --color-orange: var(--c-orange);
   --color-purple: var(--c-purple);
 
-  --font-mono: ui-monospace, "SFMono-Regular", "Cascadia Code",
-    "JetBrains Mono", Menlo, monospace;
+  --font-sans: "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace,
+    "SFMono-Regular", "Cascadia Code", Menlo, monospace;
 }
 
 /* Light theme (default) — clean indigo-on-neutral. */
@@ -48,21 +50,21 @@
   color-scheme: light;
 }
 
-/* Dark theme — softened from the original neon palette. */
+/* Dark theme — softened from the brutalist neon. */
 :root[data-theme="dark"] {
-  --c-bg: #0a0a0a;
-  --c-surface: #111111;
-  --c-surface2: #1a1a1a;
-  --c-border: #333333;
-  --c-border-thick: #444444;
-  --c-text: #e8e8e8;
-  --c-text-muted: #777777;
-  --c-accent: #00ffcc;
-  --c-success: #33ff33;
-  --c-warning: #ffcc00;
-  --c-danger: #ff3333;
-  --c-orange: #ff8800;
-  --c-purple: #cc66ff;
+  --c-bg: #0b0d10;
+  --c-surface: #13161b;
+  --c-surface2: #1a1e25;
+  --c-border: #2a2f38;
+  --c-border-thick: #3a414c;
+  --c-text: #e6e8ee;
+  --c-text-muted: #8a93a3;
+  --c-accent: #5eead4;
+  --c-success: #4ade80;
+  --c-warning: #facc15;
+  --c-danger: #f87171;
+  --c-orange: #fb923c;
+  --c-purple: #c084fc;
   color-scheme: dark;
 }
 
@@ -72,24 +74,29 @@ body {
   padding: 0;
   background: var(--c-bg);
   color: var(--c-text);
-  font-family: var(--font-mono);
-  font-size: 13px;
+  font-family: var(--font-sans);
+  font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Slightly bigger tab targets, modest fonts on data tables */
+table {
+  font-variant-numeric: tabular-nums;
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--c-bg);
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: var(--c-border);
-  border-radius: 3px;
+  border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--c-border-thick);
@@ -97,6 +104,6 @@ body {
 
 /* Selection */
 ::selection {
-  background: var(--c-accent);
-  color: var(--c-bg);
+  background: color-mix(in oklab, var(--c-accent) 30%, transparent);
+  color: var(--c-text);
 }

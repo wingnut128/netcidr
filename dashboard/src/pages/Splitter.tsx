@@ -53,24 +53,24 @@ export function Splitter() {
       <Panel title="Input">
         <div className="flex gap-3 items-end flex-wrap">
           <div className="flex-[3] min-w-[200px]">
-            <label className="block text-[10px] font-bold uppercase tracking-[0.1em] text-text-muted mb-1">
+            <label className="block text-xs font-bold text-text-muted mb-1">
               CIDR
             </label>
             <input
               type="text"
-              className="w-full font-mono text-[13px] px-3 py-2 bg-bg border-2 border-border text-text outline-none focus:border-cyan"
+              className="w-full font-mono text-sm px-3 py-2 bg-bg border border-border text-text outline-none focus:border-cyan"
               placeholder="e.g. 10.0.0.0/8"
               value={cidr}
               onChange={(e) => setCidr(e.target.value)}
             />
           </div>
           <div className="flex-1 min-w-[100px]">
-            <label className="block text-[10px] font-bold uppercase tracking-[0.1em] text-text-muted mb-1">
+            <label className="block text-xs font-bold text-text-muted mb-1">
               Target Prefix
             </label>
             <input
               type="number"
-              className="w-full font-mono text-[13px] px-3 py-2 bg-bg border-2 border-border text-text outline-none focus:border-cyan"
+              className="w-full font-mono text-sm px-3 py-2 bg-bg border border-border text-text outline-none focus:border-cyan"
               placeholder="e.g. 24"
               min={0}
               max={128}
@@ -79,12 +79,12 @@ export function Splitter() {
             />
           </div>
           <div className="flex-1 min-w-[100px]">
-            <label className="block text-[10px] font-bold uppercase tracking-[0.1em] text-text-muted mb-1">
+            <label className="block text-xs font-bold text-text-muted mb-1">
               Count
             </label>
             <input
               type="number"
-              className="w-full font-mono text-[13px] px-3 py-2 bg-bg border-2 border-border text-text outline-none focus:border-cyan disabled:opacity-40"
+              className="w-full font-mono text-sm px-3 py-2 bg-bg border border-border text-text outline-none focus:border-cyan disabled:opacity-40"
               placeholder="max"
               min={1}
               value={count}
@@ -93,7 +93,7 @@ export function Splitter() {
             />
           </div>
           <div className="flex items-center gap-3">
-            <label className="text-[10px] text-text-muted whitespace-nowrap flex items-center gap-1 cursor-pointer">
+            <label className="text-xs text-text-muted whitespace-nowrap flex items-center gap-1 cursor-pointer">
               <input
                 type="checkbox"
                 checked={max}
@@ -102,7 +102,7 @@ export function Splitter() {
               MAX
             </label>
             <button
-              className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] px-4 py-2 border-2 border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
+              className="text-xs font-medium rounded-md px-4 py-2 border border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
               onClick={doSplit}
             >
               SPLIT
@@ -135,7 +135,7 @@ export function Splitter() {
           <Panel
             title="Subnets"
             actions={
-              <span className="text-[11px] text-text-muted">
+              <span className="text-xs text-text-muted">
                 {result.subnets?.length ?? 0} results
               </span>
             }
@@ -144,25 +144,25 @@ export function Splitter() {
               <table className="w-full border-collapse text-xs">
                 <thead>
                   <tr>
-                    <th className="text-left px-3 py-2 font-bold text-[10px] uppercase tracking-[0.1em] text-text-muted bg-surface2 border-b-2 border-border">
+                    <th className="text-left px-3 py-2 font-bold text-xs text-text-muted bg-surface2 border-b-2 border-border">
                       #
                     </th>
-                    <th className="text-left px-3 py-2 font-bold text-[10px] uppercase tracking-[0.1em] text-text-muted bg-surface2 border-b-2 border-border">
+                    <th className="text-left px-3 py-2 font-bold text-xs text-text-muted bg-surface2 border-b-2 border-border">
                       CIDR
                     </th>
-                    <th className="text-left px-3 py-2 font-bold text-[10px] uppercase tracking-[0.1em] text-text-muted bg-surface2 border-b-2 border-border">
+                    <th className="text-left px-3 py-2 font-bold text-xs text-text-muted bg-surface2 border-b-2 border-border">
                       Network
                     </th>
                     {isV4 && (
-                      <th className="text-left px-3 py-2 font-bold text-[10px] uppercase tracking-[0.1em] text-text-muted bg-surface2 border-b-2 border-border">
+                      <th className="text-left px-3 py-2 font-bold text-xs text-text-muted bg-surface2 border-b-2 border-border">
                         Broadcast
                       </th>
                     )}
-                    <th className="text-left px-3 py-2 font-bold text-[10px] uppercase tracking-[0.1em] text-text-muted bg-surface2 border-b-2 border-border">
+                    <th className="text-left px-3 py-2 font-bold text-xs text-text-muted bg-surface2 border-b-2 border-border">
                       Total
                     </th>
                     {isV4 && (
-                      <th className="text-left px-3 py-2 font-bold text-[10px] uppercase tracking-[0.1em] text-text-muted bg-surface2 border-b-2 border-border">
+                      <th className="text-left px-3 py-2 font-bold text-xs text-text-muted bg-surface2 border-b-2 border-border">
                         Usable
                       </th>
                     )}

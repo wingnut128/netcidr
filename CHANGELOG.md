@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OIDC mode now validates Google OAuth ID tokens (RS256, JWKS at `https://www.googleapis.com/oauth2/v3/certs`, issuer `accounts.google.com`) read from `Authorization: Bearer <id_token>`. Replaces the previous IAP JWT validation against `x-goog-iap-jwt-assertion`. The expected audience (`oidc_audience` / `NETCIDR_OIDC_AUDIENCE`) is now your Google OAuth Web Client ID.
 - HTTP authentication is now scoped to `/ipam/*` only. Calculator, split, contains, summarize, from-range, batch, health, version, and features endpoints are public regardless of `auth_mode`.
 - Dashboard color tokens (`bg-bg`, `text-text`, `text-cyan`, …) now resolve through CSS variables on `:root[data-theme]`, so the same utility classes paint correctly in both themes without duplication.
+- Dashboard visual refresh: switched body/UI typography to **Inter** (variable, bundled via `@fontsource-variable/inter`) and dropped the brutalist all-caps + tight tracking. Borders softened from 2px to 1px, cards get rounded corners + a subtle shadow, sidebar active state is now a left accent bar instead of an inverted block. Dark palette desaturated from the original neon to a softer cyan/slate set. JetBrains Mono is no longer bundled — system mono fallback is fine for the small amount of technical data still rendered in mono.
 
 ## [0.20.0] - 2026-04-23
 

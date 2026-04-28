@@ -7,11 +7,11 @@ interface DataRowProps {
 
 export function DataRow({ label, children }: DataRowProps) {
   return (
-    <div className="flex justify-between py-1.5 border-b border-border">
-      <span className="text-text-muted uppercase text-[11px] tracking-[0.05em]">
-        {label}
+    <div className="flex justify-between items-center py-2 border-b border-border last:border-b-0">
+      <span className="text-text-muted text-sm">{label}</span>
+      <span className="text-text font-mono text-sm text-right">
+        {children}
       </span>
-      <span className="text-text font-semibold text-right">{children}</span>
     </div>
   );
 }

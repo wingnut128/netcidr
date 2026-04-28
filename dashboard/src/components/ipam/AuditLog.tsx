@@ -12,7 +12,7 @@ export function AuditLog({ entries }: { entries: AuditEntry[] }) {
           {entries.map((e) => (
             <div
               key={e.id}
-              className="flex justify-between py-1 border-b border-border text-[11px]"
+              className="flex justify-between py-1 border-b border-border text-xs"
             >
               <span>
                 <span className="text-cyan">{e.action}</span>{" "}

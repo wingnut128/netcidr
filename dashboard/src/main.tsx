@@ -4,6 +4,7 @@ import { App } from "./App";
 import { AuthProvider } from "./auth/AuthContext";
 import { ThemeProvider } from "./theme/ThemeProvider";
 import { userManager } from "./auth/oidc";
+import "@fontsource-variable/inter/wght.css";
 import "./index.css";
 
 /**

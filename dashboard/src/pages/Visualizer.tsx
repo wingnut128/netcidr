@@ -105,14 +105,14 @@ export function Visualizer() {
         <div className="flex gap-3">
           <input
             type="text"
-            className="flex-1 font-mono text-[13px] px-3 py-2 bg-bg border-2 border-border text-text outline-none focus:border-cyan"
+            className="flex-1 font-mono text-sm px-3 py-2 bg-bg border border-border text-text outline-none focus:border-cyan"
             placeholder="e.g. 10.0.0.0/16"
             value={cidr}
             onChange={(e) => setCidr(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && doVisualize()}
           />
           <button
-            className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] px-4 py-2 border-2 border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
+            className="text-xs font-medium rounded-md px-4 py-2 border border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
             onClick={doVisualize}
           >
             VISUALIZE
@@ -145,7 +145,7 @@ export function Visualizer() {
           <Panel
             title="Address Space Map"
             actions={
-              <span className="text-[10px] text-text-muted">
+              <span className="text-xs text-text-muted">
                 <span className="text-cyan">ALLOCATED</span> /{" "}
                 <span className="text-yellow">PARTIAL</span> /{" "}
                 <span>FREE</span>

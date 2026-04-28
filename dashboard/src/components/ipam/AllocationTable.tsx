@@ -46,13 +46,13 @@ export function AllocationTable({
       actions={
         <div className="flex gap-2">
           <button
-            className="font-mono text-[10px] font-bold uppercase tracking-[0.1em] px-3 py-1 border-2 border-border text-text-muted hover:text-text hover:border-text transition-colors"
+            className="text-xs font-medium rounded-md px-3 py-1 border border-border text-text-muted hover:text-text hover:border-text transition-colors"
             onClick={onAllocateSpecificClick}
           >
             SPECIFIC
           </button>
           <button
-            className="font-mono text-[10px] font-bold uppercase tracking-[0.1em] px-3 py-1 border-2 border-cyan text-cyan hover:bg-cyan hover:text-bg transition-colors"
+            className="text-xs font-medium rounded-md px-3 py-1 border border-cyan text-cyan hover:bg-cyan hover:text-bg transition-colors"
             onClick={onAutoAllocateClick}
           >
             AUTO
@@ -63,7 +63,7 @@ export function AllocationTable({
       {/* Filters */}
       <div className="flex gap-3 mb-4 flex-wrap">
         <select
-          className="flex-1 min-w-[180px] font-mono text-[13px] px-3 py-2 bg-bg border-2 border-border text-text outline-none focus:border-cyan"
+          className="flex-1 min-w-[180px] font-mono text-sm px-3 py-2 bg-bg border border-border text-text outline-none focus:border-cyan"
           value={filters.supernetId}
           onChange={(e) => set({ supernetId: e.target.value })}
         >
@@ -75,7 +75,7 @@ export function AllocationTable({
           ))}
         </select>
         <select
-          className="min-w-[120px] font-mono text-[13px] px-3 py-2 bg-bg border-2 border-border text-text outline-none focus:border-cyan"
+          className="min-w-[120px] font-mono text-sm px-3 py-2 bg-bg border border-border text-text outline-none focus:border-cyan"
           value={filters.status}
           onChange={(e) => set({ status: e.target.value })}
         >
@@ -86,14 +86,14 @@ export function AllocationTable({
         </select>
         <input
           type="text"
-          className="min-w-[100px] font-mono text-[13px] px-3 py-2 bg-bg border-2 border-border text-text outline-none focus:border-cyan"
+          className="min-w-[100px] font-mono text-sm px-3 py-2 bg-bg border border-border text-text outline-none focus:border-cyan"
           placeholder="Owner"
           value={filters.owner}
           onChange={(e) => set({ owner: e.target.value })}
         />
         <input
           type="text"
-          className="min-w-[100px] font-mono text-[13px] px-3 py-2 bg-bg border-2 border-border text-text outline-none focus:border-cyan"
+          className="min-w-[100px] font-mono text-sm px-3 py-2 bg-bg border border-border text-text outline-none focus:border-cyan"
           placeholder="Environment"
           value={filters.environment}
           onChange={(e) => set({ environment: e.target.value })}
@@ -152,7 +152,7 @@ export function AllocationTable({
                     {(a.tags ?? []).map((t) => (
                       <span
                         key={t.key + t.value}
-                        className="inline-block px-1.5 py-0.5 text-[10px] border border-border text-text-muted mr-1"
+                        className="inline-block px-1.5 py-0.5 text-xs border border-border text-text-muted mr-1"
                       >
                         {t.key}={t.value}
                       </span>
@@ -165,14 +165,14 @@ export function AllocationTable({
                   <td className="px-3 py-2 border-b border-border">
                     <div className="flex gap-1">
                       <button
-                        className="font-mono text-[10px] font-bold uppercase px-2 py-0.5 border border-border text-text-muted hover:text-text hover:border-text transition-colors"
+                        className="text-xs font-medium rounded-md px-2 py-0.5 border border-border text-text-muted hover:text-text hover:border-text transition-colors"
                         onClick={() => onViewDetail(a)}
                       >
                         DETAIL
                       </button>
                       {a.status !== "released" && (
                         <button
-                          className="font-mono text-[10px] font-bold uppercase px-2 py-0.5 border border-red text-red hover:bg-red hover:text-bg transition-colors"
+                          className="text-xs font-medium rounded-md px-2 py-0.5 border border-red text-red hover:bg-red hover:text-bg transition-colors"
                           onClick={() => onRelease(a.id)}
                         >
                           RELEASE
@@ -180,7 +180,7 @@ export function AllocationTable({
                       )}
                       {a.status === "released" && (
                         <button
-                          className="font-mono text-[10px] font-bold uppercase px-2 py-0.5 border border-green text-green hover:bg-green hover:text-bg transition-colors"
+                          className="text-xs font-medium rounded-md px-2 py-0.5 border border-green text-green hover:bg-green hover:text-bg transition-colors"
                           onClick={() => onReactivate(a.id)}
                         >
                           RE-ACTIVATE

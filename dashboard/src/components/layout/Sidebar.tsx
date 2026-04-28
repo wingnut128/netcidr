@@ -3,12 +3,12 @@ import { useTheme } from "../../theme/ThemeProvider";
 import { useAuth } from "../../auth/AuthContext";
 
 const baseNavItems = [
-  { to: "/", label: "CALC" },
-  { to: "/split", label: "SPLIT" },
-  { to: "/contains", label: "CONTAINS" },
-  { to: "/summarize", label: "SUMMARIZE" },
-  { to: "/from-range", label: "RANGE" },
-  { to: "/visualizer", label: "VISUALIZE" },
+  { to: "/", label: "Calc" },
+  { to: "/split", label: "Split" },
+  { to: "/contains", label: "Contains" },
+  { to: "/summarize", label: "Summarize" },
+  { to: "/from-range", label: "Range" },
+  { to: "/visualizer", label: "Visualize" },
 ];
 
 interface SidebarProps {
@@ -23,12 +23,12 @@ export function Sidebar({ ipamEnabled, swaggerEnabled }: SidebarProps) {
     ? [...baseNavItems, { to: "/ipam", label: "IPAM" }]
     : baseNavItems;
   return (
-    <nav className="fixed left-0 top-0 h-full w-48 bg-surface border-r border-border flex flex-col z-50">
-      <div className="px-4 py-5 border-b border-border">
-        <h1 className="text-cyan text-lg font-bold tracking-wider">netcidr</h1>
-        <p className="text-text-muted text-[10px] uppercase tracking-widest mt-1">
-          subnet tools
-        </p>
+    <nav className="fixed left-0 top-0 h-full w-52 bg-surface border-r border-border flex flex-col z-50">
+      <div className="px-5 py-5 border-b border-border">
+        <h1 className="text-cyan text-lg font-semibold tracking-tight">
+          netcidr
+        </h1>
+        <p className="text-text-muted text-xs mt-0.5">Subnet tools</p>
       </div>
       <div className="flex flex-col gap-0.5 p-2 flex-1">
         {navItems.map((item) => (
@@ -36,10 +36,10 @@ export function Sidebar({ ipamEnabled, swaggerEnabled }: SidebarProps) {
             key={item.to}
             to={item.to}
             className={({ isActive }) =>
-              `block px-3 py-2 text-xs tracking-wider uppercase border border-transparent transition-colors ${
+              `relative block pl-4 pr-3 py-2 text-sm rounded-md transition-colors ${
                 isActive
-                  ? "text-bg bg-cyan border-cyan font-bold"
-                  : "text-text-muted hover:text-cyan hover:border-border"
+                  ? "text-text font-semibold bg-surface2 before:content-[''] before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-0.5 before:rounded-r before:bg-cyan"
+                  : "text-text-muted hover:text-text hover:bg-surface2/60"
               }`
             }
           >
@@ -53,41 +53,38 @@ export function Sidebar({ ipamEnabled, swaggerEnabled }: SidebarProps) {
             href="/swagger-ui"
             target="_blank"
             rel="noopener noreferrer"
-            className="block px-3 py-2 text-xs tracking-wider uppercase border border-transparent text-text-muted hover:text-cyan hover:border-border transition-colors"
+            className="block px-4 py-2 text-sm rounded-md text-text-muted hover:text-text hover:bg-surface2/60 transition-colors"
           >
             API Docs ↗
           </a>
         </div>
       )}
       {auth.status === "authenticated" && auth.email && (
-        <div className="px-3 py-2 border-t border-border">
-          <p
-            className="text-text text-[10px] truncate"
-            title={auth.email}
-          >
+        <div className="px-4 py-3 border-t border-border">
+          <p className="text-text text-xs truncate" title={auth.email}>
             {auth.email}
           </p>
           <button
             type="button"
             onClick={() => void auth.signOut()}
-            className="mt-1 text-[10px] uppercase tracking-widest text-text-muted hover:text-cyan cursor-pointer"
+            className="mt-1 text-xs text-text-muted hover:text-cyan cursor-pointer"
           >
             Sign out
           </button>
         </div>
       )}
-      <div className="px-3 py-3 border-t border-border flex items-center justify-between">
+      <div className="px-4 py-3 border-t border-border flex items-center justify-between">
         <button
           type="button"
           onClick={toggleTheme}
           aria-label="Toggle theme"
           title="Toggle theme (⌘+J)"
-          className="text-text-muted hover:text-cyan text-[10px] uppercase tracking-widest cursor-pointer flex items-center gap-1.5"
+          className="text-text-muted hover:text-text text-xs cursor-pointer flex items-center gap-1.5"
         >
           <span aria-hidden>{theme === "dark" ? "☾" : "☀"}</span>
           <span>{theme === "dark" ? "Dark" : "Light"}</span>
         </button>
-        <p className="text-text-muted text-[10px]" id="version-display">
+        <p className="text-text-muted text-xs" id="version-display">
           &nbsp;
         </p>
       </div>

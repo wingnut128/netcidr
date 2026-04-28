@@ -49,17 +49,17 @@ export function Summarize() {
       <ErrorBanner message={error} onDismiss={() => setError(null)} />
 
       <Panel title="Input CIDRs">
-        <label className="block text-[10px] font-bold uppercase tracking-[0.1em] text-text-muted mb-1">
+        <label className="block text-xs font-bold text-text-muted mb-1">
           One CIDR per line (or comma-separated)
         </label>
         <textarea
-          className="w-full min-h-[100px] font-mono text-[13px] px-3 py-2 bg-bg border-2 border-border text-text outline-none focus:border-cyan resize-y"
+          className="w-full min-h-[100px] font-mono text-sm px-3 py-2 bg-bg border border-border text-text outline-none focus:border-cyan resize-y"
           placeholder={"192.168.1.0/25\n192.168.1.128/25\n10.0.0.0/24"}
           value={input}
           onChange={(e) => setInput(e.target.value)}
         />
         <button
-          className="mt-3 font-mono text-[11px] font-bold uppercase tracking-[0.1em] px-4 py-2 border-2 border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
+          className="mt-3 text-xs font-medium rounded-md px-4 py-2 border border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
           onClick={doSummarize}
         >
           SUMMARIZE

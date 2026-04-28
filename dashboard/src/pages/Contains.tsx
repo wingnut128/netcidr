@@ -41,24 +41,24 @@ export function Contains() {
       <Panel title="Input">
         <div className="flex gap-3 items-end flex-wrap">
           <div className="flex-[2] min-w-[200px]">
-            <label className="block text-[10px] font-bold uppercase tracking-[0.1em] text-text-muted mb-1">
+            <label className="block text-xs font-bold text-text-muted mb-1">
               CIDR
             </label>
             <input
               type="text"
-              className="w-full font-mono text-[13px] px-3 py-2 bg-bg border-2 border-border text-text outline-none focus:border-cyan"
+              className="w-full font-mono text-sm px-3 py-2 bg-bg border border-border text-text outline-none focus:border-cyan"
               placeholder="e.g. 192.168.1.0/24"
               value={cidr}
               onChange={(e) => setCidr(e.target.value)}
             />
           </div>
           <div className="flex-[2] min-w-[200px]">
-            <label className="block text-[10px] font-bold uppercase tracking-[0.1em] text-text-muted mb-1">
+            <label className="block text-xs font-bold text-text-muted mb-1">
               IP Address
             </label>
             <input
               type="text"
-              className="w-full font-mono text-[13px] px-3 py-2 bg-bg border-2 border-border text-text outline-none focus:border-cyan"
+              className="w-full font-mono text-sm px-3 py-2 bg-bg border border-border text-text outline-none focus:border-cyan"
               placeholder="e.g. 192.168.1.100"
               value={address}
               onChange={(e) => setAddress(e.target.value)}
@@ -66,7 +66,7 @@ export function Contains() {
             />
           </div>
           <button
-            className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] px-4 py-2 border-2 border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
+            className="text-xs font-medium rounded-md px-4 py-2 border border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
             onClick={doContains}
           >
             CHECK
@@ -78,13 +78,13 @@ export function Contains() {
         <>
           <Panel>
             <div
-              className={`py-6 text-center text-[32px] font-bold uppercase tracking-[0.2em] ${
+              className={`py-6 text-center text-2xl font-semibold rounded-md ${
                 result.contained
-                  ? "bg-green text-bg"
-                  : "bg-red text-bg"
+                  ? "bg-green/10 text-green border border-green/30"
+                  : "bg-red/10 text-red border border-red/30"
               }`}
             >
-              {result.contained ? "YES — CONTAINED" : "NO — NOT CONTAINED"}
+              {result.contained ? "Contained" : "Not contained"}
             </div>
           </Panel>
 
