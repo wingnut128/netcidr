@@ -69,7 +69,7 @@ export function IpamSearch({
 
       {searchResults.length > 0 && (
         <div>
-          <p className="text-xs font-bold text-text-muted mb-2">
+          <p className="text-xs font-medium text-text-muted mb-2">
             Search Results ({searchResults.length})
           </p>
           <table className="w-full border-collapse text-xs">

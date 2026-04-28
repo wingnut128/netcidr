@@ -68,7 +68,7 @@ export function Calculator() {
           {/* Bit Visualization */}
           {bitCount > 0 && (
             <Panel
-              title="Bit Visualization"
+              title="Bit visualization"
               actions={
                 <span className="text-xs text-text-muted">
                   <span className="text-cyan">NETWORK</span> /{" "}

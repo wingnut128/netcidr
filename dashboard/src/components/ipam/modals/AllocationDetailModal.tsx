@@ -37,7 +37,7 @@ export function AllocationDetailModal({
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Allocation Detail">
+    <Modal open={open} onClose={onClose} title="Allocation detail">
       <div className="space-y-1">
         <DataRow label="ID">
           <span className="text-xs text-text-muted">{allocation.id}</span>
@@ -71,7 +71,7 @@ export function AllocationDetailModal({
 
       {/* Tags */}
       <div className="mt-4 pt-4 border-t border-border">
-        <p className="text-xs font-bold text-text-muted mb-2">
+        <p className="text-xs font-medium text-text-muted mb-2">
           Tags
         </p>
         <div className="flex flex-wrap gap-1 mb-3">

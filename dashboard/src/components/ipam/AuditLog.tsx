@@ -4,7 +4,7 @@ import type { AuditEntry } from "../../types";
 
 export function AuditLog({ entries }: { entries: AuditEntry[] }) {
   return (
-    <Panel title="Audit Log" collapsible>
+    <Panel title="Audit log" collapsible>
       {entries.length === 0 ? (
         <p className="text-text-muted text-center py-4">No audit entries.</p>
       ) : (

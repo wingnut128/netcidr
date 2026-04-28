@@ -41,7 +41,7 @@ export function Contains() {
       <Panel title="Input">
         <div className="flex gap-3 items-end flex-wrap">
           <div className="flex-[2] min-w-[200px]">
-            <label className="block text-xs font-bold text-text-muted mb-1">
+            <label className="block text-xs font-medium text-text-muted mb-1">
               CIDR
             </label>
             <input
@@ -53,7 +53,7 @@ export function Contains() {
             />
           </div>
           <div className="flex-[2] min-w-[200px]">
-            <label className="block text-xs font-bold text-text-muted mb-1">
+            <label className="block text-xs font-medium text-text-muted mb-1">
               IP Address
             </label>
             <input

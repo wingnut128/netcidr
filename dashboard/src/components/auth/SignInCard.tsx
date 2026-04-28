@@ -9,7 +9,7 @@ export function SignInCard() {
 
   return (
     <div className="flex items-center justify-center min-h-[60vh]">
-      <div className="bg-surface border border-border rounded-lg shadow-sm p-8 max-w-md w-full text-center">
+      <div className="bg-surface border border-border rounded-lg shadow-[0_1px_2px_rgba(15,23,42,0.04)] p-8 max-w-md w-full text-center">
         <h2 className="text-text text-lg font-semibold mb-2">
           Sign in to IPAM
         </h2>

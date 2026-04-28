@@ -53,7 +53,7 @@ export function Splitter() {
       <Panel title="Input">
         <div className="flex gap-3 items-end flex-wrap">
           <div className="flex-[3] min-w-[200px]">
-            <label className="block text-xs font-bold text-text-muted mb-1">
+            <label className="block text-xs font-medium text-text-muted mb-1">
               CIDR
             </label>
             <input
@@ -65,7 +65,7 @@ export function Splitter() {
             />
           </div>
           <div className="flex-1 min-w-[100px]">
-            <label className="block text-xs font-bold text-text-muted mb-1">
+            <label className="block text-xs font-medium text-text-muted mb-1">
               Target Prefix
             </label>
             <input
@@ -79,7 +79,7 @@ export function Splitter() {
             />
           </div>
           <div className="flex-1 min-w-[100px]">
-            <label className="block text-xs font-bold text-text-muted mb-1">
+            <label className="block text-xs font-medium text-text-muted mb-1">
               Count
             </label>
             <input
@@ -144,25 +144,25 @@ export function Splitter() {
               <table className="w-full border-collapse text-xs">
                 <thead>
                   <tr>
-                    <th className="text-left px-3 py-2 font-bold text-xs text-text-muted bg-surface2 border-b-2 border-border">
+                    <th className="text-left px-3 py-2 text-xs font-semibold text-text-muted bg-surface2 border-b-2 border-border">
                       #
                     </th>
-                    <th className="text-left px-3 py-2 font-bold text-xs text-text-muted bg-surface2 border-b-2 border-border">
+                    <th className="text-left px-3 py-2 text-xs font-semibold text-text-muted bg-surface2 border-b-2 border-border">
                       CIDR
                     </th>
-                    <th className="text-left px-3 py-2 font-bold text-xs text-text-muted bg-surface2 border-b-2 border-border">
+                    <th className="text-left px-3 py-2 text-xs font-semibold text-text-muted bg-surface2 border-b-2 border-border">
                       Network
                     </th>
                     {isV4 && (
-                      <th className="text-left px-3 py-2 font-bold text-xs text-text-muted bg-surface2 border-b-2 border-border">
+                      <th className="text-left px-3 py-2 text-xs font-semibold text-text-muted bg-surface2 border-b-2 border-border">
                         Broadcast
                       </th>
                     )}
-                    <th className="text-left px-3 py-2 font-bold text-xs text-text-muted bg-surface2 border-b-2 border-border">
+                    <th className="text-left px-3 py-2 text-xs font-semibold text-text-muted bg-surface2 border-b-2 border-border">
                       Total
                     </th>
                     {isV4 && (
-                      <th className="text-left px-3 py-2 font-bold text-xs text-text-muted bg-surface2 border-b-2 border-border">
+                      <th className="text-left px-3 py-2 text-xs font-semibold text-text-muted bg-surface2 border-b-2 border-border">
                         Usable
                       </th>
                     )}
