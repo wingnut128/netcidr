@@ -1,4 +1,6 @@
 import { NavLink } from "react-router-dom";
+import { useTheme } from "../../theme/ThemeProvider";
+import { useAuth } from "../../auth/AuthContext";
 
 const baseNavItems = [
   { to: "/", label: "CALC" },
@@ -15,6 +17,8 @@ interface SidebarProps {
 }
 
 export function Sidebar({ ipamEnabled, swaggerEnabled }: SidebarProps) {
+  const { theme, toggleTheme } = useTheme();
+  const auth = useAuth();
   const navItems = ipamEnabled
     ? [...baseNavItems, { to: "/ipam", label: "IPAM" }]
     : baseNavItems;
@@ -55,7 +59,34 @@ export function Sidebar({ ipamEnabled, swaggerEnabled }: SidebarProps) {
           </a>
         </div>
       )}
-      <div className="px-4 py-3 border-t border-border">
+      {auth.status === "authenticated" && auth.email && (
+        <div className="px-3 py-2 border-t border-border">
+          <p
+            className="text-text text-[10px] truncate"
+            title={auth.email}
+          >
+            {auth.email}
+          </p>
+          <button
+            type="button"
+            onClick={() => void auth.signOut()}
+            className="mt-1 text-[10px] uppercase tracking-widest text-text-muted hover:text-cyan cursor-pointer"
+          >
+            Sign out
+          </button>
+        </div>
+      )}
+      <div className="px-3 py-3 border-t border-border flex items-center justify-between">
+        <button
+          type="button"
+          onClick={toggleTheme}
+          aria-label="Toggle theme"
+          title="Toggle theme (⌘+J)"
+          className="text-text-muted hover:text-cyan text-[10px] uppercase tracking-widest cursor-pointer flex items-center gap-1.5"
+        >
+          <span aria-hidden>{theme === "dark" ? "☾" : "☀"}</span>
+          <span>{theme === "dark" ? "Dark" : "Light"}</span>
+        </button>
         <p className="text-text-muted text-[10px]" id="version-display">
           &nbsp;
         </p>
