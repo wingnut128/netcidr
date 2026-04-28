@@ -55,7 +55,7 @@ export function FromRange() {
       <Panel title="Input">
         <div className="flex gap-3 items-end flex-wrap">
           <div className="flex-1 min-w-[200px]">
-            <label className="block text-xs font-bold text-text-muted mb-1">
+            <label className="block text-xs font-medium text-text-muted mb-1">
               Start IP
             </label>
             <input
@@ -67,7 +67,7 @@ export function FromRange() {
             />
           </div>
           <div className="flex-1 min-w-[200px]">
-            <label className="block text-xs font-bold text-text-muted mb-1">
+            <label className="block text-xs font-medium text-text-muted mb-1">
               End IP
             </label>
             <input
@@ -114,16 +114,16 @@ export function FromRange() {
               <table className="w-full border-collapse text-xs">
                 <thead>
                   <tr>
-                    <th className="text-left px-3 py-2 font-bold text-xs text-text-muted bg-surface2 border-b-2 border-border">
+                    <th className="text-left px-3 py-2 text-xs font-semibold text-text-muted bg-surface2 border-b-2 border-border">
                       #
                     </th>
-                    <th className="text-left px-3 py-2 font-bold text-xs text-text-muted bg-surface2 border-b-2 border-border">
+                    <th className="text-left px-3 py-2 text-xs font-semibold text-text-muted bg-surface2 border-b-2 border-border">
                       CIDR
                     </th>
-                    <th className="text-left px-3 py-2 font-bold text-xs text-text-muted bg-surface2 border-b-2 border-border">
+                    <th className="text-left px-3 py-2 text-xs font-semibold text-text-muted bg-surface2 border-b-2 border-border">
                       Network
                     </th>
-                    <th className="text-left px-3 py-2 font-bold text-xs text-text-muted bg-surface2 border-b-2 border-border">
+                    <th className="text-left px-3 py-2 text-xs font-semibold text-text-muted bg-surface2 border-b-2 border-border">
                       Total
                     </th>
                   </tr>

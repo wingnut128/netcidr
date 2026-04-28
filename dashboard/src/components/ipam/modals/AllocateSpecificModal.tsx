@@ -83,10 +83,10 @@ export function AllocateSpecificModal({
   );
 
   return (
-    <Modal open={open} onClose={onClose} title="Allocate Specific">
+    <Modal open={open} onClose={onClose} title="Allocate specific block">
       <div className="space-y-3">
         {error && (
-          <div className="bg-red/10 border border-red text-red px-3 py-2 text-xs">
+          <div className="border border-red/40 bg-red/10 text-red rounded-md px-3 py-2 text-xs">
             {error}
           </div>
         )}

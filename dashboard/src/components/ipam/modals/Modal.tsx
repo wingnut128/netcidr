@@ -19,7 +19,7 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
     >
       <div className="bg-surface border border-border w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-4 py-3 border-b-2 border-border bg-surface2">
-          <h3 className="text-xs font-bold text-text-muted">
+          <h3 className="text-xs font-medium text-text-muted">
             {title}
           </h3>
           <button
