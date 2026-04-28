@@ -14,8 +14,7 @@
     "oidc-client-ts": "^3.5.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "react-router-dom": "^7.14.0",
-    "recharts": "^3.8.1"
+    "react-router-dom": "^7.14.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.2",
