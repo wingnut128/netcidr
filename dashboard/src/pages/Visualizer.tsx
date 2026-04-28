@@ -9,7 +9,6 @@ import { WhatIfPanel } from "../components/visualizer/WhatIfPanel";
 import { AllocationDetailModal } from "../components/ipam/modals/AllocationDetailModal";
 import { useIpam } from "../hooks/useIpam";
 import { useAuth } from "../auth/AuthContext";
-import { isAuthConfigured } from "../auth/oidc";
 import type { Allocation } from "../types";
 import type { ParsedCidr } from "../lib/cidr";
 
@@ -24,12 +23,7 @@ export function Visualizer() {
     );
   }
   if (auth.status !== "authenticated") {
-    return (
-      <SignInCard
-        onSignIn={() => void auth.signIn()}
-        configured={isAuthConfigured}
-      />
-    );
+    return <SignInCard />;
   }
 
   return <VisualizerInner />;

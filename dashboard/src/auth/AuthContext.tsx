@@ -7,8 +7,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { User } from "oidc-client-ts";
-import { isAuthConfigured, userManager } from "./oidc";
+import {
+  decodeClaims,
+  getCurrentIdToken,
+  isAuthConfigured,
+  setIdToken,
+  type IdTokenClaims,
+} from "./oidc";
 
 export type AuthStatus =
   | "loading"
@@ -18,110 +23,93 @@ export type AuthStatus =
 
 interface AuthContextValue {
   status: AuthStatus;
-  user: User | null;
   email: string | null;
+  name: string | null;
+  picture: string | null;
   /** Most recent sign-in error, surfaced to the UI. */
   error: string | null;
-  signIn: () => Promise<void>;
-  signOut: () => Promise<void>;
+  /** Called by the Google sign-in widget on success. */
+  acceptCredential: (jwt: string) => void;
+  signOut: () => void;
+  reportError: (msg: string) => void;
   clearError: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [claims, setClaims] = useState<IdTokenClaims | null>(null);
   const [status, setStatus] = useState<AuthStatus>(
     isAuthConfigured ? "loading" : "disabled",
   );
   const [error, setError] = useState<string | null>(null);
 
+  // On mount: if we have a cached, non-expired token, mark authenticated.
   useEffect(() => {
-    const um = userManager;
-    if (!um) return;
-    let cancelled = false;
-
-    void um.getUser().then((u) => {
-      if (cancelled) return;
-      if (u && !u.expired) {
-        setUser(u);
-        setStatus("authenticated");
-      } else {
-        setUser(null);
-        setStatus("anonymous");
-      }
-    });
-
-    const onLoaded = (u: User) => {
-      setUser(u);
-      setStatus("authenticated");
-    };
-    const onUnloaded = () => {
-      setUser(null);
+    if (!isAuthConfigured) return;
+    const token = getCurrentIdToken();
+    if (token) {
+      const c = decodeClaims(token);
+      setClaims(c);
+      setStatus(c ? "authenticated" : "anonymous");
+    } else {
       setStatus("anonymous");
-    };
-
-    um.events.addUserLoaded(onLoaded);
-    um.events.addUserUnloaded(onUnloaded);
-    um.events.addSilentRenewError(onUnloaded);
-    um.events.addAccessTokenExpired(onUnloaded);
-
-    return () => {
-      cancelled = true;
-      um.events.removeUserLoaded(onLoaded);
-      um.events.removeUserUnloaded(onUnloaded);
-      um.events.removeSilentRenewError(onUnloaded);
-      um.events.removeAccessTokenExpired(onUnloaded);
-    };
+    }
   }, []);
 
-  const signIn = useCallback(async () => {
-    setError(null);
-    if (!userManager) {
-      const msg =
-        "Sign-in not configured. The dashboard build was missing VITE_OAUTH_WEB_CLIENT_ID — rebuild with the env var set.";
-      console.error("[auth]", msg);
-      setError(msg);
+  // Auto-expire: schedule a flip to anonymous when the current token's
+  // exp passes. Keeps the UI honest without polling.
+  useEffect(() => {
+    if (!claims) return;
+    const msUntilExpiry = claims.exp * 1000 - Date.now();
+    if (msUntilExpiry <= 0) {
+      setIdToken(null);
+      setClaims(null);
+      setStatus("anonymous");
       return;
     }
-    console.info("[auth] signinRedirect invoked");
-    try {
-      await userManager.signinRedirect();
-      // signinRedirect navigates the page away; if execution continues
-      // past the await, something prevented the redirect.
-      console.warn("[auth] signinRedirect returned without navigating");
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error("[auth] signinRedirect failed:", e);
-      setError(`Sign-in failed: ${msg}`);
-    }
-  }, []);
+    const id = window.setTimeout(() => {
+      setIdToken(null);
+      setClaims(null);
+      setStatus("anonymous");
+    }, msUntilExpiry);
+    return () => window.clearTimeout(id);
+  }, [claims]);
 
-  const signOut = useCallback(async () => {
+  const acceptCredential = useCallback((jwt: string) => {
+    const c = setIdToken(jwt);
+    if (!c) {
+      setError("Sign-in succeeded but the credential could not be parsed.");
+      return;
+    }
+    setClaims(c);
+    setStatus("authenticated");
     setError(null);
-    if (!userManager) return;
-    try {
-      await userManager.removeUser();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error("[auth] removeUser failed:", e);
-      setError(`Sign-out failed: ${msg}`);
-    }
   }, []);
 
+  const signOut = useCallback(() => {
+    setIdToken(null);
+    setClaims(null);
+    setStatus("anonymous");
+    setError(null);
+  }, []);
+
+  const reportError = useCallback((msg: string) => setError(msg), []);
   const clearError = useCallback(() => setError(null), []);
 
   const value = useMemo<AuthContextValue>(
     () => ({
       status,
-      user,
-      email: (user?.profile?.email as string | undefined) ?? null,
+      email: claims?.email ?? null,
+      name: claims?.name ?? null,
+      picture: claims?.picture ?? null,
       error,
-      signIn,
+      acceptCredential,
       signOut,
+      reportError,
       clearError,
     }),
-    [status, user, error, signIn, signOut, clearError],
+    [status, claims, error, acceptCredential, signOut, reportError, clearError],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
