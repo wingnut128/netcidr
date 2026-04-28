@@ -1,0 +1,22 @@
+# cargo-audit configuration. Picked up automatically by `cargo audit`.
+
+[advisories]
+ignore = [
+  # Marvin Attack — timing side-channel in the `rsa` crate. No fix has been
+  # released upstream; the crate authors have stated they cannot mitigate
+  # without rewriting the library.
+  #
+  # We pull `rsa` two ways:
+  #   1. As a dev-dependency for ephemeral keypair generation in the Google
+  #      ID token validation tests.
+  #   2. Transitively through `jsonwebtoken` (with `rust_crypto` features),
+  #      which uses it for RSA signature verification on incoming
+  #      Google ID tokens.
+  #
+  # The Marvin Attack requires an attacker who can both submit ciphertexts
+  # AND observe precise decryption timing. We never decrypt arbitrary
+  # ciphertexts — we only verify RSA signatures on tokens, and verification
+  # is a public-key operation with no exposed timing oracle. The advisory
+  # is real but does not apply to our usage pattern.
+  "RUSTSEC-2023-0071",
+]
