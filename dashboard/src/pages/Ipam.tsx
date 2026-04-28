@@ -26,14 +26,20 @@ export function Ipam() {
     );
   }
 
-  if (auth.status === "anonymous") {
+  // Show the sign-in card whenever the user isn't authenticated — including
+  // the "disabled" state where the build was missing VITE_OAUTH_WEB_CLIENT_ID.
+  // SignInCard renders a "not configured" message in that case rather than a
+  // working button, which is more honest than letting the dashboard render
+  // and 401 on every API call.
+  if (auth.status !== "authenticated") {
     return (
-      <SignInCard onSignIn={() => void auth.signIn()} configured={isAuthConfigured} />
+      <SignInCard
+        onSignIn={() => void auth.signIn()}
+        configured={isAuthConfigured}
+      />
     );
   }
 
-  // "disabled" (no client id baked in) — fall through to the dashboard;
-  // the backend may still 401, in which case the existing ErrorBanner shows.
   return <IpamDashboard />;
 }
 
