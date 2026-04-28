@@ -72,7 +72,7 @@ export function Sidebar({ ipamEnabled, swaggerEnabled }: SidebarProps) {
           </p>
           <button
             type="button"
-            onClick={() => void auth.signOut()}
+            onClick={() => auth.signOut()}
             className="mt-1 text-xs text-text-muted hover:text-cyan cursor-pointer"
           >
             Sign out

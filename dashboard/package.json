@@ -11,7 +11,8 @@
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.2.8",
-    "oidc-client-ts": "^3.5.0",
+    "@react-oauth/google": "^0.13.5",
+    "jwt-decode": "^4.0.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-router-dom": "^7.14.0"

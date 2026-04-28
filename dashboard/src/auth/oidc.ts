@@ -1,64 +1,96 @@
-import {
-  UserManager,
-  WebStorageStateStore,
-  type User,
-} from "oidc-client-ts";
+/**
+ * In-memory + localStorage cache of the Google ID token.
+ *
+ * The dashboard uses Google Identity Services (`@react-oauth/google`)
+ * which returns a JWT credential directly from the user's Google sign-in.
+ * That JWT is the OIDC `id_token` — the same shape the Lambda backend
+ * already validates against `oauth_web_client_id` (RS256, JWKS at
+ * Google's certs endpoint, audience = client ID).
+ *
+ * This module is the small shared piece between the React AuthContext
+ * (which manages the lifecycle) and the API client (which needs to
+ * synchronously read the current token to attach as a Bearer header).
+ */
+
+import { jwtDecode } from "jwt-decode";
+
+const STORAGE_KEY = "netcidr.idToken";
+
+export interface IdTokenClaims {
+  sub: string;
+  email?: string;
+  email_verified?: boolean;
+  name?: string;
+  picture?: string;
+  aud?: string;
+  exp: number;
+  iat: number;
+}
 
 const clientId = import.meta.env.VITE_OAUTH_WEB_CLIENT_ID as
   | string
   | undefined;
 
-// Origin used for redirect URIs. Google requires these be registered
-// verbatim on the OAuth Web Client.
-const origin =
-  typeof window !== "undefined" ? window.location.origin : "";
-
 export const isAuthConfigured = Boolean(clientId);
+export const oauthClientId = clientId ?? "";
 
-export const userManager: UserManager | null = clientId
-  ? new UserManager({
-      authority: "https://accounts.google.com",
-      client_id: clientId,
-      redirect_uri: `${origin}/auth/callback`,
-      silent_redirect_uri: `${origin}/auth/silent-callback`,
-      response_type: "id_token",
-      scope: "openid email profile",
-      userStore: new WebStorageStateStore({ store: window.localStorage }),
-      automaticSilentRenew: true,
-      // Google's OIDC discovery endpoint requires an explicit `nonce` for
-      // implicit flow, which oidc-client-ts handles automatically.
-      loadUserInfo: false,
-    })
-  : null;
+let cachedToken: string | null = null;
 
-let cachedUser: User | null = null;
-
-if (userManager) {
-  void userManager.getUser().then((u) => {
-    cachedUser = u;
-  });
-  userManager.events.addUserLoaded((u) => {
-    cachedUser = u;
-  });
-  userManager.events.addUserUnloaded(() => {
-    cachedUser = null;
-  });
-  userManager.events.addSilentRenewError(() => {
-    cachedUser = null;
-  });
-  userManager.events.addAccessTokenExpired(() => {
-    cachedUser = null;
-  });
+/** Restore from localStorage on first read; returns null if expired or absent. */
+function loadFromStorage(): string | null {
+  try {
+    const t = window.localStorage.getItem(STORAGE_KEY);
+    if (!t) return null;
+    const claims = jwtDecode<IdTokenClaims>(t);
+    if (claims.exp * 1000 < Date.now()) {
+      window.localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
+    return t;
+  } catch {
+    window.localStorage.removeItem(STORAGE_KEY);
+    return null;
+  }
 }
 
-/**
- * Returns the current ID token if the user is signed in and the token has
- * not expired, otherwise null. Synchronous: reads from the in-memory cache
- * populated by oidc-client-ts events. Used by the API client to attach a
- * Bearer header to outgoing requests without making the call sites async.
- */
+cachedToken = loadFromStorage();
+
+export function setIdToken(token: string | null): IdTokenClaims | null {
+  cachedToken = token;
+  if (token) {
+    window.localStorage.setItem(STORAGE_KEY, token);
+    try {
+      return jwtDecode<IdTokenClaims>(token);
+    } catch {
+      return null;
+    }
+  }
+  window.localStorage.removeItem(STORAGE_KEY);
+  return null;
+}
+
+/** Synchronous read of the cached ID token. Used by api.ts. */
 export function getCurrentIdToken(): string | null {
-  const u = cachedUser;
-  if (!u || u.expired) return null;
-  return u.id_token ?? null;
+  if (!cachedToken) return null;
+  // Cheap expiry check; the proper handoff is handled in AuthContext.
+  try {
+    const claims = jwtDecode<IdTokenClaims>(cachedToken);
+    if (claims.exp * 1000 < Date.now()) {
+      cachedToken = null;
+      window.localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
+    return cachedToken;
+  } catch {
+    cachedToken = null;
+    return null;
+  }
+}
+
+export function decodeClaims(token: string): IdTokenClaims | null {
+  try {
+    return jwtDecode<IdTokenClaims>(token);
+  } catch {
+    return null;
+  }
 }

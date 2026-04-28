@@ -12,7 +12,6 @@ import { AllocateSpecificModal } from "../components/ipam/modals/AllocateSpecifi
 import { AutoAllocateModal } from "../components/ipam/modals/AutoAllocateModal";
 import { AllocationDetailModal } from "../components/ipam/modals/AllocationDetailModal";
 import { useAuth } from "../auth/AuthContext";
-import { isAuthConfigured } from "../auth/oidc";
 import { SignInCard } from "../components/auth/SignInCard";
 
 export function Ipam() {
@@ -25,22 +24,9 @@ export function Ipam() {
       </div>
     );
   }
-
-  // Show the sign-in card whenever the user isn't authenticated — including
-  // the "disabled" state where the build was missing VITE_OAUTH_WEB_CLIENT_ID.
-  // SignInCard renders a "not configured" message in that case rather than a
-  // working button, which is more honest than letting the dashboard render
-  // and 401 on every API call.
   if (auth.status !== "authenticated") {
-    return (
-      <SignInCard
-        onSignIn={() => void auth.signIn()}
-        configured={isAuthConfigured}
-        error={auth.error}
-      />
-    );
+    return <SignInCard />;
   }
-
   return <IpamDashboard />;
 }
 
