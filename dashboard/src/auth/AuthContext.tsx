@@ -20,8 +20,11 @@ interface AuthContextValue {
   status: AuthStatus;
   user: User | null;
   email: string | null;
+  /** Most recent sign-in error, surfaced to the UI. */
+  error: string | null;
   signIn: () => Promise<void>;
   signOut: () => Promise<void>;
+  clearError: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -31,6 +34,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>(
     isAuthConfigured ? "loading" : "disabled",
   );
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const um = userManager;
@@ -72,24 +76,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signIn = useCallback(async () => {
-    if (!userManager) return;
-    await userManager.signinRedirect();
+    setError(null);
+    if (!userManager) {
+      const msg =
+        "Sign-in not configured. The dashboard build was missing VITE_OAUTH_WEB_CLIENT_ID — rebuild with the env var set.";
+      console.error("[auth]", msg);
+      setError(msg);
+      return;
+    }
+    console.info("[auth] signinRedirect invoked");
+    try {
+      await userManager.signinRedirect();
+      // signinRedirect navigates the page away; if execution continues
+      // past the await, something prevented the redirect.
+      console.warn("[auth] signinRedirect returned without navigating");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[auth] signinRedirect failed:", e);
+      setError(`Sign-in failed: ${msg}`);
+    }
   }, []);
 
   const signOut = useCallback(async () => {
+    setError(null);
     if (!userManager) return;
-    await userManager.removeUser();
+    try {
+      await userManager.removeUser();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[auth] removeUser failed:", e);
+      setError(`Sign-out failed: ${msg}`);
+    }
   }, []);
+
+  const clearError = useCallback(() => setError(null), []);
 
   const value = useMemo<AuthContextValue>(
     () => ({
       status,
       user,
       email: (user?.profile?.email as string | undefined) ?? null,
+      error,
       signIn,
       signOut,
+      clearError,
     }),
-    [status, user, signIn, signOut],
+    [status, user, error, signIn, signOut, clearError],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

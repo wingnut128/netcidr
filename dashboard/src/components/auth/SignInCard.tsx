@@ -1,9 +1,16 @@
 interface SignInCardProps {
   onSignIn: () => void;
   configured: boolean;
+  error?: string | null;
 }
 
-export function SignInCard({ onSignIn, configured }: SignInCardProps) {
+export function SignInCard({ onSignIn, configured, error }: SignInCardProps) {
+  const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    console.info("[SignInCard] button clicked");
+    onSignIn();
+  };
+
   return (
     <div className="flex items-center justify-center min-h-[60vh]">
       <div className="bg-surface border border-border rounded-lg shadow-sm p-8 max-w-md w-full text-center">
@@ -18,7 +25,7 @@ export function SignInCard({ onSignIn, configured }: SignInCardProps) {
         {configured ? (
           <button
             type="button"
-            onClick={onSignIn}
+            onClick={handleClick}
             className="inline-flex items-center justify-center gap-2 px-5 py-2.5 border border-cyan text-cyan hover:bg-cyan hover:text-bg transition-colors text-sm font-medium rounded-md cursor-pointer"
           >
             <GoogleGlyph />
@@ -28,6 +35,11 @@ export function SignInCard({ onSignIn, configured }: SignInCardProps) {
           <p className="text-red text-sm">
             Sign-in is not configured for this build (missing
             VITE_OAUTH_WEB_CLIENT_ID).
+          </p>
+        )}
+        {error && (
+          <p className="mt-4 text-red text-sm border border-red/30 bg-red/10 rounded-md px-3 py-2 text-left">
+            {error}
           </p>
         )}
       </div>

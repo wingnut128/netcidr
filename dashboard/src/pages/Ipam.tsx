@@ -36,6 +36,7 @@ export function Ipam() {
       <SignInCard
         onSignIn={() => void auth.signIn()}
         configured={isAuthConfigured}
+        error={auth.error}
       />
     );
   }
