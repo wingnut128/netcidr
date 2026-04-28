@@ -43,7 +43,7 @@ base64 = "0.22"
 ratatui = { version = "0.30", optional = true }
 crossterm = { version = "0.29", optional = true }
 ipnet = { version = "2", optional = true }
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"], optional = true }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "tls-rustls"], optional = true }
 lambda_http = { version = "0.13", optional = true }
 
 # OpenAPI/Swagger dependencies
