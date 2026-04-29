@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- CI now runs `bun audit --audit-level=high` on the dashboard dependency tree and
+  fails the build if known-compromised npm package names appear in
+  `dashboard/bun.lock`. Initial denylist covers the StepSecurity advisory
+  packages `mbt` and `@cap-js/sqlite` (Shai-Hulud-style supply-chain compromise).
+  Audited at advisory time: neither package — nor any of their transitive
+  dependencies — is present in this repo, so the change is preventive.
+
 ### Changed
 
 - Dashboard audit pass against the `netcidr-design` skill. All mechanical drift fixes:
