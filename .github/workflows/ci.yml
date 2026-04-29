@@ -72,6 +72,24 @@ jobs:
       - uses: step-security/setup-bun@c2c3ca3b28b446447c25a2a39061f4bd64b729c8 # v2.1.2
       - name: Build dashboard
         run: cd dashboard && bun install --frozen-lockfile && bun run build
+      - name: Audit dashboard npm deps
+        working-directory: dashboard
+        run: bun audit --audit-level=high
+      - name: Check lockfile for known-compromised packages
+        working-directory: dashboard
+        env:
+          # StepSecurity supply-chain advisory denylist. Add new entries as advisories arrive.
+          DENYLIST: '"mbt" "@cap-js/sqlite"'
+        run: |
+          eval "set -- $DENYLIST"
+          fail=0
+          for pkg in "$@"; do
+            if grep -F "\"$pkg" bun.lock >/dev/null 2>&1; then
+              echo "::error file=dashboard/bun.lock::Compromised package present in lockfile: $pkg"
+              fail=1
+            fi
+          done
+          exit "$fail"
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo nextest run --features mcp,tui
