@@ -39,6 +39,35 @@ fn csv_err(e: impl std::fmt::Display) -> NetcidrError {
     NetcidrError::Csv(e.to_string())
 }
 
+/// Neutralize a CSV cell that could be interpreted as a formula by spreadsheet
+/// software. Cells beginning with `=`, `+`, `-`, `@`, tab, or carriage return
+/// are prefixed with a single quote per the OWASP guidance — preserves the
+/// visible value but prevents Excel/Sheets/LibreOffice from auto-evaluating it.
+fn sanitize_csv_cell(cell: &str) -> String {
+    match cell.chars().next() {
+        Some('=' | '+' | '-' | '@' | '\t' | '\r') => {
+            let mut s = String::with_capacity(cell.len() + 1);
+            s.push('\'');
+            s.push_str(cell);
+            s
+        }
+        _ => cell.to_string(),
+    }
+}
+
+/// Write a CSV record with every cell run through [`sanitize_csv_cell`] first.
+fn write_safe_record<I, S>(wtr: &mut csv::Writer<Vec<u8>>, cells: I) -> Result<()>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let safe: Vec<String> = cells
+        .into_iter()
+        .map(|c| sanitize_csv_cell(c.as_ref()))
+        .collect();
+    wtr.write_record(&safe).map_err(csv_err)
+}
+
 pub struct OutputWriter {
     format: OutputFormat,
     file_path: Option<String>,
@@ -298,22 +327,24 @@ fn ipv4_csv_header() -> &'static [&'static str] {
 }
 
 fn write_ipv4_csv_record(wtr: &mut csv::Writer<Vec<u8>>, s: &Ipv4Subnet) -> Result<()> {
-    wtr.write_record([
-        &s.input,
-        &s.network.to_string(),
-        &s.broadcast.to_string(),
-        &s.mask.to_string(),
-        &s.wildcard.to_string(),
-        &s.prefix_length.to_string(),
-        &s.first_host.to_string(),
-        &s.last_host.to_string(),
-        &s.total_hosts.to_string(),
-        &s.usable_hosts.to_string(),
-        &s.network_class,
-        &s.is_private.to_string(),
-        &s.address_type,
-    ])
-    .map_err(csv_err)
+    write_safe_record(
+        wtr,
+        [
+            s.input.as_str(),
+            &s.network.to_string(),
+            &s.broadcast.to_string(),
+            &s.mask.to_string(),
+            &s.wildcard.to_string(),
+            &s.prefix_length.to_string(),
+            &s.first_host.to_string(),
+            &s.last_host.to_string(),
+            &s.total_hosts.to_string(),
+            &s.usable_hosts.to_string(),
+            &s.network_class,
+            &s.is_private.to_string(),
+            &s.address_type,
+        ],
+    )
 }
 
 fn ipv6_csv_header() -> &'static [&'static str] {
@@ -331,18 +362,20 @@ fn ipv6_csv_header() -> &'static [&'static str] {
 }
 
 fn write_ipv6_csv_record(wtr: &mut csv::Writer<Vec<u8>>, s: &Ipv6Subnet) -> Result<()> {
-    wtr.write_record([
-        &s.input,
-        &s.network.to_string(),
-        &s.network_address_full,
-        &s.last.to_string(),
-        &s.last_address_full,
-        &s.prefix_length.to_string(),
-        &s.total_addresses,
-        &s.hextets.join(":"),
-        &s.address_type,
-    ])
-    .map_err(csv_err)
+    write_safe_record(
+        wtr,
+        [
+            s.input.as_str(),
+            &s.network.to_string(),
+            &s.network_address_full,
+            &s.last.to_string(),
+            &s.last_address_full,
+            &s.prefix_length.to_string(),
+            &s.total_addresses,
+            &s.hextets.join(":"),
+            &s.address_type,
+        ],
+    )
 }
 
 fn finish_csv(wtr: csv::Writer<Vec<u8>>) -> Result<String> {
@@ -379,14 +412,16 @@ impl CsvOutput for ContainsResult {
             "broadcast_address",
         ])
         .map_err(csv_err)?;
-        wtr.write_record([
-            &self.cidr,
-            &self.address,
-            &self.contained.to_string(),
-            &self.network_address,
-            &self.broadcast_address,
-        ])
-        .map_err(csv_err)?;
+        write_safe_record(
+            &mut wtr,
+            [
+                self.cidr.as_str(),
+                &self.address,
+                &self.contained.to_string(),
+                &self.network_address,
+                &self.broadcast_address,
+            ],
+        )?;
         finish_csv(wtr)
     }
 }
@@ -396,12 +431,14 @@ impl CsvOutput for SplitSummary {
         let mut wtr = csv::Writer::from_writer(Vec::new());
         wtr.write_record(["supernet", "new_prefix", "available_subnets"])
             .map_err(csv_err)?;
-        wtr.write_record([
-            &self.supernet,
-            &self.new_prefix.to_string(),
-            &self.available_subnets,
-        ])
-        .map_err(csv_err)?;
+        write_safe_record(
+            &mut wtr,
+            [
+                self.supernet.as_str(),
+                &self.new_prefix.to_string(),
+                &self.available_subnets,
+            ],
+        )?;
         finish_csv(wtr)
     }
 }
@@ -540,82 +577,116 @@ impl CsvOutput for BatchResult {
             match &entry.result {
                 BatchEntryResult::Ok { subnet } => match subnet.as_ref() {
                     SubnetResult::V4(s) => {
-                        wtr.write_record([
-                            &entry.cidr,
-                            &s.network.to_string(),
-                            &s.broadcast.to_string(),
-                            &s.mask.to_string(),
-                            &s.wildcard.to_string(),
-                            &s.prefix_length.to_string(),
-                            &s.first_host.to_string(),
-                            &s.last_host.to_string(),
-                            &s.total_hosts.to_string(),
-                            &s.usable_hosts.to_string(),
-                            &s.network_class,
-                            &s.is_private.to_string(),
-                            "",
-                            "",
-                            "",
-                            "",
-                            "",
-                            &s.address_type,
-                            "",
-                        ])
-                        .map_err(csv_err)?;
+                        write_safe_record(
+                            &mut wtr,
+                            [
+                                entry.cidr.as_str(),
+                                &s.network.to_string(),
+                                &s.broadcast.to_string(),
+                                &s.mask.to_string(),
+                                &s.wildcard.to_string(),
+                                &s.prefix_length.to_string(),
+                                &s.first_host.to_string(),
+                                &s.last_host.to_string(),
+                                &s.total_hosts.to_string(),
+                                &s.usable_hosts.to_string(),
+                                &s.network_class,
+                                &s.is_private.to_string(),
+                                "",
+                                "",
+                                "",
+                                "",
+                                "",
+                                &s.address_type,
+                                "",
+                            ],
+                        )?;
                     }
                     SubnetResult::V6(s) => {
-                        wtr.write_record([
-                            &entry.cidr,
-                            &s.network.to_string(),
-                            "",
-                            "",
-                            "",
-                            &s.prefix_length.to_string(),
-                            "",
-                            "",
-                            "",
-                            "",
-                            "",
-                            "",
-                            &s.network_address_full,
-                            &s.last.to_string(),
-                            &s.last_address_full,
-                            &s.total_addresses,
-                            &s.hextets.join(":"),
-                            &s.address_type,
-                            "",
-                        ])
-                        .map_err(csv_err)?;
+                        write_safe_record(
+                            &mut wtr,
+                            [
+                                entry.cidr.as_str(),
+                                &s.network.to_string(),
+                                "",
+                                "",
+                                "",
+                                &s.prefix_length.to_string(),
+                                "",
+                                "",
+                                "",
+                                "",
+                                "",
+                                "",
+                                &s.network_address_full,
+                                &s.last.to_string(),
+                                &s.last_address_full,
+                                &s.total_addresses,
+                                &s.hextets.join(":"),
+                                &s.address_type,
+                                "",
+                            ],
+                        )?;
                     }
                 },
                 BatchEntryResult::Err { error } => {
-                    wtr.write_record([
-                        &entry.cidr,
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        error.as_str(),
-                    ])
-                    .map_err(csv_err)?;
+                    write_safe_record(
+                        &mut wtr,
+                        [
+                            entry.cidr.as_str(),
+                            "",
+                            "",
+                            "",
+                            "",
+                            "",
+                            "",
+                            "",
+                            "",
+                            "",
+                            "",
+                            "",
+                            "",
+                            "",
+                            "",
+                            "",
+                            "",
+                            "",
+                            error.as_str(),
+                        ],
+                    )?;
                 }
             }
         }
 
         out.push_str(&finish_csv(wtr)?);
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod sanitize_tests {
+    use super::sanitize_csv_cell;
+
+    #[test]
+    fn empty_cell_unchanged() {
+        assert_eq!(sanitize_csv_cell(""), "");
+    }
+
+    #[test]
+    fn safe_cells_unchanged() {
+        assert_eq!(sanitize_csv_cell("192.168.1.0"), "192.168.1.0");
+        assert_eq!(sanitize_csv_cell("hello"), "hello");
+        assert_eq!(sanitize_csv_cell("/24"), "/24");
+        assert_eq!(sanitize_csv_cell(" =attack"), " =attack");
+    }
+
+    #[test]
+    fn formula_chars_get_quote_prefix() {
+        assert_eq!(sanitize_csv_cell("=1+1"), "'=1+1");
+        assert_eq!(sanitize_csv_cell("+SUM(A1)"), "'+SUM(A1)");
+        assert_eq!(sanitize_csv_cell("-2+5"), "'-2+5");
+        assert_eq!(sanitize_csv_cell("@SUM(A1)"), "'@SUM(A1)");
+        assert_eq!(sanitize_csv_cell("\tinjection"), "'\tinjection");
+        assert_eq!(sanitize_csv_cell("\rinjection"), "'\rinjection");
     }
 }

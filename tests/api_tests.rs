@@ -443,6 +443,53 @@ async fn test_v4_split_csv_format() {
     assert_eq!(data_lines.len(), 5);
 }
 
+#[tokio::test]
+async fn test_csv_response_carries_safe_browser_headers() {
+    let (status, _body, headers) = get_with_headers("/v4?cidr=192.168.1.0/24&format=csv").await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        headers.get(header::CONTENT_TYPE).unwrap(),
+        "text/csv; charset=utf-8"
+    );
+    assert!(
+        headers
+            .get(header::CONTENT_DISPOSITION)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("attachment"),
+        "CSV must download as attachment, not render inline"
+    );
+    // X-Content-Type-Options is applied globally via SetResponseHeaderLayer.
+    assert_eq!(headers.get("x-content-type-options").unwrap(), "nosniff");
+}
+
+#[tokio::test]
+async fn test_csv_neutralizes_formula_injection_in_input_field() {
+    // The `cidr` field is echoed in the CSV `input` column. A malicious
+    // value starting with `=` would otherwise execute as a formula in
+    // Excel/Sheets when the file is opened — sanitize_csv_cell prefixes
+    // a single quote to disarm it. Use a leading `-` (parses as negative
+    // prefix) since `=` won't survive CIDR validation.
+    //
+    // We verify via batch which echoes user-supplied CIDR strings in the
+    // error column even when invalid, exercising the neutralization path.
+    let body = r#"{"cidrs":["=cmd|' /C calc'!A1"], "format":"csv"}"#;
+    let (status, body) = post_json("/batch", body).await;
+    assert_eq!(status, 200);
+    // The malicious string appears in the output prefixed with a single
+    // quote (CSV-quoted, so it's wrapped in double quotes).
+    assert!(
+        body.contains("'=cmd|") || body.contains("\"'=cmd|"),
+        "expected formula prefix '\\'=cmd|' in CSV output, got:\n{body}"
+    );
+    // And it must NOT appear unprefixed.
+    assert!(
+        !body.contains("\n=cmd|"),
+        "raw '=cmd|' leaked into CSV without sanitization:\n{body}"
+    );
+}
+
 // ── YAML Format ─────────────────────────────────────────────────────
 
 #[tokio::test]
