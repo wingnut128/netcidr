@@ -434,3 +434,21 @@ pub struct IpamDump {
     pub supernets: Vec<Supernet>,
     pub allocations: Vec<Allocation>,
 }
+
+// ---------------------------------------------------------------------------
+// Idempotency keys
+// ---------------------------------------------------------------------------
+
+/// A cached response keyed by client-supplied `Idempotency-Key` plus a scope
+/// (endpoint + resource ID) so retries on the same logical operation return
+/// the same result without re-executing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdempotencyRecord {
+    pub key: String,
+    pub scope: String,
+    pub request_hash: String,
+    pub status_code: u16,
+    pub response_body: String,
+    pub created_at: String,
+    pub expires_at: String,
+}

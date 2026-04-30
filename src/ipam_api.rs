@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use axum::{
     Extension, Router,
+    body::Bytes,
     extract::{Path, Query},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Json, Response},
     routing::{get, post, put},
 };
@@ -12,6 +13,7 @@ use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::error::NetcidrError;
+use crate::ipam::idempotency;
 use crate::ipam::models::*;
 use crate::ipam::operations::IpamOps;
 
@@ -19,8 +21,19 @@ use crate::ipam::operations::IpamOps;
 // Error mapping
 // ---------------------------------------------------------------------------
 
+pub(crate) fn error_to_status_value(err: NetcidrError) -> (StatusCode, serde_json::Value) {
+    let (status, client_msg) = error_to_parts(&err);
+    (status, serde_json::json!({ "error": client_msg }))
+}
+
 fn ipam_error_response(err: NetcidrError) -> Response {
-    let (status, client_msg) = match &err {
+    let (status, client_msg) = error_to_parts(&err);
+    let body = serde_json::json!({ "error": client_msg });
+    (status, Json(body)).into_response()
+}
+
+fn error_to_parts(err: &NetcidrError) -> (StatusCode, String) {
+    match err {
         NetcidrError::InvalidCidr(_)
         | NetcidrError::InvalidPrefixLength { .. }
         | NetcidrError::InvalidInput(_)
@@ -67,10 +80,96 @@ fn ipam_error_response(err: NetcidrError) -> Response {
                 "internal server error".to_string(),
             )
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Idempotency wrapper for allocation handlers
+// ---------------------------------------------------------------------------
+
+/// Wrap a JSON-in/JSON-out POST allocation handler with `Idempotency-Key`
+/// semantics. Behavior:
+/// * Same key + same body → replay cached response (sets `Idempotent-Replay: true`).
+/// * Same key + different body → 409 Conflict.
+/// * No key → behave normally (no cache write).
+///
+/// Successful 2xx responses are cached. Error responses are not cached so a
+/// retry with the same key can still succeed once the underlying issue clears.
+async fn idempotent_post<T, F, Fut>(
+    ops: Arc<IpamOps>,
+    headers: HeaderMap,
+    body: Bytes,
+    scope: String,
+    handler: F,
+) -> Response
+where
+    T: serde::de::DeserializeOwned,
+    F: FnOnce(Arc<IpamOps>, T) -> Fut,
+    Fut: std::future::Future<
+            Output = std::result::Result<(StatusCode, serde_json::Value), NetcidrError>,
+        >,
+{
+    let outcome = if body.len() <= idempotency::MAX_BODY_BYTES {
+        match idempotency::check(ops.store(), &headers, &scope, &body).await {
+            Ok(o) => o,
+            Err(e) => return ipam_error_response(e),
+        }
+    } else {
+        idempotency::Outcome::NoKey
     };
 
-    let body = serde_json::json!({ "error": client_msg });
-    (status, Json(body)).into_response()
+    if let idempotency::Outcome::Replay {
+        status,
+        body: cached,
+    } = &outcome
+    {
+        return Response::builder()
+            .status(StatusCode::from_u16(*status).unwrap_or(StatusCode::OK))
+            .header("Content-Type", "application/json")
+            .header("Idempotent-Replay", "true")
+            .body(cached.clone().into())
+            .expect("static headers always valid");
+    }
+
+    if matches!(outcome, idempotency::Outcome::Conflict) {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "Idempotency-Key reused with a different request body",
+            })),
+        )
+            .into_response();
+    }
+
+    let parsed: T = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => return ipam_error_response(NetcidrError::InvalidInput(e.to_string())),
+    };
+
+    let (status, value) = match handler(ops.clone(), parsed).await {
+        Ok(pair) => pair,
+        Err(e) => error_to_status_value(e),
+    };
+
+    if status.is_success()
+        && let idempotency::Outcome::Proceed { key, request_hash } = outcome
+    {
+        let cached_body = value.to_string();
+        if let Err(e) = idempotency::record(
+            ops.store(),
+            &key,
+            &scope,
+            &request_hash,
+            status.as_u16(),
+            &cached_body,
+        )
+        .await
+        {
+            tracing::warn!(error = %e, "failed to record idempotency key");
+        }
+    }
+
+    (status, Json(value)).into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -341,26 +440,41 @@ async fn ipam_delete_supernet(
 async fn ipam_allocate_specific(
     Extension(ops): Extension<Arc<IpamOps>>,
     Path(supernet_id): Path<String>,
-    Json(body): Json<AllocateSpecificRequest>,
-) -> impl IntoResponse {
-    let input = CreateAllocation {
-        supernet_id,
-        cidr: body.cidr,
-        status: body.status,
-        resource_id: body.resource_id,
-        resource_type: body.resource_type,
-        name: body.name,
-        description: body.description,
-        environment: body.environment,
-        owner: body.owner,
-        parent_allocation_id: body.parent_allocation_id,
-        tags: body.tags,
-        ttl_seconds: body.ttl_seconds,
-    };
-    match ops.allocate_specific(&input).await {
-        Ok(allocation) => (StatusCode::CREATED, Json(allocation)).into_response(),
-        Err(e) => ipam_error_response(e),
-    }
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let scope = format!("allocate-specific:{supernet_id}");
+    idempotent_post::<AllocateSpecificRequest, _, _>(
+        ops,
+        headers,
+        body,
+        scope,
+        move |ops, parsed: AllocateSpecificRequest| {
+            let supernet_id = supernet_id.clone();
+            async move {
+                let input = CreateAllocation {
+                    supernet_id,
+                    cidr: parsed.cidr,
+                    status: parsed.status,
+                    resource_id: parsed.resource_id,
+                    resource_type: parsed.resource_type,
+                    name: parsed.name,
+                    description: parsed.description,
+                    environment: parsed.environment,
+                    owner: parsed.owner,
+                    parent_allocation_id: parsed.parent_allocation_id,
+                    tags: parsed.tags,
+                    ttl_seconds: parsed.ttl_seconds,
+                };
+                let allocation = ops.allocate_specific(&input).await?;
+                Ok((
+                    StatusCode::CREATED,
+                    serde_json::to_value(&allocation).unwrap_or(serde_json::Value::Null),
+                ))
+            }
+        },
+    )
+    .await
 }
 
 #[cfg_attr(feature = "swagger", utoipa::path(
@@ -380,33 +494,46 @@ async fn ipam_allocate_specific(
 async fn ipam_auto_allocate(
     Extension(ops): Extension<Arc<IpamOps>>,
     Path(supernet_id): Path<String>,
-    Json(body): Json<AutoAllocateBody>,
-) -> impl IntoResponse {
-    let request = AutoAllocateRequest {
-        supernet_id,
-        prefix_length: body.prefix_length,
-        count: body.count,
-        status: body.status,
-        resource_id: body.resource_id,
-        resource_type: body.resource_type,
-        name: body.name,
-        description: body.description,
-        environment: body.environment,
-        owner: body.owner,
-        parent_allocation_id: body.parent_allocation_id,
-        tags: body.tags,
-        ttl_seconds: body.ttl_seconds,
-    };
-    match ops.allocate_auto(&request).await {
-        Ok(allocations) => {
-            let list = AllocationList {
-                count: allocations.len(),
-                allocations,
-            };
-            (StatusCode::CREATED, Json(list)).into_response()
-        }
-        Err(e) => ipam_error_response(e),
-    }
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let scope = format!("auto-allocate:{supernet_id}");
+    idempotent_post::<AutoAllocateBody, _, _>(
+        ops,
+        headers,
+        body,
+        scope,
+        move |ops, parsed: AutoAllocateBody| {
+            let supernet_id = supernet_id.clone();
+            async move {
+                let request = AutoAllocateRequest {
+                    supernet_id,
+                    prefix_length: parsed.prefix_length,
+                    count: parsed.count,
+                    status: parsed.status,
+                    resource_id: parsed.resource_id,
+                    resource_type: parsed.resource_type,
+                    name: parsed.name,
+                    description: parsed.description,
+                    environment: parsed.environment,
+                    owner: parsed.owner,
+                    parent_allocation_id: parsed.parent_allocation_id,
+                    tags: parsed.tags,
+                    ttl_seconds: parsed.ttl_seconds,
+                };
+                let allocations = ops.allocate_auto(&request).await?;
+                let list = AllocationList {
+                    count: allocations.len(),
+                    allocations,
+                };
+                Ok((
+                    StatusCode::CREATED,
+                    serde_json::to_value(&list).unwrap_or(serde_json::Value::Null),
+                ))
+            }
+        },
+    )
+    .await
 }
 
 #[cfg_attr(feature = "swagger", utoipa::path(
@@ -680,12 +807,24 @@ async fn ipam_set_tags(
 
 async fn ipam_batch_allocate(
     Extension(ops): Extension<Arc<IpamOps>>,
-    Json(items): Json<Vec<BatchAllocateItem>>,
-) -> impl IntoResponse {
-    match ops.batch_allocate(&items).await {
-        Ok(result) => Json(result).into_response(),
-        Err(e) => ipam_error_response(e),
-    }
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let scope = "batch-allocate".to_string();
+    idempotent_post::<Vec<BatchAllocateItem>, _, _>(
+        ops,
+        headers,
+        body,
+        scope,
+        |ops, items: Vec<BatchAllocateItem>| async move {
+            let result = ops.batch_allocate(&items).await?;
+            Ok((
+                StatusCode::OK,
+                serde_json::to_value(&result).unwrap_or(serde_json::Value::Null),
+            ))
+        },
+    )
+    .await
 }
 
 async fn ipam_batch_release(

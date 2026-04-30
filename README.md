@@ -769,6 +769,10 @@ netcidr serve --ipam-enabled --ipam-db /path/to/ipam.db
 
 **Status:** Fully integrated — available via CLI (`netcidr ipam`), REST API (`netcidr serve --ipam-enabled`), and MCP server (`netcidr mcp-serve --ipam-db <path>`).
 
+#### Idempotency keys
+
+The three allocation endpoints (`POST /ipam/supernets/{id}/allocate`, `/allocate-specific`, and `/ipam/batch/allocate`) accept an `Idempotency-Key: <opaque>` request header. Replays with the same key + same body return the original response (with `Idempotent-Replay: true`); replays with the same key + a different body return `409`. Cached records are scoped per-endpoint + per-supernet and expire after 24 hours.
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.

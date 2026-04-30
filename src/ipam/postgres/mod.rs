@@ -680,4 +680,57 @@ impl IpamStore for PostgresStore {
             })
             .collect())
     }
+
+    async fn idempotency_get(&self, key: &str, scope: &str) -> Result<Option<IdempotencyRecord>> {
+        let row = sqlx::query(
+            "SELECT key, scope, request_hash, status_code, response_body, created_at, expires_at \
+             FROM idempotency_keys WHERE key = $1 AND scope = $2",
+        )
+        .bind(key)
+        .bind(scope)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        Ok(row.map(|row| {
+            let status_code: i32 = row.get("status_code");
+            IdempotencyRecord {
+                key: row.get("key"),
+                scope: row.get("scope"),
+                request_hash: row.get("request_hash"),
+                status_code: status_code as u16,
+                response_body: row.get("response_body"),
+                created_at: row.get("created_at"),
+                expires_at: row.get("expires_at"),
+            }
+        }))
+    }
+
+    async fn idempotency_put(&self, record: &IdempotencyRecord) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO idempotency_keys \
+                (key, scope, request_hash, status_code, response_body, created_at, expires_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) \
+             ON CONFLICT (key, scope) DO NOTHING",
+        )
+        .bind(&record.key)
+        .bind(&record.scope)
+        .bind(&record.request_hash)
+        .bind(record.status_code as i32)
+        .bind(&record.response_body)
+        .bind(&record.created_at)
+        .bind(&record.expires_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn idempotency_reap_expired(&self, now_rfc3339: &str) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM idempotency_keys WHERE expires_at <= $1")
+            .bind(now_rfc3339)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        Ok(result.rows_affected())
+    }
 }
