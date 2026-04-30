@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Mobile sidebar drawer closed itself the moment it opened.** The "auto-close on route change" effect in `Sidebar.tsx` depended on the inline `onClose` arrow from `MainLayout`, which React re-creates on every parent render. Tapping the hamburger flipped `drawerOpen` to `true`, the parent re-rendered, the effect's dependency array saw a "new" `onClose`, fired immediately, and snapped the drawer shut. Tracking the previous pathname with a `useRef` so the effect only fires on actual route changes. Net effect: hamburger now opens the drawer and the page is interactive on mobile.
+
 ## [0.22.0] - 2026-04-30
 
 ### Security

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { useTheme } from "../../theme/ThemeProvider";
 import { useAuth } from "../../auth/AuthContext";
@@ -48,9 +48,16 @@ export function Sidebar({
       .catch(() => setVersionInfo(null));
   }, []);
 
-  // Auto-close drawer on route change.
+  // Auto-close the drawer on route change. Tracking the previous path with
+  // a ref keeps the effect from firing on every render — `onClose` is a
+  // fresh inline arrow on each parent render, so depending on it would
+  // close the drawer the moment it's opened.
+  const prevPath = useRef(location.pathname);
   useEffect(() => {
-    onClose();
+    if (prevPath.current !== location.pathname) {
+      prevPath.current = location.pathname;
+      onClose();
+    }
   }, [location.pathname, onClose]);
 
   const navItems = ipamEnabled
