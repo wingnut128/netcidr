@@ -1,7 +1,11 @@
 /// Embedded schema migrations for the SQLite IPAM backend.
 /// Each migration is a (version, sql) tuple applied in order.
-pub const MIGRATIONS: &[(u32, &str)] =
-    &[(1, MIGRATION_001), (2, MIGRATION_002), (3, MIGRATION_003)];
+pub const MIGRATIONS: &[(u32, &str)] = &[
+    (1, MIGRATION_001),
+    (2, MIGRATION_002),
+    (3, MIGRATION_003),
+    (4, MIGRATION_004),
+];
 
 const MIGRATION_001: &str = r#"
 CREATE TABLE IF NOT EXISTS supernets (
@@ -79,4 +83,14 @@ UPDATE supernets SET total_hosts_text = CAST(total_hosts AS TEXT);
 
 ALTER TABLE allocations ADD COLUMN total_hosts_text TEXT;
 UPDATE allocations SET total_hosts_text = CAST(total_hosts AS TEXT);
+"#;
+
+const MIGRATION_004: &str = r#"
+ALTER TABLE audit_log ADD COLUMN caller_sub    TEXT;
+ALTER TABLE audit_log ADD COLUMN caller_email  TEXT;
+ALTER TABLE audit_log ADD COLUMN source_ip     TEXT;
+ALTER TABLE audit_log ADD COLUMN request_id    TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_audit_request_id ON audit_log(request_id);
+CREATE INDEX IF NOT EXISTS idx_audit_caller_sub ON audit_log(caller_sub);
 "#;

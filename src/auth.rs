@@ -172,8 +172,18 @@ pub async fn require_auth(config: AuthConfig, mut request: Request, next: Next) 
         return forbidden();
     }
 
+    let ctx = crate::audit_context::AuditContext {
+        caller_sub: Some(principal.subject.clone()),
+        caller_email: principal.email.clone(),
+        source_ip: request
+            .extensions()
+            .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+            .map(|ci| ci.0.ip().to_string()),
+        request_id: Some(uuid::Uuid::new_v4().to_string()),
+    };
+
     request.extensions_mut().insert(principal);
-    next.run(request).await
+    crate::audit_context::scope(ctx, next.run(request)).await
 }
 
 pub async fn require_bearer_auth(config: AuthConfig, request: Request, next: Next) -> Response {

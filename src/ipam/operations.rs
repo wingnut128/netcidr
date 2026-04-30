@@ -901,6 +901,7 @@ impl IpamOps {
         entity_id: &str,
         details: Option<&str>,
     ) -> Result<()> {
+        let ctx = crate::audit_context::current();
         self.store
             .append_audit(&AuditEntry {
                 id: String::new(),
@@ -909,6 +910,10 @@ impl IpamOps {
                 action: action.to_string(),
                 details: details.map(|s| s.to_string()),
                 timestamp: Utc::now().to_rfc3339(),
+                caller_sub: ctx.caller_sub,
+                caller_email: ctx.caller_email,
+                source_ip: ctx.source_ip,
+                request_id: ctx.request_id,
             })
             .await
     }
