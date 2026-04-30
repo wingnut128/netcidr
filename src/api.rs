@@ -265,6 +265,29 @@ fn build_response(status: StatusCode, content_type: &str, body: String) -> Respo
     }
 }
 
+/// CSV responses use a download disposition so a browser opening the URL
+/// directly saves the file instead of rendering it inline. Combined with the
+/// global `X-Content-Type-Options: nosniff` and the formula-neutralization
+/// in `output.rs::sanitize_csv_cell`, this hardens against both
+/// MIME-confusion and spreadsheet formula-injection attacks.
+fn build_csv_response(status: StatusCode, body: String) -> Response {
+    match Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "text/csv; charset=utf-8")
+        .header(
+            header::CONTENT_DISPOSITION,
+            "attachment; filename=\"netcidr.csv\"",
+        )
+        .body(body.into())
+    {
+        Ok(resp) => resp,
+        Err(_) => Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body("Internal Server Error".into())
+            .expect("fallback response must be valid"),
+    }
+}
+
 fn format_response<T: Serialize + TextOutput + CsvOutput>(
     value: T,
     format: ApiOutputFormat,
@@ -294,7 +317,7 @@ fn format_response<T: Serialize + TextOutput + CsvOutput>(
             build_response(status, "text/plain", body)
         }
         ApiOutputFormat::Csv => match value.to_csv() {
-            Ok(body) => build_response(status, "text/csv", body),
+            Ok(body) => build_csv_response(status, body),
             Err(e) => json_response(
                 ErrorResponse {
                     error: e.to_string(),
