@@ -58,7 +58,7 @@ export function Splitter() {
             </label>
             <input
               type="text"
-              className="w-full font-mono text-sm px-3 py-2 bg-bg border border-border text-text outline-none focus:border-cyan"
+              className="w-full font-mono text-base md:text-sm px-3 py-2 bg-bg border border-border text-text outline-none focus:border-cyan"
               placeholder="e.g. 10.0.0.0/8"
               value={cidr}
               onChange={(e) => setCidr(e.target.value)}
@@ -70,7 +70,7 @@ export function Splitter() {
             </label>
             <input
               type="number"
-              className="w-full font-mono text-sm px-3 py-2 bg-bg border border-border text-text outline-none focus:border-cyan"
+              className="w-full font-mono text-base md:text-sm px-3 py-2 bg-bg border border-border text-text outline-none focus:border-cyan"
               placeholder="e.g. 24"
               min={0}
               max={128}
@@ -84,7 +84,7 @@ export function Splitter() {
             </label>
             <input
               type="number"
-              className="w-full font-mono text-sm px-3 py-2 bg-bg border border-border text-text outline-none focus:border-cyan disabled:opacity-40"
+              className="w-full font-mono text-base md:text-sm px-3 py-2 bg-bg border border-border text-text outline-none focus:border-cyan disabled:opacity-40"
               placeholder="max"
               min={1}
               value={count}
@@ -102,7 +102,7 @@ export function Splitter() {
               MAX
             </label>
             <button
-              className="text-xs font-medium rounded-md px-4 py-2 border border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
+              className="text-xs font-medium rounded-md px-4 py-2 min-h-[44px] md:min-h-0 border border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
               onClick={doSplit}
             >
               SPLIT

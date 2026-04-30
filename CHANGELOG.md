@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Dashboard mobile support, phase 1.** Layout, navigation, tables, and touch targets now work on narrow viewports (phase 2 — stat grids, BitGrid, typography, modals — tracked in #96):
+  - Sidebar becomes a slide-in drawer on `< md` with a hamburger button in a new mobile top bar; backdrop dismiss + auto-close on route change. Stays as a fixed sidebar on `md:`+ (`MainLayout.tsx`, `Sidebar.tsx`).
+  - `AllocationTable` and `SupernetTable` render as stacked cards on `< md` (one card per row, key fields in a `<dl>`) and as the existing tables on `md:`+. Filter rows are now `flex-col sm:flex-row` so inputs stack on narrow screens; `min-w-[…]` constraints are scoped to `sm:`+.
+  - Primary action buttons across Calculator, Splitter, Contains, Summarize, FromRange, IpamSearch, and the IPAM tables now have `min-h-[44px]` on mobile (iOS minimum tap target) and stay compact on `md:`+.
+  - All form inputs use `text-base md:text-sm` so iOS doesn't zoom on focus.
 - Dashboard audit pass against the `netcidr-design` skill. All mechanical drift fixes:
   - `font-bold` swapped to `font-medium` (form labels, secondary headings) or `font-semibold` (table headers) to match the skill's typography hierarchy. ~22 occurrences across `Splitter`, `FromRange`, `Contains`, `Summarize`, `IpamSearch`, `Modal`, and `AllocationDetailModal`.
   - Modal titles converted from Title Case to sentence case: "Create supernet", "Allocate specific block", "Auto-allocate", "Allocation detail".

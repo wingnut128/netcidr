@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import { useTheme } from "../../theme/ThemeProvider";
 import { useAuth } from "../../auth/AuthContext";
 import { get } from "../../api";
@@ -16,6 +16,10 @@ const baseNavItems = [
 interface SidebarProps {
   ipamEnabled: boolean;
   swaggerEnabled: boolean;
+  /** Whether the mobile drawer is open. Ignored on `md:`+. */
+  open: boolean;
+  /** Called when the user dismisses the drawer (route change, backdrop, link tap). */
+  onClose: () => void;
 }
 
 interface VersionResponse {
@@ -27,9 +31,15 @@ interface VersionResponse {
 
 const REPO_URL = "https://github.com/wingnut128/netcidr";
 
-export function Sidebar({ ipamEnabled, swaggerEnabled }: SidebarProps) {
+export function Sidebar({
+  ipamEnabled,
+  swaggerEnabled,
+  open,
+  onClose,
+}: SidebarProps) {
   const { theme, toggleTheme } = useTheme();
   const auth = useAuth();
+  const location = useLocation();
   const [versionInfo, setVersionInfo] = useState<VersionResponse | null>(null);
 
   useEffect(() => {
@@ -37,6 +47,11 @@ export function Sidebar({ ipamEnabled, swaggerEnabled }: SidebarProps) {
       .then(setVersionInfo)
       .catch(() => setVersionInfo(null));
   }, []);
+
+  // Auto-close drawer on route change.
+  useEffect(() => {
+    onClose();
+  }, [location.pathname, onClose]);
 
   const navItems = ipamEnabled
     ? [...baseNavItems, { to: "/ipam", label: "IPAM" }]
@@ -46,7 +61,12 @@ export function Sidebar({ ipamEnabled, swaggerEnabled }: SidebarProps) {
     : [];
 
   return (
-    <nav className="fixed left-0 top-0 h-full w-52 bg-surface border-r border-border flex flex-col z-50">
+    <nav
+      aria-label="Primary"
+      className={`fixed left-0 top-0 h-full w-52 bg-surface border-r border-border flex flex-col z-50 transform transition-transform duration-200 md:translate-x-0 ${
+        open ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+      }`}
+    >
       <div className="px-5 py-5 border-b border-border">
         <h1 className="text-cyan text-lg font-semibold tracking-tight">
           netcidr
@@ -60,9 +80,9 @@ export function Sidebar({ ipamEnabled, swaggerEnabled }: SidebarProps) {
             key={item.to}
             to={item.to}
             className={({ isActive }) =>
-              `relative block pl-4 pr-3 py-2 text-sm rounded-md transition-colors ${
+              `relative block pl-4 pr-3 py-3 md:py-2 text-base md:text-sm rounded-md transition-colors ${
                 isActive
-                  ? "text-text font-semibold bg-surface2 before:content-[''] before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-0.5 before:rounded-r before:bg-cyan"
+                  ? "text-text font-semibold bg-surface2 before:content-[''] before:absolute before:left-0 before:top-2 before:bottom-2 md:before:top-1.5 md:before:bottom-1.5 before:w-0.5 before:rounded-r before:bg-cyan"
                   : "text-text-muted hover:text-text hover:bg-surface2/60"
               }`
             }
@@ -78,9 +98,9 @@ export function Sidebar({ ipamEnabled, swaggerEnabled }: SidebarProps) {
                 key={item.to}
                 to={item.to}
                 className={({ isActive }) =>
-                  `relative block pl-4 pr-3 py-2 text-sm rounded-md transition-colors ${
+                  `relative block pl-4 pr-3 py-3 md:py-2 text-base md:text-sm rounded-md transition-colors ${
                     isActive
-                      ? "text-text font-semibold bg-surface2 before:content-[''] before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-0.5 before:rounded-r before:bg-cyan"
+                      ? "text-text font-semibold bg-surface2 before:content-[''] before:absolute before:left-0 before:top-2 before:bottom-2 md:before:top-1.5 md:before:bottom-1.5 before:w-0.5 before:rounded-r before:bg-cyan"
                       : "text-text-muted hover:text-text hover:bg-surface2/60"
                   }`
                 }
@@ -100,7 +120,7 @@ export function Sidebar({ ipamEnabled, swaggerEnabled }: SidebarProps) {
           <button
             type="button"
             onClick={() => auth.signOut()}
-            className="mt-1 text-xs text-text-muted hover:text-cyan cursor-pointer"
+            className="mt-1 text-xs text-text-muted hover:text-cyan cursor-pointer min-h-[44px] md:min-h-0"
           >
             Sign out
           </button>
@@ -113,7 +133,7 @@ export function Sidebar({ ipamEnabled, swaggerEnabled }: SidebarProps) {
             href="/swagger-ui"
             target="_blank"
             rel="noopener noreferrer"
-            className="block px-4 py-2 text-sm text-text-muted hover:text-text hover:bg-surface2/60 transition-colors"
+            className="block px-4 py-3 md:py-2 text-sm text-text-muted hover:text-text hover:bg-surface2/60 transition-colors"
           >
             API Docs ↗
           </a>
@@ -124,7 +144,7 @@ export function Sidebar({ ipamEnabled, swaggerEnabled }: SidebarProps) {
             onClick={toggleTheme}
             aria-label="Toggle theme"
             title="Toggle theme (⌘+J)"
-            className="text-text-muted hover:text-text text-xs cursor-pointer flex items-center gap-1.5"
+            className="text-text-muted hover:text-text text-xs cursor-pointer flex items-center gap-1.5 min-h-[44px] md:min-h-0"
           >
             <span aria-hidden>{theme === "dark" ? "☾" : "☀"}</span>
             <span>{theme === "dark" ? "Dark" : "Light"}</span>

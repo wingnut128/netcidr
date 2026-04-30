@@ -30,14 +30,70 @@ export function SupernetTable({
       collapsible
       actions={
         <button
-          className="text-xs font-medium rounded-md px-3 py-1 border border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
+          className="text-xs font-medium rounded-md px-3 py-2 md:py-1 min-h-[44px] md:min-h-0 border border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
           onClick={onCreateClick}
         >
           + CREATE
         </button>
       }
     >
-      <div className="overflow-x-auto">
+      {/* Mobile: stacked cards */}
+      <div className="md:hidden flex flex-col gap-3">
+        {supernets.map((sn) => {
+          const u = utilization[sn.id];
+          const pct = u?.pct ?? 0;
+          return (
+            <div
+              key={sn.id}
+              className="border border-border rounded-md p-3 bg-bg flex flex-col gap-2"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-cyan font-mono text-sm break-all">
+                  {sn.cidr}
+                </span>
+                <span className="text-text-muted text-xs">
+                  /{sn.prefix_length}
+                </span>
+              </div>
+              {sn.name && <div className="text-sm text-text">{sn.name}</div>}
+              <dl className="grid grid-cols-2 gap-y-1 gap-x-3 text-xs">
+                <dt className="text-text-muted">Total hosts</dt>
+                <dd className="text-text">{fmtNum(sn.total_hosts)}</dd>
+                <dt className="text-text-muted">Utilization</dt>
+                <dd className="text-text">{pct.toFixed(1)}%</dd>
+              </dl>
+              <div className="h-1.5 bg-border rounded-sm overflow-hidden">
+                <div
+                  className={`h-full ${utilColor(pct)} transition-all`}
+                  style={{ width: `${Math.min(pct, 100)}%` }}
+                />
+              </div>
+              <div className="flex gap-2 flex-wrap pt-1">
+                <button
+                  className="text-xs font-medium rounded-md px-3 py-2 min-h-[44px] border border-border text-text-muted hover:text-cyan hover:border-cyan transition-colors"
+                  onClick={() => onSelect(sn.id)}
+                >
+                  VIEW
+                </button>
+                <button
+                  className="text-xs font-medium rounded-md px-3 py-2 min-h-[44px] border border-border text-text-muted hover:text-red hover:border-red transition-colors"
+                  onClick={() => onDelete(sn.id)}
+                >
+                  DEL
+                </button>
+              </div>
+            </div>
+          );
+        })}
+        {supernets.length === 0 && (
+          <p className="text-center text-text-muted py-6 text-sm">
+            No supernets. Create one to get started.
+          </p>
+        )}
+      </div>
+
+      {/* Desktop: table */}
+      <div className="hidden md:block overflow-x-auto">
         <table className="w-full border-collapse text-xs">
           <thead>
             <tr>
