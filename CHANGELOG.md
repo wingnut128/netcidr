@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Dashboard mobile support, phase 2.** Polish pass on top of phase 1: stat grids, `DataRow`, `BitGrid`, base typography, and modals:
+  - Splitter's 3-up stat grid now collapses to one column on `< sm:` (`grid-cols-1 sm:grid-cols-3`).
+  - `DataRow` stacks the label above the value on `< sm:` (`flex-col sm:flex-row`) so long CIDRs/IPs get a full-width line instead of being cropped to the right.
+  - `BitGrid` no longer pushes the page wider than the viewport: the bit row is wrapped in `overflow-x-auto` on `< md:` (horizontal scroll) and continues to wrap on `md:`+.
+  - Body font bumps from 14px to 15px under `(max-width: 640px)` for readability.
+  - `Modal` is full-screen on `< sm:` (`h-full sm:h-auto sm:max-w-lg sm:mx-4`); the close button gets a 44×44 tap target on mobile and a sticky header so it stays reachable while scrolling long forms.
+  - Shared `INPUT` and `BTN_PRIMARY` style tokens get `text-base md:text-sm` and `min-h-[44px] md:min-h-0` respectively, so every form across the dashboard inherits iOS-friendly sizing without per-component touch-ups. Closes #96.
 - **Dashboard mobile support, phase 1.** Layout, navigation, tables, and touch targets now work on narrow viewports (phase 2 — stat grids, BitGrid, typography, modals — tracked in #96):
   - Sidebar becomes a slide-in drawer on `< md` with a hamburger button in a new mobile top bar; backdrop dismiss + auto-close on route change. Stays as a fixed sidebar on `md:`+ (`MainLayout.tsx`, `Sidebar.tsx`).
   - `AllocationTable` and `SupernetTable` render as stacked cards on `< md` (one card per row, key fields in a `<dl>`) and as the existing tables on `md:`+. Filter rows are now `flex-col sm:flex-row` so inputs stack on narrow screens; `min-w-[…]` constraints are scoped to `sm:`+.

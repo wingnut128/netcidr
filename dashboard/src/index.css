@@ -81,6 +81,13 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Slightly larger base font on phone-class viewports for readability. */
+@media (max-width: 640px) {
+  body {
+    font-size: 15px;
+  }
+}
+
 /* Slightly bigger tab targets, modest fonts on data tables */
 table {
   font-variant-numeric: tabular-nums;
