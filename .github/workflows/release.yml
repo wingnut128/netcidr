@@ -83,3 +83,19 @@ jobs:
           # binary, then flip it to non-draft.
           gh release upload "$RELEASE_TAG" target/release/netcidr --clobber
           gh release edit "$RELEASE_TAG" --draft=false
+
+      - name: Dispatch netcidr-deploy
+        # Tell wingnut128/netcidr-deploy to roll out the new tag. The
+        # default GITHUB_TOKEN can't trigger workflows in other repos, so
+        # this uses a fine-grained PAT scoped to netcidr-deploy with
+        # Actions: read+write only. RELEASE_TAG is already validated to
+        # match ^v[0-9]+\.[0-9]+\.[0-9]+$ by the earlier step, and jq
+        # --arg encodes it safely into JSON.
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          jq -n --arg ref "$RELEASE_TAG" \
+            '{event_type: "netcidr-released", client_payload: {ref: $ref}}' \
+            | gh api -X POST repos/wingnut128/netcidr-deploy/dispatches --input -
+          echo "Dispatched netcidr-released for $RELEASE_TAG"
