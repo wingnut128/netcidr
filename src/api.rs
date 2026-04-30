@@ -223,6 +223,10 @@ struct VersionResponse {
     name: &'static str,
     /// Application version
     version: &'static str,
+    /// Short git commit SHA the binary was built from (or "unknown")
+    commit: &'static str,
+    /// Full git commit SHA the binary was built from (or "unknown")
+    commit_full: &'static str,
 }
 
 #[derive(Deserialize, Default, Clone, Copy)]
@@ -467,6 +471,8 @@ async fn version() -> Json<VersionResponse> {
     Json(VersionResponse {
         name: env!("CARGO_PKG_NAME"),
         version: env!("CARGO_PKG_VERSION"),
+        commit: env!("GIT_SHA_SHORT"),
+        commit_full: env!("GIT_SHA_FULL"),
     })
 }
 

@@ -21,17 +21,21 @@ interface SidebarProps {
 interface VersionResponse {
   name: string;
   version: string;
+  commit: string;
+  commit_full: string;
 }
+
+const REPO_URL = "https://github.com/wingnut128/netcidr";
 
 export function Sidebar({ ipamEnabled, swaggerEnabled }: SidebarProps) {
   const { theme, toggleTheme } = useTheme();
   const auth = useAuth();
-  const [version, setVersion] = useState<string | null>(null);
+  const [versionInfo, setVersionInfo] = useState<VersionResponse | null>(null);
 
   useEffect(() => {
     void get<VersionResponse>("/version")
-      .then((v) => setVersion(v.version))
-      .catch(() => setVersion(null));
+      .then(setVersionInfo)
+      .catch(() => setVersionInfo(null));
   }, []);
 
   const navItems = ipamEnabled
@@ -125,12 +129,27 @@ export function Sidebar({ ipamEnabled, swaggerEnabled }: SidebarProps) {
             <span aria-hidden>{theme === "dark" ? "☾" : "☀"}</span>
             <span>{theme === "dark" ? "Dark" : "Light"}</span>
           </button>
-          <p
-            className="text-text-muted text-xs font-mono tabular-nums"
-            title={version ? `netcidr v${version}` : undefined}
-          >
-            {version ? `v${version}` : ""}
-          </p>
+          {versionInfo && (
+            <p
+              className="text-text-muted text-xs font-mono tabular-nums flex items-center gap-1.5"
+              title={`netcidr v${versionInfo.version} (${versionInfo.commit_full})`}
+            >
+              <span>v{versionInfo.version}</span>
+              {versionInfo.commit && versionInfo.commit !== "unknown" && (
+                <>
+                  <span aria-hidden>·</span>
+                  <a
+                    href={`${REPO_URL}/commit/${versionInfo.commit_full}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hover:text-text"
+                  >
+                    {versionInfo.commit}
+                  </a>
+                </>
+              )}
+            </p>
+          )}
         </div>
       </div>
     </nav>

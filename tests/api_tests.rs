@@ -135,6 +135,10 @@ async fn test_version() {
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(json["name"], "netcidr");
     assert!(json["version"].is_string());
+    assert!(json["commit"].is_string());
+    assert!(!json["commit"].as_str().unwrap().is_empty());
+    assert!(json["commit_full"].is_string());
+    assert!(!json["commit_full"].as_str().unwrap().is_empty());
 }
 
 // ── Authentication ─────────────────────────────────────────────────
