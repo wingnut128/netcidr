@@ -90,15 +90,13 @@ export function WhatIfPanel({
   return (
     <div>
       <p className="text-sm text-text-muted mb-3">
-        Paste candidate CIDRs (one per line) to see whether they would fit
+        Paste candidate CIDRs (one per line) to check whether they would fit
         within {supernetCidr} without colliding with existing allocations.
-        Fitting candidates render as outlined cyan overlays on the map;
-        conflicts render in red.
       </p>
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
-        placeholder="10.0.64.0/22&#10;10.0.96.0/24"
+        placeholder="10.0.64.0/22&#10;fd7f:77a5:3455:1::/64"
         rows={4}
         className="w-full font-mono text-base md:text-sm px-3 py-2 bg-bg border border-border rounded-md text-text outline-none focus:border-cyan focus:ring-2 focus:ring-cyan/20 transition-colors mb-4"
       />
