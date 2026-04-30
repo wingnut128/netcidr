@@ -79,8 +79,26 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # release-plz created the release as a draft. Attach the
-          # binary, then flip it to non-draft.
+          # release-plz normally creates the release as a draft so we can
+          # attach the binary before publishing. If the draft is missing
+          # (e.g. release-plz failed, or the tag was pushed manually),
+          # create the release on the fly using the changelog section
+          # for the tag as the release notes. RELEASE_TAG was already
+          # validated to match ^v[0-9]+\.[0-9]+\.[0-9]+$ above.
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            VERSION="${RELEASE_TAG#v}"
+            NOTES_FILE="$(mktemp)"
+            awk -v v="## \\[$VERSION\\]" '
+              $0 ~ v {flag=1; next}
+              /^## \[/ {flag=0}
+              flag {print}
+            ' CHANGELOG.md > "$NOTES_FILE"
+            if [ ! -s "$NOTES_FILE" ]; then
+              echo "Release $RELEASE_TAG missing and no CHANGELOG section found for $VERSION" >&2
+              exit 1
+            fi
+            gh release create "$RELEASE_TAG" --title "$RELEASE_TAG" --notes-file "$NOTES_FILE" --draft
+          fi
           gh release upload "$RELEASE_TAG" target/release/netcidr --clobber
           gh release edit "$RELEASE_TAG" --draft=false
 
