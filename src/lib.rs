@@ -15,6 +15,7 @@ pub mod summarize;
 
 // I/O and interface modules
 pub mod api;
+pub mod audit_context;
 pub mod auth;
 pub mod cli;
 pub mod ipam_api;

@@ -320,6 +320,7 @@ async fn audit_log(store: &PostgresStore) {
             action: "create_supernet".to_string(),
             details: Some(r#"{"cidr":"10.0.0.0/8"}"#.to_string()),
             timestamp: "2026-03-06T00:00:00Z".to_string(),
+            ..Default::default()
         })
         .await
         .unwrap();
@@ -332,6 +333,7 @@ async fn audit_log(store: &PostgresStore) {
             action: "allocate".to_string(),
             details: None,
             timestamp: "2026-03-06T00:01:00Z".to_string(),
+            ..Default::default()
         })
         .await
         .unwrap();
