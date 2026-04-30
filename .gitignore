@@ -65,3 +65,6 @@ SPEC_TEMPLATE.md
 
 # Local-only Claude Code instructions
 CLAUDE.local.md
+
+# Git worktrees
+.worktrees/
