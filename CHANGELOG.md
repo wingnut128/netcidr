@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Visualizer: block grid + Hilbert curve, IPv6-aware.** The IPAM Visualizer's address-space view is now a cell grid with a Block ⇄ Hilbert toggle (persisted in `localStorage`). Replaces the prior single-color line strip, which made small allocations invisible at typical container widths and only handled IPv4. Cell granularity auto-snaps so total cells stay ≤ 1024; IPv6 supernets coarsen to /64 (or larger if the supernet is bigger than /54). Status colors carry over (active/reserved/released/free), and clicking a cell still opens the allocation detail. `dashboard/src/lib/cidr.ts` is rewritten on `BigInt` so the same code paths handle v4 and v6 — `start`/`end`/`size` are now `bigint` instead of `number`. WhatIfPanel still grades candidates as fits/conflict/outside; its map-overlay re-paint on top of the new grids is tracked as a follow-up.
+
 ### Fixed
 
 - **Mobile sidebar drawer closed itself the moment it opened.** The "auto-close on route change" effect in `Sidebar.tsx` depended on the inline `onClose` arrow from `MainLayout`, which React re-creates on every parent render. Tapping the hamburger flipped `drawerOpen` to `true`, the parent re-rendered, the effect's dependency array saw a "new" `onClose`, fired immediately, and snapped the drawer shut. Tracking the previous pathname with a `useRef` so the effect only fires on actual route changes. Net effect: hamburger now opens the drawer and the page is interactive on mobile.
