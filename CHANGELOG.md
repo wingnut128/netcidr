@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-04-30
+
 ### Changed
 
 - **Release binary now ships with `mcp`, `tui`, and `ipam-postgres` features enabled.** The release workflow's `cargo build --release` step previously compiled with default features only (`swagger`, `dashboard`), so published binaries silently lacked `netcidr mcp-serve`, the terminal UI, and the Postgres IPAM backend. The `lambda` bin remains a separate `[[bin]]` target and is not built here, so we enumerate features explicitly rather than using `--all-features`. Also corrects the `Dispatch netcidr-deploy` step's comment to name the actually-required PAT scope (Contents: read+write, not Actions). Removes the obsolete `cloudbuild.yaml` left over from the GCP build pipeline.
