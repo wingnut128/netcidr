@@ -81,7 +81,7 @@ function VisualizerInner() {
             <select
               value={selectedId}
               onChange={(e) => setSelectedId(e.target.value)}
-              className="w-full font-mono text-sm px-3 py-2 bg-bg border border-border rounded-md text-text outline-none focus:border-cyan focus:ring-2 focus:ring-cyan/20 transition-colors"
+              className="w-full font-mono text-base md:text-sm px-3 py-2 bg-bg border border-border rounded-md text-text outline-none focus:border-cyan focus:ring-2 focus:ring-cyan/20 transition-colors"
             >
               {ipam.supernets.map((s) => (
                 <option key={s.id} value={s.id}>

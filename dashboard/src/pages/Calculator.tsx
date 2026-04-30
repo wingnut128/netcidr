@@ -48,14 +48,14 @@ export function Calculator() {
         <div className="flex gap-3">
           <input
             type="text"
-            className="flex-1 font-mono text-sm px-3 py-2 bg-bg border border-border text-text outline-none focus:border-cyan"
+            className="flex-1 font-mono text-base md:text-sm px-3 py-2 bg-bg border border-border text-text outline-none focus:border-cyan"
             placeholder="e.g. 192.168.1.0/24 or 2001:db8::/48"
             value={cidr}
             onChange={(e) => setCidr(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && doCalc()}
           />
           <button
-            className="text-xs font-medium rounded-md px-4 py-2 border border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
+            className="text-xs font-medium rounded-md px-4 py-2 min-h-[44px] md:min-h-0 border border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
             onClick={doCalc}
           >
             CALC

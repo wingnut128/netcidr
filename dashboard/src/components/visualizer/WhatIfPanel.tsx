@@ -100,7 +100,7 @@ export function WhatIfPanel({
         onChange={(e) => setText(e.target.value)}
         placeholder="10.0.64.0/22&#10;10.0.96.0/24"
         rows={4}
-        className="w-full font-mono text-sm px-3 py-2 bg-bg border border-border rounded-md text-text outline-none focus:border-cyan focus:ring-2 focus:ring-cyan/20 transition-colors mb-4"
+        className="w-full font-mono text-base md:text-sm px-3 py-2 bg-bg border border-border rounded-md text-text outline-none focus:border-cyan focus:ring-2 focus:ring-cyan/20 transition-colors mb-4"
       />
       {rows.length > 0 && (
         <div className="space-y-1.5">

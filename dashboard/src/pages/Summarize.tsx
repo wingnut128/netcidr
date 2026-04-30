@@ -53,13 +53,13 @@ export function Summarize() {
           One CIDR per line (or comma-separated)
         </label>
         <textarea
-          className="w-full min-h-[100px] font-mono text-sm px-3 py-2 bg-bg border border-border text-text outline-none focus:border-cyan resize-y"
+          className="w-full min-h-[100px] font-mono text-base md:text-sm px-3 py-2 bg-bg border border-border text-text outline-none focus:border-cyan resize-y"
           placeholder={"192.168.1.0/25\n192.168.1.128/25\n10.0.0.0/24"}
           value={input}
           onChange={(e) => setInput(e.target.value)}
         />
         <button
-          className="mt-3 text-xs font-medium rounded-md px-4 py-2 border border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
+          className="mt-3 text-xs font-medium rounded-md px-4 py-2 min-h-[44px] md:min-h-0 border border-cyan text-cyan bg-surface2 cursor-pointer hover:bg-cyan hover:text-bg transition-colors"
           onClick={doSummarize}
         >
           SUMMARIZE
