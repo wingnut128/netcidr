@@ -596,13 +596,17 @@ impl IpamStore for PostgresStore {
 
     async fn append_audit(&self, entry: &AuditEntry) -> Result<()> {
         sqlx::query(
-            "INSERT INTO audit_log (timestamp, action, entity_type, entity_id, details) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO audit_log (timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
         )
         .bind(&entry.timestamp)
         .bind(&entry.action)
         .bind(&entry.entity_type)
         .bind(&entry.entity_id)
         .bind(&entry.details)
+        .bind(&entry.caller_sub)
+        .bind(&entry.caller_email)
+        .bind(&entry.source_ip)
+        .bind(&entry.request_id)
         .execute(&self.pool)
         .await
         .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
@@ -611,7 +615,7 @@ impl IpamStore for PostgresStore {
 
     async fn query_audit(&self, filter: &AuditFilter) -> Result<Vec<AuditEntry>> {
         let mut sql = String::from(
-            "SELECT id, timestamp, action, entity_type, entity_id, details FROM audit_log WHERE true",
+            "SELECT id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id FROM audit_log WHERE true",
         );
         let mut param_values: Vec<String> = Vec::new();
         let mut idx = 1;
@@ -668,6 +672,10 @@ impl IpamStore for PostgresStore {
                     entity_type: row.get("entity_type"),
                     entity_id: row.get("entity_id"),
                     details: row.get("details"),
+                    caller_sub: row.try_get("caller_sub").ok(),
+                    caller_email: row.try_get("caller_email").ok(),
+                    source_ip: row.try_get("source_ip").ok(),
+                    request_id: row.try_get("request_id").ok(),
                 }
             })
             .collect())

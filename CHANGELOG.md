@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- IPAM audit log now records caller identity on every mutation: `caller_sub` (stable subject — Google `sub` for OIDC, `"bearer-token"` for static-bearer mode), `caller_email` (verified email when available), `source_ip` (HTTP peer IP), and `request_id` (UUID v4 generated per request). New `audit_context` module threads these via tokio task-locals so existing `IpamOps` mutation methods don't change signature; CLI invocations leave the context unset and the new columns stay `NULL`. SQLite + Postgres migration `004` adds the columns and indexes on `request_id` and `caller_sub`. Closes #103.
 - CI now runs `bun audit --audit-level=high` on the dashboard dependency tree and
   fails the build if known-compromised npm package names appear in
   `dashboard/bun.lock`. Initial denylist covers the StepSecurity advisory

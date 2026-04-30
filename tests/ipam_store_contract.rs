@@ -678,6 +678,7 @@ macro_rules! store_contract_tests {
                     action: "create_supernet".to_string(),
                     details: Some("10.0.0.0/8".to_string()),
                     timestamp: "2026-03-16T00:00:00Z".to_string(),
+                    ..Default::default()
                 })
                 .await
                 .unwrap();
@@ -690,6 +691,7 @@ macro_rules! store_contract_tests {
                     action: "allocate".to_string(),
                     details: None,
                     timestamp: "2026-03-16T00:01:00Z".to_string(),
+                    ..Default::default()
                 })
                 .await
                 .unwrap();
@@ -877,6 +879,7 @@ mod migration_upgrade {
                 action: "allocate".to_string(),
                 details: Some("10.0.0.0/24".to_string()),
                 timestamp: "2026-03-16T00:00:00Z".to_string(),
+                ..Default::default()
             })
             .await
             .unwrap();

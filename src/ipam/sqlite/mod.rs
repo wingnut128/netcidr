@@ -611,8 +611,18 @@ impl IpamStore for SqliteStore {
     async fn append_audit(&self, entry: &AuditEntry) -> Result<()> {
         let conn = self.conn()?;
         conn.execute(
-            "INSERT INTO audit_log (timestamp, action, entity_type, entity_id, details) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![entry.timestamp, entry.action, entry.entity_type, entry.entity_id, entry.details],
+            "INSERT INTO audit_log (timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                entry.timestamp,
+                entry.action,
+                entry.entity_type,
+                entry.entity_id,
+                entry.details,
+                entry.caller_sub,
+                entry.caller_email,
+                entry.source_ip,
+                entry.request_id,
+            ],
         ).map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         Ok(())
     }
@@ -620,7 +630,7 @@ impl IpamStore for SqliteStore {
     async fn query_audit(&self, filter: &AuditFilter) -> Result<Vec<AuditEntry>> {
         let conn = self.conn()?;
         let mut sql = String::from(
-            "SELECT id, timestamp, action, entity_type, entity_id, details FROM audit_log WHERE 1=1",
+            "SELECT id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id FROM audit_log WHERE 1=1",
         );
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
         let mut idx = 1;
@@ -669,6 +679,10 @@ impl IpamStore for SqliteStore {
                     entity_type: row.get(3)?,
                     entity_id: row.get(4)?,
                     details: row.get(5)?,
+                    caller_sub: row.get(6)?,
+                    caller_email: row.get(7)?,
+                    source_ip: row.get(8)?,
+                    request_id: row.get(9)?,
                 })
             })
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
@@ -894,6 +908,7 @@ mod tests {
                 action: "create_supernet".to_string(),
                 details: Some(r#"{"cidr":"10.0.0.0/8"}"#.to_string()),
                 timestamp: "2026-03-04T00:00:00Z".to_string(),
+                ..Default::default()
             })
             .await
             .unwrap();
@@ -1122,6 +1137,7 @@ mod tests {
                     action: "create_supernet".to_string(),
                     details: None,
                     timestamp: "2026-01-01T00:00:00Z".to_string(),
+                    ..Default::default()
                 })
                 .await
                 .unwrap();
@@ -1152,6 +1168,7 @@ mod tests {
                     action: "create_supernet".to_string(),
                     details: None,
                     timestamp: "2026-01-01T00:00:00Z".to_string(),
+                    ..Default::default()
                 })
                 .await
                 .unwrap();
