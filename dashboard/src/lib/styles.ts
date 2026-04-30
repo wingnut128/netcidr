@@ -7,10 +7,10 @@ export const FORM_LABEL =
   "block text-xs font-medium text-text-muted mb-1.5";
 
 export const INPUT =
-  "w-full text-sm px-3 py-2 bg-bg border border-border rounded-md text-text outline-none focus:border-cyan focus:ring-2 focus:ring-cyan/20 transition-colors";
+  "w-full text-base md:text-sm px-3 py-2 bg-bg border border-border rounded-md text-text outline-none focus:border-cyan focus:ring-2 focus:ring-cyan/20 transition-colors";
 
 export const BTN_PRIMARY =
-  "inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium border border-cyan text-cyan bg-transparent rounded-md cursor-pointer hover:bg-cyan hover:text-bg transition-colors";
+  "inline-flex items-center justify-center gap-2 px-4 py-2 min-h-[44px] md:min-h-0 text-sm font-medium border border-cyan text-cyan bg-transparent rounded-md cursor-pointer hover:bg-cyan hover:text-bg transition-colors";
 
 /** Card / panel surface used by sections, modals, lists. */
 export const CARD =

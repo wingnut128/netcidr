@@ -90,14 +90,14 @@ export function AllocationDetailModal({
         <div className="flex gap-2">
           <input
             type="text"
-            className="flex-1 font-mono text-sm px-2 py-1 bg-bg border border-border text-text outline-none focus:border-cyan"
+            className="flex-1 font-mono text-base md:text-sm px-2 py-1 bg-bg border border-border text-text outline-none focus:border-cyan"
             placeholder="key"
             value={tagKey}
             onChange={(e) => setTagKey(e.target.value)}
           />
           <input
             type="text"
-            className="flex-1 font-mono text-sm px-2 py-1 bg-bg border border-border text-text outline-none focus:border-cyan"
+            className="flex-1 font-mono text-base md:text-sm px-2 py-1 bg-bg border border-border text-text outline-none focus:border-cyan"
             placeholder="value"
             value={tagValue}
             onChange={(e) => setTagValue(e.target.value)}
