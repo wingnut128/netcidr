@@ -47,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Release workflow now dispatches a `repository_dispatch: netcidr-released` event at `wingnut128/netcidr-deploy` after a tag is published, auto-rolling out the new version to AWS. Uses a fine-grained PAT (`DEPLOY_DISPATCH_TOKEN`) scoped to that repo with `Actions: read+write`; payload is `{ ref: "vX.Y.Z" }`.
 - Sidebar footer now shows the build's short git SHA next to the version (e.g., `v0.21.0 · 39146f7a`). The SHA links to the commit on GitHub. New `build.rs` injects `GIT_SHA_SHORT` / `GIT_SHA_FULL` at compile time (falls back to `unknown` when `.git` is absent, e.g., source tarballs); `/version` exposes both as `commit` and `commit_full`. Closes #94.
 - **Allowlist onboarding flow.** Three coordinated surfaces, all using the existing visual primitives:
   - **Sign-in card** — entry point for anonymous users, unchanged content but now part of the gate.
