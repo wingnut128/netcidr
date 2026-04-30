@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Release binary now ships with `mcp`, `tui`, and `ipam-postgres` features enabled.** The release workflow's `cargo build --release` step previously compiled with default features only (`swagger`, `dashboard`), so published binaries silently lacked `netcidr mcp-serve`, the terminal UI, and the Postgres IPAM backend. The `lambda` bin remains a separate `[[bin]]` target and is not built here, so we enumerate features explicitly rather than using `--all-features`. Also corrects the `Dispatch netcidr-deploy` step's comment to name the actually-required PAT scope (Contents: read+write, not Actions). Removes the obsolete `cloudbuild.yaml` left over from the GCP build pipeline.
+
 - **Visualizer: block grid + Hilbert curve, IPv6-aware.** The IPAM Visualizer's address-space view is now a cell grid with a Block ⇄ Hilbert toggle (persisted in `localStorage`). Replaces the prior single-color line strip, which made small allocations invisible at typical container widths and only handled IPv4. Cell granularity auto-snaps so total cells stay ≤ 1024; IPv6 supernets coarsen to /64 (or larger if the supernet is bigger than /54). Status colors carry over (active/reserved/released/free), and clicking a cell still opens the allocation detail. `dashboard/src/lib/cidr.ts` is rewritten on `BigInt` so the same code paths handle v4 and v6 — `start`/`end`/`size` are now `bigint` instead of `number`. WhatIfPanel still grades candidates as fits/conflict/outside; its map-overlay re-paint on top of the new grids is tracked as a follow-up.
 
 ### Fixed
