@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-04-30
+
 ### Security
 
 - **Idempotency keys for IPAM allocation endpoints.** Clients can now send `Idempotency-Key: <opaque>` on `POST /ipam/supernets/{id}/allocate`, `POST /ipam/supernets/{id}/allocate-specific`, and `POST /ipam/batch/allocate` to make retries safe. Same key + same body returns the cached response (with `Idempotent-Replay: true`); same key + different body returns `409`. Records are scoped per-endpoint + per-supernet, persist for 24h, and only request bodies up to 64 KiB are cached (oversize bodies execute uncached). New `idempotency_keys` table (SQLite + Postgres migration `005`), `IpamStore::idempotency_{get,put,reap_expired}` trait methods, helpers in `src/ipam/idempotency.rs`, and an `idempotent_post` wrapper in `src/ipam_api.rs` that the three handlers funnel through. Six HTTP integration tests in `tests/ipam_idempotency.rs` cover replay, payload-conflict, no-key passthrough, and per-endpoint/per-supernet scoping. Closes #104.
@@ -768,7 +770,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dockerfile for containerized deployment
 - Makefile for common development tasks
 
-[Unreleased]: https://github.com/wingnut128/netcidr/compare/v0.13.1...HEAD
+[Unreleased]: https://github.com/wingnut128/netcidr/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/wingnut128/netcidr/compare/v0.21.0...v0.22.0
+[0.21.0]: https://github.com/wingnut128/netcidr/compare/v0.20.0...v0.21.0
+[0.20.0]: https://github.com/wingnut128/netcidr/compare/v0.19.3...v0.20.0
+[0.19.3]: https://github.com/wingnut128/netcidr/compare/v0.19.2...v0.19.3
+[0.19.2]: https://github.com/wingnut128/netcidr/compare/v0.19.1...v0.19.2
+[0.19.1]: https://github.com/wingnut128/netcidr/compare/v0.19.0...v0.19.1
+[0.19.0]: https://github.com/wingnut128/netcidr/compare/v0.18.3...v0.19.0
+[0.18.3]: https://github.com/wingnut128/netcidr/compare/v0.18.2...v0.18.3
+[0.18.2]: https://github.com/wingnut128/netcidr/compare/v0.18.1...v0.18.2
+[0.18.1]: https://github.com/wingnut128/netcidr/compare/v0.18.0...v0.18.1
+[0.18.0]: https://github.com/wingnut128/netcidr/compare/v0.17.0...v0.18.0
+[0.17.0]: https://github.com/wingnut128/netcidr/compare/v0.16.1...v0.17.0
+[0.16.1]: https://github.com/wingnut128/netcidr/compare/v0.16.0...v0.16.1
+[0.16.0]: https://github.com/wingnut128/netcidr/compare/v0.15.0...v0.16.0
+[0.15.0]: https://github.com/wingnut128/netcidr/compare/v0.14.0...v0.15.0
+[0.14.0]: https://github.com/wingnut128/netcidr/compare/v0.13.4...v0.14.0
+[0.13.4]: https://github.com/wingnut128/netcidr/compare/v0.13.3...v0.13.4
+[0.13.3]: https://github.com/wingnut128/netcidr/compare/v0.13.2...v0.13.3
+[0.13.2]: https://github.com/wingnut128/netcidr/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/wingnut128/netcidr/compare/v0.12.0...v0.13.1
 [0.12.0]: https://github.com/wingnut128/netcidr/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/wingnut128/netcidr/compare/v0.11.0...v0.11.1
