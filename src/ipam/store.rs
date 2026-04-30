@@ -39,4 +39,9 @@ pub trait IpamStore: Send + Sync {
     // --- audit ---
     async fn append_audit(&self, entry: &AuditEntry) -> Result<()>;
     async fn query_audit(&self, filter: &AuditFilter) -> Result<Vec<AuditEntry>>;
+
+    // --- idempotency ---
+    async fn idempotency_get(&self, key: &str, scope: &str) -> Result<Option<IdempotencyRecord>>;
+    async fn idempotency_put(&self, record: &IdempotencyRecord) -> Result<()>;
+    async fn idempotency_reap_expired(&self, now_rfc3339: &str) -> Result<u64>;
 }

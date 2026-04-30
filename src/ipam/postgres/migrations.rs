@@ -5,6 +5,7 @@ pub const MIGRATIONS: &[(u32, &str)] = &[
     (2, MIGRATION_002),
     (3, MIGRATION_003),
     (4, MIGRATION_004),
+    (5, MIGRATION_005),
 ];
 
 const MIGRATION_001: &str = r#"
@@ -88,4 +89,19 @@ ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS request_id   TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_audit_request_id ON audit_log(request_id);
 CREATE INDEX IF NOT EXISTS idx_audit_caller_sub ON audit_log(caller_sub);
+"#;
+
+const MIGRATION_005: &str = r#"
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+    key           TEXT NOT NULL,
+    scope         TEXT NOT NULL,
+    request_hash  TEXT NOT NULL,
+    status_code   INTEGER NOT NULL,
+    response_body TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    expires_at    TEXT NOT NULL,
+    PRIMARY KEY (key, scope)
+);
+
+CREATE INDEX IF NOT EXISTS idx_idempotency_expires ON idempotency_keys(expires_at);
 "#;

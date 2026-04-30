@@ -690,6 +690,82 @@ impl IpamStore for SqliteStore {
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         Ok(rows)
     }
+
+    async fn idempotency_get(&self, key: &str, scope: &str) -> Result<Option<IdempotencyRecord>> {
+        let conn = self.conn()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT key, scope, request_hash, status_code, response_body, created_at, expires_at \
+                 FROM idempotency_keys WHERE key = ?1 AND scope = ?2",
+            )
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        let mut rows = stmt
+            .query(params![key, scope])
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        if let Some(row) = rows
+            .next()
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
+        {
+            let status_code: i64 = row
+                .get(3)
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+            Ok(Some(IdempotencyRecord {
+                key: row
+                    .get(0)
+                    .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?,
+                scope: row
+                    .get(1)
+                    .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?,
+                request_hash: row
+                    .get(2)
+                    .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?,
+                status_code: status_code as u16,
+                response_body: row
+                    .get(4)
+                    .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?,
+                created_at: row
+                    .get(5)
+                    .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?,
+                expires_at: row
+                    .get(6)
+                    .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn idempotency_put(&self, record: &IdempotencyRecord) -> Result<()> {
+        let conn = self.conn()?;
+        conn.execute(
+            "INSERT INTO idempotency_keys \
+                (key, scope, request_hash, status_code, response_body, created_at, expires_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+             ON CONFLICT(key, scope) DO NOTHING",
+            params![
+                record.key,
+                record.scope,
+                record.request_hash,
+                record.status_code as i64,
+                record.response_body,
+                record.created_at,
+                record.expires_at,
+            ],
+        )
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn idempotency_reap_expired(&self, now_rfc3339: &str) -> Result<u64> {
+        let conn = self.conn()?;
+        let n = conn
+            .execute(
+                "DELETE FROM idempotency_keys WHERE expires_at <= ?1",
+                params![now_rfc3339],
+            )
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        Ok(n as u64)
+    }
 }
 
 #[cfg(test)]

@@ -30,6 +30,7 @@ r2d2 = "0.8"
 r2d2_sqlite = "0.33"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
 anyhow = "1"
 async-trait = "0.1"
 dirs = "6"
