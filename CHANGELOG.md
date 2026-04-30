@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- New `.github/workflows/cargo-deny.yml` runs `cargo deny check advisories|bans|licenses|sources` on PRs that touch `Cargo.{toml,lock}` or `deny.toml`, on push to `main`, and weekly on a cron. `deny.toml` allowlists the project's actual transitive license set and ignores two pre-existing advisories (RUSTSEC-2023-0071 RSA Marvin Attack, RUSTSEC-2026-0097 rand 0.8 unsoundness) — neither is exploitable in this codebase (we never use RSA private-key ops; we don't define a custom logger that calls `rand::rng()`). Both clear automatically when `jsonwebtoken` upgrades past `rand 0.8` / a patched `rsa` ships.
+- New `.github/workflows/gitleaks.yml` scans every PR, push to main, and weekly cron for committed secrets using `gitleaks-action@v2`.
+- New `.github/workflows/dependency-review.yml` runs GitHub's `dependency-review-action` on every PR, failing on `high` severity advisories and posting a summary comment on failure. Catches risky deps at PR time before they hit lockfiles.
+- Closes #107.
 - CI now runs `bun audit --audit-level=high` on the dashboard dependency tree and
   fails the build if known-compromised npm package names appear in
   `dashboard/bun.lock`. Initial denylist covers the StepSecurity advisory
