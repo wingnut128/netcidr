@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as SyncMutex};
 
 use chrono::Utc;
+use tokio::sync::Mutex as AsyncMutex;
 
 use crate::error::{NetcidrError, Result};
 use crate::ipam::models::*;
@@ -13,6 +15,12 @@ use crate::validation;
 /// the store as a thin persistence boundary.
 pub struct IpamOps {
     store: Arc<dyn IpamStore>,
+    /// Per-supernet async mutexes. Allocation, auto-allocation, release,
+    /// and update operations on the *same* supernet are serialized so the
+    /// "check overlap → insert" sequence is atomic within this process.
+    /// Cross-process callers (multiple netcidr instances against a shared
+    /// database) need DB-level locking — tracked separately.
+    supernet_locks: SyncMutex<HashMap<String, Arc<AsyncMutex<()>>>>,
 }
 
 impl std::fmt::Debug for IpamOps {
@@ -23,11 +31,24 @@ impl std::fmt::Debug for IpamOps {
 
 impl IpamOps {
     pub fn new(store: Arc<dyn IpamStore>) -> Self {
-        Self { store }
+        Self {
+            store,
+            supernet_locks: SyncMutex::new(HashMap::new()),
+        }
     }
 
     pub fn store(&self) -> &dyn IpamStore {
         self.store.as_ref()
+    }
+
+    /// Acquire (or create) the per-supernet allocation mutex. Held for the
+    /// duration of allocate / release / update so the read-then-insert
+    /// sequence cannot be interleaved with another mutation.
+    fn supernet_lock(&self, supernet_id: &str) -> Arc<AsyncMutex<()>> {
+        let mut map = self.supernet_locks.lock().expect("supernet_locks poisoned");
+        map.entry(supernet_id.to_string())
+            .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+            .clone()
     }
 
     // -----------------------------------------------------------------------
@@ -89,6 +110,9 @@ impl IpamOps {
     /// Allocate a specific CIDR block within a supernet.
     pub async fn allocate_specific(&self, input: &CreateAllocation) -> Result<Allocation> {
         Self::validate_create_allocation(input)?;
+
+        let lock = self.supernet_lock(&input.supernet_id);
+        let _guard = lock.lock().await;
 
         let supernet = self.store.get_supernet(&input.supernet_id).await?;
         let supernet_range = parse_range(&supernet.cidr)?;
@@ -161,6 +185,9 @@ impl IpamOps {
         validation::validate_optional_text(&request.environment, 0)?;
         validation::validate_optional_identifier(&request.resource_id)?;
         validation::validate_optional_identifier(&request.parent_allocation_id)?;
+
+        let lock = self.supernet_lock(&request.supernet_id);
+        let _guard = lock.lock().await;
 
         let supernet = self.store.get_supernet(&request.supernet_id).await?;
         let supernet_range = parse_range(&supernet.cidr)?;
@@ -251,17 +278,21 @@ impl IpamOps {
         validation::validate_optional_text(&input.environment, 0)?;
         validation::validate_optional_identifier(&input.resource_id)?;
 
+        // Resolve the parent supernet so we can serialize against concurrent
+        // allocations into it.
+        let existing = self.store.get_allocation(id).await?;
+        let lock = self.supernet_lock(&existing.supernet_id);
+        let _guard = lock.lock().await;
+
         // When reactivating a released allocation, check for overlap
         if let Some(ref new_status) = input.status
             && (*new_status == AllocationStatus::Active
                 || *new_status == AllocationStatus::Reserved)
+            && existing.status == AllocationStatus::Released
         {
-            let existing = self.store.get_allocation(id).await?;
-            if existing.status == AllocationStatus::Released {
-                let candidate_range = parse_range(&existing.cidr)?;
-                self.check_overlap(&existing.supernet_id, &candidate_range, &existing.cidr)
-                    .await?;
-            }
+            let candidate_range = parse_range(&existing.cidr)?;
+            self.check_overlap(&existing.supernet_id, &candidate_range, &existing.cidr)
+                .await?;
         }
 
         let alloc = self.store.update_allocation(id, input).await?;
@@ -271,6 +302,13 @@ impl IpamOps {
 
     pub async fn release_allocation(&self, id: &str) -> Result<Allocation> {
         validation::validate_identifier(id)?;
+
+        // Lock the parent supernet so a concurrent allocate_specific that
+        // races a release sees a consistent snapshot.
+        let existing = self.store.get_allocation(id).await?;
+        let lock = self.supernet_lock(&existing.supernet_id);
+        let _guard = lock.lock().await;
+
         let alloc = self.store.release_allocation(id).await?;
         self.audit("release", "allocation", id, Some(&alloc.cidr))
             .await?;
