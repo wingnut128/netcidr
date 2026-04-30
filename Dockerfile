@@ -64,8 +64,10 @@ COPY --from=dashboard /app/dashboard/dist ./dashboard/dist
 # Copy actual source code
 COPY src ./src
 COPY tests ./tests
+COPY build.rs ./build.rs
 
-# Build the release binary
+# Build the release binary. The .git directory is not present in the build
+# context, so build.rs falls back to "unknown" for GIT_SHA_{SHORT,FULL}.
 RUN touch src/main.rs && \
     cargo build --release --no-default-features --features "${FEATURES}"
 
