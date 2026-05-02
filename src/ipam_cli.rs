@@ -9,6 +9,9 @@ use serde::Serialize;
 
 use crate::print_stdout;
 
+/// CLI uses local SQLite, single-tenant by definition.
+const CLI_TENANT_ID: &str = "local";
+
 fn output_result<T: Serialize + TextOutput + CsvOutput>(
     writer: &OutputWriter,
     output_file: &Option<String>,
@@ -66,7 +69,7 @@ pub async fn handle_ipam_command(
                 description,
             } => {
                 let sn = ops
-                    .create_supernet(&CreateSupernet {
+                    .create_supernet(CLI_TENANT_ID, &CreateSupernet {
                         cidr,
                         name,
                         description,
@@ -75,7 +78,7 @@ pub async fn handle_ipam_command(
                 output_result(writer, output_file, &sn);
             }
             SupernetCommands::List => {
-                let list = ops.list_supernets().await?;
+                let list = ops.list_supernets(CLI_TENANT_ID).await?;
                 let result = SupernetList {
                     count: list.len(),
                     supernets: list,
@@ -83,11 +86,11 @@ pub async fn handle_ipam_command(
                 output_result(writer, output_file, &result);
             }
             SupernetCommands::Get { id } => {
-                let sn = ops.get_supernet(&id).await?;
+                let sn = ops.get_supernet(CLI_TENANT_ID, &id).await?;
                 output_result(writer, output_file, &sn);
             }
             SupernetCommands::Delete { id } => {
-                ops.delete_supernet(&id).await?;
+                ops.delete_supernet(CLI_TENANT_ID, &id).await?;
                 eprintln!("Supernet {} deleted", id);
             }
         },
@@ -107,7 +110,7 @@ pub async fn handle_ipam_command(
         } => {
             let status = parse_status(&status)?;
             let alloc = ops
-                .allocate_specific(&CreateAllocation {
+                .allocate_specific(CLI_TENANT_ID, &CreateAllocation {
                     supernet_id,
                     cidr,
                     status,
@@ -141,7 +144,7 @@ pub async fn handle_ipam_command(
         } => {
             let status = parse_status(&status)?;
             let allocs = ops
-                .allocate_auto(&AutoAllocateRequest {
+                .allocate_auto(CLI_TENANT_ID, &AutoAllocateRequest {
                     supernet_id,
                     prefix_length: prefix,
                     count: Some(count),
@@ -166,7 +169,7 @@ pub async fn handle_ipam_command(
 
         IpamCommands::Allocation { command } => match command {
             AllocationCommands::Get { id } => {
-                let alloc = ops.get_allocation(&id).await?;
+                let alloc = ops.get_allocation(CLI_TENANT_ID, &id).await?;
                 output_result(writer, output_file, &alloc);
             }
             AllocationCommands::List {
@@ -179,7 +182,7 @@ pub async fn handle_ipam_command(
             } => {
                 let status = parse_status(&status)?;
                 let allocs = ops
-                    .list_allocations(&AllocationFilter {
+                    .list_allocations(CLI_TENANT_ID, &AllocationFilter {
                         supernet_id,
                         status,
                         resource_id,
@@ -207,6 +210,7 @@ pub async fn handle_ipam_command(
                 let status = parse_status(&status)?;
                 let alloc = ops
                     .update_allocation(
+                        CLI_TENANT_ID,
                         &id,
                         &UpdateAllocation {
                             name,
@@ -224,12 +228,12 @@ pub async fn handle_ipam_command(
         },
 
         IpamCommands::Release { id } => {
-            let alloc = ops.release_allocation(&id).await?;
+            let alloc = ops.release_allocation(CLI_TENANT_ID, &id).await?;
             output_result(writer, output_file, &alloc);
         }
 
         IpamCommands::Utilization { supernet_id } => {
-            let report = ops.utilization(&supernet_id).await?;
+            let report = ops.utilization(CLI_TENANT_ID, &supernet_id).await?;
             output_result(writer, output_file, &report);
         }
 
@@ -237,12 +241,12 @@ pub async fn handle_ipam_command(
             supernet_id,
             prefix,
         } => {
-            let report = ops.free_blocks(&supernet_id, prefix).await?;
+            let report = ops.free_blocks(CLI_TENANT_ID, &supernet_id, prefix).await?;
             output_result(writer, output_file, &report);
         }
 
         IpamCommands::FindIp { address } => {
-            let allocs = ops.find_by_ip(&address).await?;
+            let allocs = ops.find_by_ip(CLI_TENANT_ID, &address).await?;
             let result = AllocationList {
                 count: allocs.len(),
                 allocations: allocs,
@@ -251,7 +255,7 @@ pub async fn handle_ipam_command(
         }
 
         IpamCommands::FindResource { resource_id } => {
-            let allocs = ops.find_by_resource(&resource_id).await?;
+            let allocs = ops.find_by_resource(CLI_TENANT_ID, &resource_id).await?;
             let result = AllocationList {
                 count: allocs.len(),
                 allocations: allocs,
@@ -266,7 +270,7 @@ pub async fn handle_ipam_command(
             limit,
         } => {
             let entries = ops
-                .query_audit(&AuditFilter {
+                .query_audit(CLI_TENANT_ID, &AuditFilter {
                     entity_type,
                     entity_id,
                     action,
@@ -281,7 +285,7 @@ pub async fn handle_ipam_command(
         }
 
         IpamCommands::Dump => {
-            let dump = ops.dump().await?;
+            let dump = ops.dump(CLI_TENANT_ID).await?;
             let json = serde_json::to_string_pretty(&dump).expect("Failed to serialize dump");
             if output_file.is_none() {
                 print_stdout(&json);
@@ -314,7 +318,7 @@ pub async fn handle_ipam_command(
                     netcidr::error::NetcidrError::InvalidInput(format!("invalid JSON: {}", e))
                 })?;
 
-            let (sn_count, alloc_count) = ops.load(&dump).await?;
+            let (sn_count, alloc_count) = ops.load(CLI_TENANT_ID, &dump).await?;
             eprintln!(
                 "Imported {} supernets and {} allocations",
                 sn_count, alloc_count
@@ -323,7 +327,7 @@ pub async fn handle_ipam_command(
 
         IpamCommands::Tags { command } => match command {
             TagCommands::Get { allocation_id } => {
-                let alloc = ops.get_allocation(&allocation_id).await?;
+                let alloc = ops.get_allocation(CLI_TENANT_ID, &allocation_id).await?;
                 output_result(writer, output_file, &alloc);
             }
             TagCommands::Set {
@@ -331,8 +335,8 @@ pub async fn handle_ipam_command(
                 tags,
             } => {
                 let parsed_tags = parse_tags(&tags)?;
-                ops.set_tags(&allocation_id, &parsed_tags).await?;
-                let alloc = ops.get_allocation(&allocation_id).await?;
+                ops.set_tags(CLI_TENANT_ID, &allocation_id, &parsed_tags).await?;
+                let alloc = ops.get_allocation(CLI_TENANT_ID, &allocation_id).await?;
                 output_result(writer, output_file, &alloc);
             }
         },
