@@ -12,17 +12,22 @@ use netcidr::ipam::operations::IpamOps;
 use netcidr::ipam::sqlite::SqliteStore;
 use netcidr::ipam::store::IpamStore;
 
+const TEST_TENANT: &str = "test@example.com";
+
 async fn ops_with_supernet(cidr: &str) -> (Arc<IpamOps>, String) {
     let store = SqliteStore::in_memory().unwrap();
     store.initialize().await.unwrap();
     store.migrate().await.unwrap();
     let ops = Arc::new(IpamOps::new(Arc::new(store)));
     let sn = ops
-        .create_supernet(&CreateSupernet {
-            cidr: cidr.to_string(),
-            name: None,
-            description: None,
-        })
+        .create_supernet(
+            TEST_TENANT,
+            &CreateSupernet {
+                cidr: cidr.to_string(),
+                name: None,
+                description: None,
+            },
+        )
         .await
         .unwrap();
     (ops, sn.id)
@@ -40,7 +45,7 @@ async fn concurrent_allocate_specific_same_cidr_yields_exactly_one_winner() {
         let ops = Arc::clone(&ops);
         let sn_id = sn_id.clone();
         handles.push(tokio::spawn(async move {
-            ops.allocate_specific(&CreateAllocation {
+            ops.allocate_specific(TEST_TENANT, &CreateAllocation {
                 supernet_id: sn_id,
                 cidr: "10.0.1.0/24".to_string(),
                 status: None,
@@ -83,7 +88,7 @@ async fn concurrent_auto_allocate_produces_no_overlaps() {
         let ops = Arc::clone(&ops);
         let sn_id = sn_id.clone();
         handles.push(tokio::spawn(async move {
-            ops.allocate_auto(&AutoAllocateRequest {
+            ops.allocate_auto(TEST_TENANT, &AutoAllocateRequest {
                 supernet_id: sn_id,
                 prefix_length: 24,
                 count: Some(1),

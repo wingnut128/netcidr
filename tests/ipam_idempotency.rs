@@ -13,18 +13,22 @@ use netcidr::ipam::sqlite::SqliteStore;
 use netcidr::ipam::store::IpamStore;
 use tower::ServiceExt;
 
+mod common;
+use common::{TENANT_HEADER, TEST_TENANT, with_test_tenant};
+
 async fn ipam_app() -> axum::Router {
     let store = SqliteStore::in_memory().unwrap();
     store.initialize().await.unwrap();
     store.migrate().await.unwrap();
     let ops = Arc::new(IpamOps::new(Arc::new(store)));
-    create_router(RouterConfig {
+    let router = create_router(RouterConfig {
         server: ServerConfig {
             rate_limit_per_second: 0,
             ..Default::default()
         },
         ipam_ops: Some(ops),
-    })
+    });
+    with_test_tenant(router)
 }
 
 struct ReqResult {
@@ -37,7 +41,8 @@ async fn post_with_key(app: &axum::Router, uri: &str, body: &str, key: Option<&s
     let mut builder = Request::builder()
         .method("POST")
         .uri(uri)
-        .header(header::CONTENT_TYPE, "application/json");
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(TENANT_HEADER, TEST_TENANT);
     if let Some(k) = key {
         builder = builder.header("Idempotency-Key", k);
     }
@@ -168,6 +173,7 @@ async fn auto_allocate_replays_on_same_key() {
     let list_req = Request::builder()
         .method("GET")
         .uri(format!("/ipam/supernets/{sn}/allocations"))
+        .header(TENANT_HEADER, TEST_TENANT)
         .body(Body::empty())
         .unwrap();
     let resp = app.clone().oneshot(list_req).await.unwrap();
