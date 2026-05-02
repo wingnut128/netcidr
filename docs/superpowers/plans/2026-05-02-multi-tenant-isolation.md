@@ -46,7 +46,7 @@
 
 Adds the field that the rest of the plan reads. No serde-skip needed because tenancy is enforced server-side and the dashboard already only sees its own data; if we ever want to suppress the field in JSON we can add `#[serde(skip_serializing)]` later.
 
-- [ ] **Step 1: Add `tenant_id` to `Supernet`**
+- [x] **Step 1: Add `tenant_id` to `Supernet`**
 
 In `src/ipam/models.rs`, after `pub id: String,` in the `Supernet` struct (around line 10):
 
@@ -59,7 +59,7 @@ pub struct Supernet {
 }
 ```
 
-- [ ] **Step 2: Add `tenant_id` to `Allocation`**
+- [x] **Step 2: Add `tenant_id` to `Allocation`**
 
 In the `Allocation` struct (around line 78):
 
@@ -72,7 +72,7 @@ pub struct Allocation {
 }
 ```
 
-- [ ] **Step 3: Add `tenant_id` to `AuditEntry`**
+- [x] **Step 3: Add `tenant_id` to `AuditEntry`**
 
 In the `AuditEntry` struct (around line 189):
 
@@ -85,7 +85,7 @@ pub struct AuditEntry {
 }
 ```
 
-- [ ] **Step 4: Add `tenant_id` to `IdempotencyRecord`**
+- [x] **Step 4: Add `tenant_id` to `IdempotencyRecord`**
 
 In `IdempotencyRecord` (around line 446):
 
@@ -102,7 +102,7 @@ pub struct IdempotencyRecord {
 }
 ```
 
-- [ ] **Step 5: `cargo check` — expect many errors in `sqlite/mod.rs`, `postgres/mod.rs`, tests**
+- [x] **Step 5: `cargo check` — expect many errors in `sqlite/mod.rs`, `postgres/mod.rs`, tests**
 
 ```bash
 cargo check 2>&1 | head -40
@@ -110,7 +110,7 @@ cargo check 2>&1 | head -40
 
 Expected: errors about missing `tenant_id` field in struct literals across the codebase. This is intentional — Phases 2-6 fix them.
 
-- [ ] **Step 6: Commit (intermediate, broken build)**
+- [x] **Step 6: Commit (intermediate, broken build)**
 
 ```bash
 git add src/ipam/models.rs
@@ -130,7 +130,7 @@ update all call sites."
 
 The migration drops `supernets`, `allocations`, `audit_log`, `idempotency_keys` and recreates them with `tenant_id`. `allocation_tags` references `allocations(id)` so we drop and recreate it too (no new column — inherits via FK).
 
-- [ ] **Step 1: Read existing migration array structure**
+- [x] **Step 1: Read existing migration array structure**
 
 ```bash
 grep -n "MIGRATIONS\|version\|CREATE TABLE" src/ipam/sqlite/migrations.rs | head -30
@@ -138,7 +138,7 @@ grep -n "MIGRATIONS\|version\|CREATE TABLE" src/ipam/sqlite/migrations.rs | head
 
 This shows where the existing migrations array is defined and what version numbers are used.
 
-- [ ] **Step 2: Append migration 006 to the migrations array**
+- [x] **Step 2: Append migration 006 to the migrations array**
 
 In `src/ipam/sqlite/migrations.rs`, add a new entry after migration 005:
 
@@ -257,7 +257,7 @@ Migration {
 
 Note: SQLite `INTEGER` columns hold the version number; the `version_pk` PRAGMA-driven scheme already in the file applies. `total_hosts` stays TEXT because Rust holds it as `u128` and SQLite has no native u128.
 
-- [ ] **Step 3: Write a unit test for the trigger**
+- [x] **Step 3: Write a unit test for the trigger**
 
 Add to `src/ipam/sqlite/migrations.rs` `#[cfg(test)] mod tests`:
 
@@ -305,7 +305,7 @@ async fn allocation_with_mismatched_tenant_id_is_rejected_by_trigger() {
 
 If `SqliteStore::in_memory()` and `SqliteStore::pool()` don't exist, add them as test-only helpers (look for similar in the existing file).
 
-- [ ] **Step 4: Run only this test (will fail until SQLite impl is updated, but the migration test should pass)**
+- [x] **Step 4: Run only this test (will fail until SQLite impl is updated, but the migration test should pass)**
 
 ```bash
 cargo test --lib --features ipam-postgres allocation_with_mismatched_tenant -- --nocapture
@@ -313,7 +313,7 @@ cargo test --lib --features ipam-postgres allocation_with_mismatched_tenant -- -
 
 Expected: PASS. The migration runs without errors and the trigger rejects the bad insert.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/ipam/sqlite/migrations.rs
@@ -334,13 +334,13 @@ cross-table invariant allocations.tenant_id == supernets.tenant_id."
 
 Same shape as SQLite migration but in Postgres dialect (BIGSERIAL instead of AUTOINCREMENT, `RAISE EXCEPTION` instead of `RAISE(ABORT)`, etc.).
 
-- [ ] **Step 1: Read the existing Postgres migrations module**
+- [x] **Step 1: Read the existing Postgres migrations module**
 
 ```bash
 grep -n "MIGRATIONS\|version\|CREATE TABLE" src/ipam/postgres/migrations.rs | head -40
 ```
 
-- [ ] **Step 2: Append migration 006**
+- [x] **Step 2: Append migration 006**
 
 ```rust
 Migration {
@@ -458,7 +458,7 @@ Migration {
 },
 ```
 
-- [ ] **Step 3: Mirror the trigger test**
+- [x] **Step 3: Mirror the trigger test**
 
 Add a test at the bottom of the postgres migrations file (gated `#[cfg(all(test, feature = "ipam-postgres"))]`):
 
@@ -501,7 +501,7 @@ async fn pg_allocation_with_mismatched_tenant_id_is_rejected_by_trigger() {
 }
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/ipam/postgres/migrations.rs
@@ -523,7 +523,7 @@ plpgsql function + trigger enforcing the cross-table invariant."
 
 This is the load-bearing change for the entire refactor. After this commit lands, every backend impl must follow.
 
-- [ ] **Step 1: Replace the trait body**
+- [x] **Step 1: Replace the trait body**
 
 Replace the contents of `src/ipam/store.rs` with:
 
@@ -618,7 +618,7 @@ pub trait IpamStore: Send + Sync {
 }
 ```
 
-- [ ] **Step 2: `cargo check` to confirm trait compiles in isolation**
+- [x] **Step 2: `cargo check` to confirm trait compiles in isolation**
 
 ```bash
 cargo check --lib 2>&1 | grep -E "^error\[" | head -20
@@ -626,7 +626,7 @@ cargo check --lib 2>&1 | grep -E "^error\[" | head -20
 
 Expected: errors in `sqlite/mod.rs` and `postgres/mod.rs` because the impls no longer match the trait. That's correct — Tasks 5 and 6 fix them.
 
-- [ ] **Step 3: Commit (still broken build)**
+- [x] **Step 3: Commit (still broken build)**
 
 ```bash
 git add src/ipam/store.rs
@@ -645,7 +645,7 @@ will follow in subsequent commits."
 
 Pattern: each method that took `(id)` becomes `(tenant_id, id)` and the SQL adds `WHERE tenant_id = ?`. Each insert adds `tenant_id` to the column list and `?` to the values. Show the pattern on `create_supernet` and `get_supernet`; the rest is mechanical.
 
-- [ ] **Step 1: Update `create_supernet`**
+- [x] **Step 1: Update `create_supernet`**
 
 Find the existing `create_supernet` impl (search for `async fn create_supernet` in the file). Replace its body with the tenant-aware version:
 
@@ -688,7 +688,7 @@ async fn create_supernet(
 
 (Adapt to the actual existing helper functions like `parse_cidr` / `map_sqlite_error` whose names you'll see in the file.)
 
-- [ ] **Step 2: Update `get_supernet`**
+- [x] **Step 2: Update `get_supernet`**
 
 ```rust
 async fn get_supernet(&self, tenant_id: &str, id: &str) -> Result<Supernet> {
@@ -711,7 +711,7 @@ async fn get_supernet(&self, tenant_id: &str, id: &str) -> Result<Supernet> {
 
 `SupernetRow` is the existing sqlx::FromRow type. Add `tenant_id` to it. The `From<SupernetRow> for Supernet` conversion needs to copy the new field.
 
-- [ ] **Step 3: Apply the same pattern to remaining methods**
+- [x] **Step 3: Apply the same pattern to remaining methods**
 
 For each method in this list, the change is mechanical:
 - `list_supernets` → `WHERE tenant_id = ?`
@@ -734,11 +734,11 @@ For each, the key invariants:
 - Reads of unowned IDs return `IpamError::NotFound`, not `Forbidden`
 - `SELECT *` queries that map to `SupernetRow` / `AllocationRow` / `AuditEntryRow` need those Row types to include `tenant_id`
 
-- [ ] **Step 4: Update Row → Model conversions**
+- [x] **Step 4: Update Row → Model conversions**
 
 Add `tenant_id: row.tenant_id,` to each `From<*Row> for *` conversion in this file.
 
-- [ ] **Step 5: Run lib unit tests for SQLite**
+- [x] **Step 5: Run lib unit tests for SQLite**
 
 ```bash
 cargo test --lib ipam::sqlite -- --nocapture 2>&1 | tail -30
@@ -746,7 +746,7 @@ cargo test --lib ipam::sqlite -- --nocapture 2>&1 | tail -30
 
 Expected: most tests still failing because callers haven't been updated yet, but the migration trigger test from Task 2 should pass now that the impl supports the new schema.
 
-- [ ] **Step 6: Commit (build still broken — operations.rs, ipam_api.rs, ipam_cli.rs not yet updated)**
+- [x] **Step 6: Commit (build still broken — operations.rs, ipam_api.rs, ipam_cli.rs not yet updated)**
 
 ```bash
 git add src/ipam/sqlite/mod.rs
@@ -762,15 +762,15 @@ git commit -m "refactor(ipam/sqlite): implement tenant_id-aware IpamStore"
 
 Same pattern as SQLite. The bind syntax is `$1, $2, ...` instead of `?`.
 
-- [ ] **Step 1: Update `create_supernet`** — `INSERT INTO supernets (id, tenant_id, cidr, ...) VALUES ($1, $2, $3, ...)`. Pattern shown in Task 5 Step 1.
+- [x] **Step 1: Update `create_supernet`** — `INSERT INTO supernets (id, tenant_id, cidr, ...) VALUES ($1, $2, $3, ...)`. Pattern shown in Task 5 Step 1.
 
-- [ ] **Step 2: Update `get_supernet`** — `SELECT * FROM supernets WHERE id = $1 AND tenant_id = $2`.
+- [x] **Step 2: Update `get_supernet`** — `SELECT * FROM supernets WHERE id = $1 AND tenant_id = $2`.
 
-- [ ] **Step 3: Apply same pattern to remaining methods** — same list as Task 5 Step 3.
+- [x] **Step 3: Apply same pattern to remaining methods** — same list as Task 5 Step 3.
 
-- [ ] **Step 4: Update Row→Model conversions to include tenant_id.**
+- [x] **Step 4: Update Row→Model conversions to include tenant_id.**
 
-- [ ] **Step 5: Run Postgres tests (skip-if-no-DB)**
+- [x] **Step 5: Run Postgres tests (skip-if-no-DB)**
 
 ```bash
 cargo test --features ipam-postgres --lib ipam::postgres 2>&1 | tail -20
@@ -778,7 +778,7 @@ cargo test --features ipam-postgres --lib ipam::postgres 2>&1 | tail -20
 
 Expected: tests that need a live Postgres skip cleanly if `NETCIDR_TEST_DATABASE_URL` is unset; otherwise they pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/ipam/postgres/mod.rs
@@ -796,7 +796,7 @@ git commit -m "refactor(ipam/postgres): implement tenant_id-aware IpamStore"
 
 Every public method on `IpamOps` grows `tenant_id: &str`. The internal calls to `self.store.*` pass it through. Audit log entries get `tenant_id` populated from the parameter (NOT from `audit_context::current()`).
 
-- [ ] **Step 1: Update method signatures (mechanical sweep)**
+- [x] **Step 1: Update method signatures (mechanical sweep)**
 
 For every public `async fn` on `IpamOps`, add `tenant_id: &str` as the first parameter (after `&self`). Methods affected (roughly 15-20 — search for `pub async fn` in the file):
 
@@ -820,25 +820,25 @@ pub async fn find_resource(&self, tenant_id: &str, query: &str) -> Result<...>
 pub async fn audit_log(&self, tenant_id: &str, filter: AuditFilter) -> Result<...>
 ```
 
-- [ ] **Step 2: Thread tenant_id through every call to `self.store.*`**
+- [x] **Step 2: Thread tenant_id through every call to `self.store.*`**
 
 Find every `self.store.METHOD(...)` and add `tenant_id` (or threaded variable) as the first arg.
 
-- [ ] **Step 3: Populate `entry.tenant_id` when constructing `AuditEntry`**
+- [x] **Step 3: Populate `entry.tenant_id` when constructing `AuditEntry`**
 
 Search for `AuditEntry {` literals in `operations.rs`. Add `tenant_id: tenant_id.to_string(),` to each.
 
 The existing `audit_context::current()` call (line 942) still provides `caller_sub`, `caller_email`, `source_ip`, `request_id`. Keep that; only `tenant_id` comes from the new parameter.
 
-- [ ] **Step 4: Update the per-supernet allocation lock map**
+- [x] **Step 4: Update the per-supernet allocation lock map**
 
 The `HashMap<supernet_id, Arc<Mutex<()>>>` keys on supernet_id. Two tenants could have the same supernet_id... no, actually they can't — UUIDs are globally unique. Locking is fine as-is.
 
-- [ ] **Step 5: Update tests in `operations.rs` to pass `tenant_id`**
+- [x] **Step 5: Update tests in `operations.rs` to pass `tenant_id`**
 
 Every `let ops = IpamOps::new(...); ops.METHOD(...)` in the file's `#[cfg(test)] mod tests` needs `tenant_id` threaded in. Use `"test-tenant"` as a constant.
 
-- [ ] **Step 6: `cargo check --lib` — should now pass for the library**
+- [x] **Step 6: `cargo check --lib` — should now pass for the library**
 
 ```bash
 cargo check --lib 2>&1 | grep -E "^error" | head
@@ -846,7 +846,7 @@ cargo check --lib 2>&1 | grep -E "^error" | head
 
 Expected: no errors in `src/ipam/`. Errors remain in `src/ipam_api.rs`, `src/ipam_cli.rs`, `src/api.rs`, `src/mcp.rs`. Phases 4-5 fix those.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/ipam/operations.rs
@@ -862,7 +862,7 @@ git commit -m "refactor(ipam/operations): thread tenant_id through every public 
 
 The `idempotent_post` helper builds an `IdempotencyRecord`. It needs to accept `tenant_id` from the handler.
 
-- [ ] **Step 1: Change `idempotent_post` signature**
+- [x] **Step 1: Change `idempotent_post` signature**
 
 The function probably looks like `pub async fn idempotent_post<F, Fut, T>(store, key, scope, body_hash, handler) -> ...`. Add `tenant_id: &str` as a parameter. Pass it to `store.idempotency_get(tenant_id, ...)` and embed in the constructed `IdempotencyRecord { tenant_id: tenant_id.to_string(), ... }`.
 
@@ -887,9 +887,9 @@ where
 }
 ```
 
-- [ ] **Step 2: Update call sites in `ipam_api.rs`** (Task 9 will pick these up; just leave them broken for now).
+- [x] **Step 2: Update call sites in `ipam_api.rs`** (Task 9 will pick these up; just leave them broken for now).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/ipam/idempotency.rs
@@ -907,7 +907,7 @@ git commit -m "refactor(ipam/idempotency): scope idempotency keys by tenant_id"
 - Modify: `src/lib.rs` (add `pub mod tenant;`)
 - Modify: `src/auth.rs` — middleware sets `Tenant` extension after allowlist check
 
-- [ ] **Step 1: Create `src/tenant.rs`**
+- [x] **Step 1: Create `src/tenant.rs`**
 
 ```rust
 //! Per-request tenant identity, set by auth middleware.
@@ -950,7 +950,7 @@ where
 }
 ```
 
-- [ ] **Step 2: Wire the module**
+- [x] **Step 2: Wire the module**
 
 In `src/lib.rs`, add:
 
@@ -958,7 +958,7 @@ In `src/lib.rs`, add:
 pub mod tenant;
 ```
 
-- [ ] **Step 3: Set `Tenant` extension in auth middleware**
+- [x] **Step 3: Set `Tenant` extension in auth middleware**
 
 In `src/auth.rs`, find `require_auth` (~line 156). After the allowlist check passes — i.e., once we know the email is allowed — insert into request extensions:
 
@@ -973,7 +973,7 @@ let tenant = crate::tenant::Tenant(
 request.extensions_mut().insert(tenant);
 ```
 
-- [ ] **Step 4: Write a unit test for the extractor**
+- [x] **Step 4: Write a unit test for the extractor**
 
 In `src/tenant.rs`, add at the bottom:
 
@@ -1002,7 +1002,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 5: Run the new tests**
+- [x] **Step 5: Run the new tests**
 
 ```bash
 cargo test --lib tenant -- --nocapture
@@ -1010,7 +1010,7 @@ cargo test --lib tenant -- --nocapture
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/tenant.rs src/lib.rs src/auth.rs
@@ -1026,7 +1026,7 @@ git commit -m "feat(http): Tenant extension + extractor; auth middleware sets it
 
 Every handler that calls `IpamOps::*` extracts `Tenant` and passes its inner string.
 
-- [ ] **Step 1: Update one handler as the canonical example**
+- [x] **Step 1: Update one handler as the canonical example**
 
 Pick `list_supernets` (or whichever is simplest). Change:
 
@@ -1051,15 +1051,15 @@ async fn list_supernets(
 }
 ```
 
-- [ ] **Step 2: Apply the same pattern to every handler in the file**
+- [x] **Step 2: Apply the same pattern to every handler in the file**
 
 Mechanical sweep. Add `tenant: crate::tenant::Tenant,` to the function signature; pass `tenant.as_str()` as the first argument to every `ops.*` call.
 
-- [ ] **Step 3: Update `idempotent_post` call sites**
+- [x] **Step 3: Update `idempotent_post` call sites**
 
 For the three idempotent handlers (`POST /ipam/supernets/{id}/allocate`, `POST /ipam/supernets/{id}/allocate-specific`, `POST /ipam/batch/allocate`), pass `tenant.as_str()` as the new `tenant_id` argument.
 
-- [ ] **Step 4: Run unit tests on the lib**
+- [x] **Step 4: Run unit tests on the lib**
 
 ```bash
 cargo test --lib 2>&1 | tail
@@ -1067,7 +1067,7 @@ cargo test --lib 2>&1 | tail
 
 Expected: build now compiles. Lib tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/ipam_api.rs
@@ -1085,7 +1085,7 @@ git commit -m "refactor(ipam_api): handlers extract Tenant and pass to ops"
 
 The CLI doesn't authenticate. SQLite-only, always single-tenant.
 
-- [ ] **Step 1: Define a constant**
+- [x] **Step 1: Define a constant**
 
 At the top of `ipam_cli.rs`:
 
@@ -1093,11 +1093,11 @@ At the top of `ipam_cli.rs`:
 const CLI_TENANT_ID: &str = "local";
 ```
 
-- [ ] **Step 2: Pass it to every `ops.*` call**
+- [x] **Step 2: Pass it to every `ops.*` call**
 
 Mechanical sweep. Wherever there's `ops.METHOD(args)`, change to `ops.METHOD(CLI_TENANT_ID, args)`.
 
-- [ ] **Step 3: Run CLI integration tests**
+- [x] **Step 3: Run CLI integration tests**
 
 ```bash
 cargo test --test integration_tests 2>&1 | tail -10
@@ -1105,7 +1105,7 @@ cargo test --test integration_tests 2>&1 | tail -10
 
 Expected: PASS (after fixture sweep in Task 14).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/ipam_cli.rs
@@ -1121,7 +1121,7 @@ git commit -m "refactor(ipam_cli): pass tenant_id=\"local\" for CLI invocations"
 
 The local IPAM backend (when MCP runs over stdio with `--ipam-db`) is single-tenant — like the CLI, it operates on a private SQLite file. Use `"local"`. The remote backend (HTTP proxy) doesn't touch IpamOps directly so no change needed there.
 
-- [ ] **Step 1: Update local backend calls**
+- [x] **Step 1: Update local backend calls**
 
 Search for `McpIpamBackend::Local(ops).METHOD(...)` patterns or wherever the MCP tools call `ops.*`. Pass `"local"` as the tenant_id.
 
@@ -1131,7 +1131,7 @@ Define a constant near the top of `mcp.rs`:
 const MCP_LOCAL_TENANT_ID: &str = "local";
 ```
 
-- [ ] **Step 2: Run lib tests including MCP**
+- [x] **Step 2: Run lib tests including MCP**
 
 ```bash
 cargo test --lib --features mcp 2>&1 | tail
@@ -1139,7 +1139,7 @@ cargo test --lib --features mcp 2>&1 | tail
 
 Expected: PASS.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/mcp.rs
@@ -1157,7 +1157,7 @@ git commit -m "refactor(mcp): local IPAM backend passes tenant_id=\"local\""
 
 This is the single most important test in the PR — proves end-to-end that two OIDC identities cannot see each other's data.
 
-- [ ] **Step 1: Look at existing HTTP test scaffolding**
+- [x] **Step 1: Look at existing HTTP test scaffolding**
 
 ```bash
 grep -n "OidcAudience\|mock_server\|test_jwt" tests/ipam_api_tests.rs | head -10
@@ -1165,7 +1165,7 @@ grep -n "OidcAudience\|mock_server\|test_jwt" tests/ipam_api_tests.rs | head -10
 
 Reuse whatever JWT-mocking helper exists. If `tests/ipam_idempotency.rs` (PR #104) has a helper, copy its pattern.
 
-- [ ] **Step 2: Write the test file**
+- [x] **Step 2: Write the test file**
 
 ```rust
 //! HTTP-level multi-tenant isolation matrix.
@@ -1327,7 +1327,7 @@ async fn idempotency_keys_are_isolated_per_tenant() {
 
 If `tests/common/` doesn't exist, lift helpers from `tests/ipam_idempotency.rs`. The `mint_id_token` helper signs a JWT against the same JWKS the test server validates against.
 
-- [ ] **Step 3: Run isolation tests**
+- [x] **Step 3: Run isolation tests**
 
 ```bash
 cargo test --test ipam_isolation -- --nocapture 2>&1 | tail -30
@@ -1335,7 +1335,7 @@ cargo test --test ipam_isolation -- --nocapture 2>&1 | tail -30
 
 Expected: all five tests pass.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add tests/ipam_isolation.rs tests/common/
@@ -1352,7 +1352,7 @@ git commit -m "test(ipam): HTTP isolation matrix — five-test cross-tenant guar
 
 Mechanical: every literal struct gets `tenant_id`; every `ops.METHOD(...)` call gets a tenant_id argument.
 
-- [ ] **Step 1: Update each test file**
+- [x] **Step 1: Update each test file**
 
 For tests not specifically about isolation, use a single constant:
 
@@ -1364,7 +1364,7 @@ at the top of each test file. Pass it to every `ops.*` call.
 
 For struct literals: `Supernet { id, tenant_id: TEST_TENANT.to_string(), cidr, ... }`. Same for `Allocation`, `AuditEntry`, `IdempotencyRecord`.
 
-- [ ] **Step 2: Run the full test suite**
+- [x] **Step 2: Run the full test suite**
 
 ```bash
 cargo test 2>&1 | tail -20
@@ -1373,7 +1373,7 @@ cargo test --features ipam-postgres 2>&1 | tail -20
 
 Expected: zero failures.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add tests/ src/
@@ -1387,7 +1387,7 @@ git commit -m "test: fixture sweep — every IPAM literal/call carries tenant_id
 **Files:**
 - Modify: `CHANGELOG.md`, `README.md`, `Cargo.toml`, `Cargo.lock`, `SECURITY.md`
 
-- [ ] **Step 1: Run the full check pipeline**
+- [x] **Step 1: Run the full check pipeline**
 
 ```bash
 just check 2>&1 | tail -30
@@ -1395,7 +1395,7 @@ just check 2>&1 | tail -30
 
 Expected: green across fmt, lint, test, test-tui, test-mcp, semgrep.
 
-- [ ] **Step 2: Update CHANGELOG.md**
+- [x] **Step 2: Update CHANGELOG.md**
 
 Add under `[Unreleased]`:
 
@@ -1405,9 +1405,9 @@ Add under `[Unreleased]`:
 - **Multi-tenant IPAM isolation.** Every supernet, allocation, audit entry, and idempotency record is now scoped to the authenticated user's email. The `IpamStore` trait and `IpamOps` struct expose `tenant_id: &str` as an explicit parameter on every method, making per-tenant filtering unforgettable at the type level. HTTP middleware extracts the tenant from the OIDC principal's verified email and exposes it via Axum extensions; cross-tenant access returns 404 (not 403) to prevent existence enumeration. CLI invocations and stdio MCP both pass the literal `"local"`. Schema is destructive: migration `006` drops and recreates `supernets`, `allocations`, `audit_log`, `idempotency_keys`, and `allocation_tags` with `tenant_id` columns, `UNIQUE(tenant_id, cidr)` on supernets, composite tenant indexes, and triggers enforcing the cross-table invariant `allocations.tenant_id == supernets.tenant_id`. Five-test isolation matrix in `tests/ipam_isolation.rs` proves the guarantee end-to-end (supernets, same-CIDR-different-tenant, allocations, audit log, idempotency keys). Sub-project 1 of 3 toward a remote MCP endpoint.
 ```
 
-- [ ] **Step 3: Update README.md** if any user-facing CLI behavior changed (it didn't — `--db` SQLite usage stays single-tenant, just with a `local` row marker invisible to users).
+- [x] **Step 3: Update README.md** if any user-facing CLI behavior changed (it didn't — `--db` SQLite usage stays single-tenant, just with a `local` row marker invisible to users).
 
-- [ ] **Step 4: Bump version**
+- [x] **Step 4: Bump version**
 
 `Cargo.toml`: `version = "0.24.0"` (minor bump — schema break + new behavior).
 
@@ -1417,7 +1417,7 @@ Add under `[Unreleased]`:
 
 `Cargo.lock` will be regenerated by `cargo build`.
 
-- [ ] **Step 5: Final commit**
+- [x] **Step 5: Final commit**
 
 ```bash
 git add CHANGELOG.md README.md Cargo.toml Cargo.lock SECURITY.md
