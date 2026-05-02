@@ -956,6 +956,193 @@ macro_rules! store_contract_tests {
                 .unwrap();
             assert_eq!(sn.cidr, "10.0.0.0/8");
         }
+
+        // ---- Personal Access Tokens ----
+
+        #[tokio::test]
+        async fn contract_pat_round_trip_create_and_get() {
+            let store = $factory().await;
+            let created = store
+                .pat_create(&CreatePersonalAccessToken {
+                    tenant_id: TEST_TENANT.to_string(),
+                    owner_sub: "sub-1".to_string(),
+                    owner_email: TEST_TENANT.to_string(),
+                    name: "laptop".to_string(),
+                    prefix: "ncdr_pat_AAA".to_string(),
+                    token_hash: vec![0xAAu8; 32],
+                    expires_at: "2099-01-01T00:00:00Z".to_string(),
+                })
+                .await
+                .unwrap();
+            assert_eq!(created.token_hash, vec![0xAAu8; 32]);
+
+            let hit = store
+                .pat_get_by_hash(&created.token_hash, "2026-05-02T00:00:00Z")
+                .await
+                .unwrap()
+                .expect("active PAT should hit");
+            assert_eq!(hit.id, created.id);
+        }
+
+        #[tokio::test]
+        async fn contract_pat_get_by_hash_misses_expired_and_revoked() {
+            let store = $factory().await;
+            let expired = store
+                .pat_create(&CreatePersonalAccessToken {
+                    tenant_id: TEST_TENANT.to_string(),
+                    owner_sub: "sub-1".to_string(),
+                    owner_email: TEST_TENANT.to_string(),
+                    name: "expired".to_string(),
+                    prefix: "ncdr_pat_EXP".to_string(),
+                    token_hash: vec![0xBBu8; 32],
+                    expires_at: "2020-01-01T00:00:00Z".to_string(),
+                })
+                .await
+                .unwrap();
+            let revoked = store
+                .pat_create(&CreatePersonalAccessToken {
+                    tenant_id: TEST_TENANT.to_string(),
+                    owner_sub: "sub-1".to_string(),
+                    owner_email: TEST_TENANT.to_string(),
+                    name: "revoked".to_string(),
+                    prefix: "ncdr_pat_REV".to_string(),
+                    token_hash: vec![0xCCu8; 32],
+                    expires_at: "2099-01-01T00:00:00Z".to_string(),
+                })
+                .await
+                .unwrap();
+            store
+                .pat_revoke(TEST_TENANT, "sub-1", &revoked.id, "2026-05-02T00:00:00Z")
+                .await
+                .unwrap();
+
+            let now = "2026-05-02T00:00:00Z";
+            assert!(
+                store
+                    .pat_get_by_hash(&expired.token_hash, now)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(
+                store
+                    .pat_get_by_hash(&revoked.token_hash, now)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+        }
+
+        #[tokio::test]
+        async fn contract_pat_list_isolates_owners_and_tenants() {
+            let store = $factory().await;
+            let a1 = store
+                .pat_create(&CreatePersonalAccessToken {
+                    tenant_id: "a@x".to_string(),
+                    owner_sub: "sub-a1".to_string(),
+                    owner_email: "a@x".to_string(),
+                    name: "a1".to_string(),
+                    prefix: "ncdr_pat_A1".to_string(),
+                    token_hash: vec![0x01u8; 32],
+                    expires_at: "2099-01-01T00:00:00Z".to_string(),
+                })
+                .await
+                .unwrap();
+            let _a2 = store
+                .pat_create(&CreatePersonalAccessToken {
+                    tenant_id: "a@x".to_string(),
+                    owner_sub: "sub-a2".to_string(),
+                    owner_email: "a@x".to_string(),
+                    name: "a2".to_string(),
+                    prefix: "ncdr_pat_A2".to_string(),
+                    token_hash: vec![0x02u8; 32],
+                    expires_at: "2099-01-01T00:00:00Z".to_string(),
+                })
+                .await
+                .unwrap();
+            let _b1 = store
+                .pat_create(&CreatePersonalAccessToken {
+                    tenant_id: "b@x".to_string(),
+                    owner_sub: "sub-b1".to_string(),
+                    owner_email: "b@x".to_string(),
+                    name: "b1".to_string(),
+                    prefix: "ncdr_pat_B1".to_string(),
+                    token_hash: vec![0x03u8; 32],
+                    expires_at: "2099-01-01T00:00:00Z".to_string(),
+                })
+                .await
+                .unwrap();
+
+            let listed = store.pat_list_for_owner("a@x", "sub-a1").await.unwrap();
+            assert_eq!(listed.len(), 1);
+            assert_eq!(listed[0].id, a1.id);
+        }
+
+        #[tokio::test]
+        async fn contract_pat_revoke_idempotent_and_cross_owner_not_found() {
+            let store = $factory().await;
+            let t = store
+                .pat_create(&CreatePersonalAccessToken {
+                    tenant_id: "a@x".to_string(),
+                    owner_sub: "sub-a1".to_string(),
+                    owner_email: "a@x".to_string(),
+                    name: "tok".to_string(),
+                    prefix: "ncdr_pat_TOK".to_string(),
+                    token_hash: vec![0xD1u8; 32],
+                    expires_at: "2099-01-01T00:00:00Z".to_string(),
+                })
+                .await
+                .unwrap();
+
+            let first = store
+                .pat_revoke("a@x", "sub-a1", &t.id, "2026-05-02T00:00:00Z")
+                .await
+                .unwrap();
+            assert!(first.revoked_at.is_some());
+            // Idempotent.
+            let second = store
+                .pat_revoke("a@x", "sub-a1", &t.id, "2026-06-01T00:00:00Z")
+                .await
+                .unwrap();
+            assert_eq!(second.revoked_at, first.revoked_at);
+
+            // Cross-owner lookup → PatNotFound.
+            let cross = store
+                .pat_revoke("a@x", "sub-other", &t.id, "2026-05-02T00:00:00Z")
+                .await;
+            assert!(matches!(cross, Err(NetcidrError::PatNotFound(_))));
+        }
+
+        #[tokio::test]
+        async fn contract_pat_reap_expired_count() {
+            let store = $factory().await;
+            for (i, expires_at) in [
+                "2020-01-01T00:00:00Z",
+                "2020-02-01T00:00:00Z",
+                "2099-01-01T00:00:00Z",
+            ]
+            .iter()
+            .enumerate()
+            {
+                store
+                    .pat_create(&CreatePersonalAccessToken {
+                        tenant_id: TEST_TENANT.to_string(),
+                        owner_sub: "sub-1".to_string(),
+                        owner_email: TEST_TENANT.to_string(),
+                        name: format!("t{i}"),
+                        prefix: format!("ncdr_pat_{i:03}"),
+                        token_hash: vec![0xE0u8 + i as u8; 32],
+                        expires_at: (*expires_at).to_string(),
+                    })
+                    .await
+                    .unwrap();
+            }
+            let removed = store
+                .pat_reap_expired("2025-01-01T00:00:00Z")
+                .await
+                .unwrap();
+            assert_eq!(removed, 2);
+        }
     };
 }
 

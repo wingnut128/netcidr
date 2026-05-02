@@ -7,6 +7,7 @@ pub const MIGRATIONS: &[(u32, &str)] = &[
     (4, MIGRATION_004),
     (5, MIGRATION_005),
     (6, MIGRATION_006),
+    (7, MIGRATION_007),
 ];
 
 const MIGRATION_001: &str = r#"
@@ -226,6 +227,32 @@ CREATE TABLE idempotency_keys (
 CREATE INDEX idx_idempotency_expires ON idempotency_keys(expires_at);
 "#;
 
+/// Migration 007: personal access tokens. Additive only — new
+/// `personal_access_tokens` table plus two new columns on `audit_log`
+/// (`auth_method` defaulting to `'oidc'` for back-compat, and nullable
+/// `pat_id`). No DROPs, no destructive ALTERs on existing data columns.
+const MIGRATION_007: &str = r#"
+CREATE TABLE personal_access_tokens (
+    id            TEXT PRIMARY KEY,
+    tenant_id     TEXT NOT NULL,
+    owner_sub     TEXT NOT NULL,
+    owner_email   TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    prefix        TEXT NOT NULL,
+    token_hash    BLOB NOT NULL,
+    created_at    TEXT NOT NULL,
+    expires_at    TEXT NOT NULL,
+    last_used_at  TEXT,
+    revoked_at    TEXT
+);
+CREATE INDEX idx_pat_tenant ON personal_access_tokens(tenant_id);
+CREATE INDEX idx_pat_prefix ON personal_access_tokens(prefix);
+CREATE UNIQUE INDEX idx_pat_token_hash ON personal_access_tokens(token_hash);
+
+ALTER TABLE audit_log ADD COLUMN auth_method TEXT NOT NULL DEFAULT 'oidc';
+ALTER TABLE audit_log ADD COLUMN pat_id TEXT;
+"#;
+
 #[cfg(test)]
 mod tests {
     use crate::ipam::sqlite::SqliteStore;
@@ -281,5 +308,96 @@ mod tests {
             [],
         )
         .expect("matching tenant insert should succeed");
+    }
+
+    #[tokio::test]
+    async fn migration_007_personal_access_tokens_round_trip() {
+        let store = SqliteStore::in_memory().unwrap();
+        store.initialize().await.unwrap();
+        store.migrate().await.unwrap();
+
+        let conn = store.pool().get().expect("pool checkout");
+
+        // Insert a row with a 32-byte BLOB hash.
+        let hash: Vec<u8> = (0u8..32).collect();
+        conn.execute(
+            r#"INSERT INTO personal_access_tokens
+               (id, tenant_id, owner_sub, owner_email, name, prefix, token_hash,
+                created_at, expires_at, last_used_at, revoked_at)
+               VALUES ('p1','a@x','sub-1','a@x','laptop','ncdr_pat_AAA',?1,
+                       '2026-05-02T00:00:00Z','2026-08-01T00:00:00Z',NULL,NULL)"#,
+            rusqlite::params![hash.clone()],
+        )
+        .expect("insert PAT");
+
+        let (got_hash, got_name, got_prefix): (Vec<u8>, String, String) = conn
+            .query_row(
+                "SELECT token_hash, name, prefix FROM personal_access_tokens WHERE id = 'p1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("read PAT");
+        assert_eq!(got_hash, hash, "BLOB hash bytes round-trip");
+        assert_eq!(got_name, "laptop");
+        assert_eq!(got_prefix, "ncdr_pat_AAA");
+
+        // audit_log gained auth_method (default 'oidc') and pat_id (nullable).
+        let cols: Vec<String> = conn
+            .prepare("PRAGMA table_info(audit_log)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(
+            cols.iter().any(|c| c == "auth_method"),
+            "audit_log missing auth_method column: {:?}",
+            cols
+        );
+        assert!(
+            cols.iter().any(|c| c == "pat_id"),
+            "audit_log missing pat_id column: {:?}",
+            cols
+        );
+
+        // Existing audit_log rows take the default 'oidc'.
+        conn.execute(
+            r#"INSERT INTO audit_log
+               (tenant_id, entity_type, entity_id, action, timestamp)
+               VALUES ('a@x','supernet','s1','create_supernet','2026-05-02T00:00:00Z')"#,
+            [],
+        )
+        .unwrap();
+        let auth_method: String = conn
+            .query_row(
+                "SELECT auth_method FROM audit_log WHERE entity_id = 's1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(auth_method, "oidc");
+
+        // UNIQUE(token_hash) — second insert with same hash must fail.
+        let dup = conn.execute(
+            r#"INSERT INTO personal_access_tokens
+               (id, tenant_id, owner_sub, owner_email, name, prefix, token_hash,
+                created_at, expires_at)
+               VALUES ('p2','a@x','sub-1','a@x','dup','ncdr_pat_BBB',?1,
+                       '2026-05-02T00:00:00Z','2026-08-01T00:00:00Z')"#,
+            rusqlite::params![hash],
+        );
+        assert!(dup.is_err(), "duplicate token_hash must violate UNIQUE");
+    }
+
+    #[tokio::test]
+    async fn migration_runs_twice_is_a_no_op() {
+        let store = SqliteStore::in_memory().unwrap();
+        store.initialize().await.unwrap();
+        store.migrate().await.unwrap();
+        // Second invocation must not error and must not duplicate work.
+        store
+            .migrate()
+            .await
+            .expect("second migrate should be idempotent");
     }
 }

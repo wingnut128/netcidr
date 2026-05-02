@@ -439,6 +439,72 @@ pub struct IpamDump {
 }
 
 // ---------------------------------------------------------------------------
+// Personal Access Tokens
+// ---------------------------------------------------------------------------
+
+/// A long-lived personal access token bound to an OIDC identity. The
+/// `token_hash` field is `#[serde(skip)]` to guarantee the on-wire hash never
+/// leaks through any serialized API path; only the in-memory store/verifier
+/// touch it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersonalAccessToken {
+    pub id: String,
+    pub tenant_id: String,
+    pub owner_sub: String,
+    pub owner_email: String,
+    pub name: String,
+    /// First 12 chars of the plaintext token (`ncdr_pat_xxxx`); shown in lists.
+    pub prefix: String,
+    /// `sha256(secret || pepper)` — 32 bytes. Never serialized.
+    #[serde(skip)]
+    pub token_hash: Vec<u8>,
+    pub created_at: String,
+    /// RFC3339; never NULL — minted with a default if the user didn't pick one.
+    pub expires_at: String,
+    pub last_used_at: Option<String>,
+    pub revoked_at: Option<String>,
+}
+
+/// Fields required to insert a new PAT row. Caller computes `prefix` and
+/// `token_hash` via `crate::pat`; store layer trusts and parameterizes them.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreatePersonalAccessToken {
+    pub tenant_id: String,
+    pub owner_sub: String,
+    pub owner_email: String,
+    pub name: String,
+    pub prefix: String,
+    pub token_hash: Vec<u8>,
+    pub expires_at: String,
+}
+
+/// Public-safe view of a PAT — no plaintext, no hash. Used by `GET /me/tokens`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersonalAccessTokenSummary {
+    pub id: String,
+    pub name: String,
+    pub prefix: String,
+    pub created_at: String,
+    pub expires_at: String,
+    pub last_used_at: Option<String>,
+    pub revoked_at: Option<String>,
+}
+
+impl From<PersonalAccessToken> for PersonalAccessTokenSummary {
+    fn from(t: PersonalAccessToken) -> Self {
+        Self {
+            id: t.id,
+            name: t.name,
+            prefix: t.prefix,
+            created_at: t.created_at,
+            expires_at: t.expires_at,
+            last_used_at: t.last_used_at,
+            revoked_at: t.revoked_at,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Idempotency keys
 // ---------------------------------------------------------------------------
 
