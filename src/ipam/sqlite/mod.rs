@@ -1250,13 +1250,6 @@ mod tests {
         assert_eq!(val, 256);
     }
 
-    #[test]
-    fn test_total_hosts_as_i64_clamps() {
-        use crate::ipam::total_hosts_as_i64;
-        assert_eq!(total_hosts_as_i64(256), 256);
-        assert_eq!(total_hosts_as_i64(1u128 << 96), i64::MAX);
-    }
-
     #[tokio::test]
     async fn test_ipv6_supernet_total_hosts_roundtrip() {
         let store = test_store().await;

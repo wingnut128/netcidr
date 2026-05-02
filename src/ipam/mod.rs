@@ -64,15 +64,6 @@ pub(crate) fn read_total_hosts(text: Option<String>, legacy_i64: i64) -> u128 {
         .unwrap_or(legacy_i64 as u128)
 }
 
-/// Clamp a u128 to i64::MAX for the legacy INTEGER column.
-pub(crate) fn total_hosts_as_i64(total: u128) -> i64 {
-    if total > i64::MAX as u128 {
-        i64::MAX
-    } else {
-        total as i64
-    }
-}
-
 /// Parse a CIDR string and return (network_address, broadcast_address, prefix_length, total_hosts, ip_version).
 /// Shared by all storage backends.
 pub(crate) fn parse_cidr_metadata(cidr: &str) -> Result<(String, String, u8, u128, u8)> {
