@@ -70,8 +70,12 @@ pub fn hash_body(body: &[u8]) -> String {
 
 /// Decide whether to proceed with the operation, replay a cached
 /// response, or reject as a conflict.
+///
+/// `tenant_id` scopes the lookup so the same key reused by a different
+/// tenant is treated as a fresh request.
 pub async fn check(
     store: &dyn IpamStore,
+    tenant_id: &str,
     headers: &HeaderMap,
     scope: &str,
     body: &[u8],
@@ -82,7 +86,7 @@ pub async fn check(
 
     let request_hash = hash_body(body);
 
-    if let Some(existing) = store.idempotency_get(&key, scope).await? {
+    if let Some(existing) = store.idempotency_get(tenant_id, &key, scope).await? {
         if existing.request_hash == request_hash {
             return Ok(Outcome::Replay {
                 status: existing.status_code,
@@ -95,11 +99,12 @@ pub async fn check(
     Ok(Outcome::Proceed { key, request_hash })
 }
 
-/// Persist a `(key, scope, request_hash) -> response` mapping. Called
-/// after the operation succeeded *or* failed deterministically (e.g.
-/// 4xx) so retries return the same outcome.
+/// Persist a `(tenant_id, key, scope, request_hash) -> response` mapping.
+/// Called after the operation succeeded *or* failed deterministically
+/// (e.g. 4xx) so retries return the same outcome.
 pub async fn record(
     store: &dyn IpamStore,
+    tenant_id: &str,
     key: &str,
     scope: &str,
     request_hash: &str,
@@ -110,6 +115,7 @@ pub async fn record(
     let expires = now + TTL;
     store
         .idempotency_put(&IdempotencyRecord {
+            tenant_id: tenant_id.to_string(),
             key: key.to_string(),
             scope: scope.to_string(),
             request_hash: request_hash.to_string(),
