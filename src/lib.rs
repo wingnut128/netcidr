@@ -20,6 +20,7 @@ pub mod auth;
 pub mod cli;
 pub mod ipam_api;
 pub mod output;
+pub mod tenant;
 
 // IPAM persistence layer
 pub mod ipam;

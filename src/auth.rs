@@ -172,6 +172,24 @@ pub async fn require_auth(config: AuthConfig, mut request: Request, next: Next) 
         return forbidden();
     }
 
+    // Derive tenant identity from the authenticated principal. OIDC mode
+    // requires a verified email; bearer-token mode (single-operator deploys)
+    // falls back to the constant subject "bearer-token" so a single-tenant
+    // bucket still exists.
+    let tenant_id = match principal.kind {
+        PrincipalKind::Oidc => match principal.email.clone() {
+            Some(email) => email,
+            None => {
+                warn!("rejecting OIDC principal without verified email");
+                return unauthorized(config.mode);
+            }
+        },
+        PrincipalKind::BearerToken => principal.subject.clone(),
+    };
+    request
+        .extensions_mut()
+        .insert(crate::tenant::Tenant(tenant_id));
+
     let ctx = crate::audit_context::AuditContext {
         caller_sub: Some(principal.subject.clone()),
         caller_email: principal.email.clone(),
