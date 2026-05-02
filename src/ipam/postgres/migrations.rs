@@ -225,8 +225,8 @@ CREATE INDEX idx_idempotency_expires ON idempotency_keys(expires_at);
 
 #[cfg(all(test, feature = "ipam-postgres"))]
 mod tests {
-    use crate::ipam::postgres::PostgresStore;
     use crate::ipam::config::PostgresConfig;
+    use crate::ipam::postgres::PostgresStore;
     use crate::ipam::store::IpamStore;
 
     #[tokio::test]
@@ -235,9 +235,7 @@ mod tests {
         let url = match std::env::var("NETCIDR_TEST_DATABASE_URL") {
             Ok(v) => v,
             Err(_) => {
-                eprintln!(
-                    "skipping: NETCIDR_TEST_DATABASE_URL not set"
-                );
+                eprintln!("skipping: NETCIDR_TEST_DATABASE_URL not set");
                 return;
             }
         };

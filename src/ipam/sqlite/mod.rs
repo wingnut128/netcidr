@@ -188,11 +188,7 @@ impl IpamStore for SqliteStore {
 
     // --- supernets ---
 
-    async fn create_supernet(
-        &self,
-        tenant_id: &str,
-        input: &CreateSupernet,
-    ) -> Result<Supernet> {
+    async fn create_supernet(&self, tenant_id: &str, input: &CreateSupernet) -> Result<Supernet> {
         let conn = self.conn()?;
         let id = uuid::Uuid::new_v4().to_string();
         let now = Self::now();
@@ -655,12 +651,7 @@ impl IpamStore for SqliteStore {
 
     // --- tags ---
 
-    async fn set_tags(
-        &self,
-        tenant_id: &str,
-        allocation_id: &str,
-        tags: &[Tag],
-    ) -> Result<()> {
+    async fn set_tags(&self, tenant_id: &str, allocation_id: &str, tags: &[Tag]) -> Result<()> {
         let conn = self.conn()?;
         Self::assert_allocation_in_tenant(&conn, tenant_id, allocation_id)?;
 
@@ -708,11 +699,7 @@ impl IpamStore for SqliteStore {
         Ok(())
     }
 
-    async fn query_audit(
-        &self,
-        tenant_id: &str,
-        filter: &AuditFilter,
-    ) -> Result<Vec<AuditEntry>> {
+    async fn query_audit(&self, tenant_id: &str, filter: &AuditFilter) -> Result<Vec<AuditEntry>> {
         let conn = self.conn()?;
         let mut sql = String::from(
             "SELECT id, tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id FROM audit_log WHERE tenant_id = ?1",
@@ -1022,7 +1009,10 @@ mod tests {
             .await
             .unwrap();
 
-        let err = store.delete_supernet(TEST_TENANT, &sn.id).await.unwrap_err();
+        let err = store
+            .delete_supernet(TEST_TENANT, &sn.id)
+            .await
+            .unwrap_err();
         assert!(matches!(err, NetcidrError::SupernetHasActiveAllocations(_)));
     }
 

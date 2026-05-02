@@ -123,7 +123,10 @@ impl IpamOps {
         let lock = self.supernet_lock(&input.supernet_id);
         let _guard = lock.lock().await;
 
-        let supernet = self.store.get_supernet(tenant_id, &input.supernet_id).await?;
+        let supernet = self
+            .store
+            .get_supernet(tenant_id, &input.supernet_id)
+            .await?;
         let supernet_range = parse_range(&supernet.cidr)?;
         let candidate_range = parse_range(&input.cidr)?;
 
@@ -221,7 +224,10 @@ impl IpamOps {
         let lock = self.supernet_lock(&request.supernet_id);
         let _guard = lock.lock().await;
 
-        let supernet = self.store.get_supernet(tenant_id, &request.supernet_id).await?;
+        let supernet = self
+            .store
+            .get_supernet(tenant_id, &request.supernet_id)
+            .await?;
         let supernet_range = parse_range(&supernet.cidr)?;
         let count = request.count.unwrap_or(1);
 
@@ -345,7 +351,8 @@ impl IpamOps {
         }
 
         let alloc = self.store.update_allocation(tenant_id, id, input).await?;
-        self.audit(tenant_id, "update", "allocation", id, None).await?;
+        self.audit(tenant_id, "update", "allocation", id, None)
+            .await?;
         Ok(alloc)
     }
 
@@ -359,14 +366,8 @@ impl IpamOps {
         let _guard = lock.lock().await;
 
         let alloc = self.store.release_allocation(tenant_id, id).await?;
-        self.audit(
-            tenant_id,
-            "release",
-            "allocation",
-            id,
-            Some(&alloc.cidr),
-        )
-        .await?;
+        self.audit(tenant_id, "release", "allocation", id, Some(&alloc.cidr))
+            .await?;
         Ok(alloc)
     }
 
@@ -396,11 +397,7 @@ impl IpamOps {
         // Fetch released allocations for the breakdown
         let released = self
             .store
-            .find_allocations_in_supernet(
-                tenant_id,
-                supernet_id,
-                &[AllocationStatus::Released],
-            )
+            .find_allocations_in_supernet(tenant_id, supernet_id, &[AllocationStatus::Released])
             .await?;
 
         let mut active_addresses: u128 = 0;
@@ -745,11 +742,7 @@ impl IpamOps {
             // All active allocations in a supernet
             let allocs = self
                 .store
-                .find_allocations_in_supernet(
-                    tenant_id,
-                    supernet_id,
-                    &[AllocationStatus::Active],
-                )
+                .find_allocations_in_supernet(tenant_id, supernet_id, &[AllocationStatus::Active])
                 .await?;
             allocs.into_iter().map(|a| (a.id, a.cidr)).collect()
         } else {
@@ -951,21 +944,21 @@ impl IpamOps {
                     tenant_id,
                     &CreateAllocation {
                         supernet_id: new_sn_id.to_string(),
-                    cidr: alloc.cidr.clone(),
-                    status: Some(alloc.status.clone()),
-                    resource_id: alloc.resource_id.clone(),
-                    resource_type: alloc.resource_type.clone(),
-                    name: alloc.name.clone(),
-                    description: alloc.description.clone(),
-                    environment: alloc.environment.clone(),
-                    owner: alloc.owner.clone(),
-                    parent_allocation_id: None,
-                    tags: if alloc.tags.is_empty() {
-                        None
-                    } else {
-                        Some(alloc.tags.clone())
-                    },
-                    ttl_seconds: None,
+                        cidr: alloc.cidr.clone(),
+                        status: Some(alloc.status.clone()),
+                        resource_id: alloc.resource_id.clone(),
+                        resource_type: alloc.resource_type.clone(),
+                        name: alloc.name.clone(),
+                        description: alloc.description.clone(),
+                        environment: alloc.environment.clone(),
+                        owner: alloc.owner.clone(),
+                        parent_allocation_id: None,
+                        tags: if alloc.tags.is_empty() {
+                            None
+                        } else {
+                            Some(alloc.tags.clone())
+                        },
+                        ttl_seconds: None,
                     },
                 )
                 .await?;
@@ -979,12 +972,7 @@ impl IpamOps {
     // Tags
     // -----------------------------------------------------------------------
 
-    pub async fn set_tags(
-        &self,
-        tenant_id: &str,
-        allocation_id: &str,
-        tags: &[Tag],
-    ) -> Result<()> {
+    pub async fn set_tags(&self, tenant_id: &str, allocation_id: &str, tags: &[Tag]) -> Result<()> {
         validation::validate_identifier(allocation_id)?;
         for tag in tags {
             validation::validate_text_field(&tag.key, 0)?;
@@ -1308,20 +1296,26 @@ mod tests {
     async fn test_create_supernet_overlap_rejected() {
         let ops = test_ops().await;
 
-        ops.create_supernet(TEST_TENANT, &CreateSupernet {
-            cidr: "10.0.0.0/8".to_string(),
-            name: None,
-            description: None,
-        })
+        ops.create_supernet(
+            TEST_TENANT,
+            &CreateSupernet {
+                cidr: "10.0.0.0/8".to_string(),
+                name: None,
+                description: None,
+            },
+        )
         .await
         .unwrap();
 
         let err = ops
-            .create_supernet(TEST_TENANT, &CreateSupernet {
-                cidr: "10.128.0.0/9".to_string(),
-                name: None,
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "10.128.0.0/9".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap_err();
 
@@ -1333,16 +1327,85 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(TEST_TENANT, &CreateSupernet {
-                cidr: "10.0.0.0/8".to_string(),
-                name: None,
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "10.0.0.0/8".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
         let a1 = ops
-            .allocate_specific(TEST_TENANT, &CreateAllocation {
+            .allocate_specific(
+                TEST_TENANT,
+                &CreateAllocation {
+                    supernet_id: sn.id.clone(),
+                    cidr: "10.0.0.0/24".to_string(),
+                    status: None,
+                    resource_id: None,
+                    resource_type: None,
+                    name: None,
+                    description: None,
+                    environment: None,
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: None,
+                    ttl_seconds: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(a1.cidr, "10.0.0.0/24");
+
+        // Overlapping allocation should fail
+        let err = ops
+            .allocate_specific(
+                TEST_TENANT,
+                &CreateAllocation {
+                    supernet_id: sn.id.clone(),
+                    cidr: "10.0.0.128/25".to_string(),
+                    status: None,
+                    resource_id: None,
+                    resource_type: None,
+                    name: None,
+                    description: None,
+                    environment: None,
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: None,
+                    ttl_seconds: None,
+                },
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, NetcidrError::AllocationConflict { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_auto_allocate() {
+        let ops = test_ops().await;
+
+        let sn = ops
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "10.0.0.0/16".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        // Allocate first /24
+        ops.allocate_specific(
+            TEST_TENANT,
+            &CreateAllocation {
                 supernet_id: sn.id.clone(),
                 cidr: "10.0.0.0/24".to_string(),
                 status: None,
@@ -1355,82 +1418,31 @@ mod tests {
                 parent_allocation_id: None,
                 tags: None,
                 ttl_seconds: None,
-            })
-            .await
-            .unwrap();
-
-        assert_eq!(a1.cidr, "10.0.0.0/24");
-
-        // Overlapping allocation should fail
-        let err = ops
-            .allocate_specific(TEST_TENANT, &CreateAllocation {
-                supernet_id: sn.id.clone(),
-                cidr: "10.0.0.128/25".to_string(),
-                status: None,
-                resource_id: None,
-                resource_type: None,
-                name: None,
-                description: None,
-                environment: None,
-                owner: None,
-                parent_allocation_id: None,
-                tags: None,
-                ttl_seconds: None,
-            })
-            .await
-            .unwrap_err();
-
-        assert!(matches!(err, NetcidrError::AllocationConflict { .. }));
-    }
-
-    #[tokio::test]
-    async fn test_auto_allocate() {
-        let ops = test_ops().await;
-
-        let sn = ops
-            .create_supernet(TEST_TENANT, &CreateSupernet {
-                cidr: "10.0.0.0/16".to_string(),
-                name: None,
-                description: None,
-            })
-            .await
-            .unwrap();
-
-        // Allocate first /24
-        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
-            supernet_id: sn.id.clone(),
-            cidr: "10.0.0.0/24".to_string(),
-            status: None,
-            resource_id: None,
-            resource_type: None,
-            name: None,
-            description: None,
-            environment: None,
-            owner: None,
-            parent_allocation_id: None,
-            tags: None,
-            ttl_seconds: None,
-        })
+            },
+        )
         .await
         .unwrap();
 
         // Auto-allocate next 3 /24s
         let allocs = ops
-            .allocate_auto(TEST_TENANT, &AutoAllocateRequest {
-                supernet_id: sn.id.clone(),
-                prefix_length: 24,
-                count: Some(3),
-                status: None,
-                resource_id: None,
-                resource_type: None,
-                name: None,
-                description: None,
-                environment: None,
-                owner: None,
-                parent_allocation_id: None,
-                tags: None,
-                ttl_seconds: None,
-            })
+            .allocate_auto(
+                TEST_TENANT,
+                &AutoAllocateRequest {
+                    supernet_id: sn.id.clone(),
+                    prefix_length: 24,
+                    count: Some(3),
+                    status: None,
+                    resource_id: None,
+                    resource_type: None,
+                    name: None,
+                    description: None,
+                    environment: None,
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: None,
+                    ttl_seconds: None,
+                },
+            )
             .await
             .unwrap();
 
@@ -1445,28 +1457,34 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(TEST_TENANT, &CreateSupernet {
-                cidr: "10.0.0.0/24".to_string(),
-                name: None,
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "10.0.0.0/24".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
-        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
-            supernet_id: sn.id.clone(),
-            cidr: "10.0.0.0/25".to_string(),
-            status: None,
-            resource_id: None,
-            resource_type: None,
-            name: None,
-            description: None,
-            environment: None,
-            owner: None,
-            parent_allocation_id: None,
-            tags: None,
-            ttl_seconds: None,
-        })
+        ops.allocate_specific(
+            TEST_TENANT,
+            &CreateAllocation {
+                supernet_id: sn.id.clone(),
+                cidr: "10.0.0.0/25".to_string(),
+                status: None,
+                resource_id: None,
+                resource_type: None,
+                name: None,
+                description: None,
+                environment: None,
+                owner: None,
+                parent_allocation_id: None,
+                tags: None,
+                ttl_seconds: None,
+            },
+        )
         .await
         .unwrap();
 
@@ -1488,28 +1506,34 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(TEST_TENANT, &CreateSupernet {
-                cidr: "10.0.0.0/24".to_string(),
-                name: None,
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "10.0.0.0/24".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
-        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
-            supernet_id: sn.id.clone(),
-            cidr: "10.0.0.0/25".to_string(),
-            status: None,
-            resource_id: None,
-            resource_type: None,
-            name: None,
-            description: None,
-            environment: None,
-            owner: None,
-            parent_allocation_id: None,
-            tags: None,
-            ttl_seconds: None,
-        })
+        ops.allocate_specific(
+            TEST_TENANT,
+            &CreateAllocation {
+                supernet_id: sn.id.clone(),
+                cidr: "10.0.0.0/25".to_string(),
+                status: None,
+                resource_id: None,
+                resource_type: None,
+                name: None,
+                description: None,
+                environment: None,
+                owner: None,
+                parent_allocation_id: None,
+                tags: None,
+                ttl_seconds: None,
+            },
+        )
         .await
         .unwrap();
 
@@ -1524,56 +1548,22 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(TEST_TENANT, &CreateSupernet {
-                cidr: "10.0.0.0/8".to_string(),
-                name: None,
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "10.0.0.0/8".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
-        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
-            supernet_id: sn.id.clone(),
-            cidr: "10.0.1.0/24".to_string(),
-            status: None,
-            resource_id: None,
-            resource_type: None,
-            name: None,
-            description: None,
-            environment: None,
-            owner: None,
-            parent_allocation_id: None,
-            tags: None,
-            ttl_seconds: None,
-        })
-        .await
-        .unwrap();
-
-        let found = ops.find_by_ip(TEST_TENANT,"10.0.1.50").await.unwrap();
-        assert_eq!(found.len(), 1);
-        assert_eq!(found[0].cidr, "10.0.1.0/24");
-
-        let not_found = ops.find_by_ip(TEST_TENANT,"10.0.2.50").await.unwrap();
-        assert!(not_found.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_release_frees_space() {
-        let ops = test_ops().await;
-
-        let sn = ops
-            .create_supernet(TEST_TENANT, &CreateSupernet {
-                cidr: "10.0.0.0/24".to_string(),
-                name: None,
-                description: None,
-            })
-            .await
-            .unwrap();
-
-        let a1 = ops
-            .allocate_specific(TEST_TENANT, &CreateAllocation {
+        ops.allocate_specific(
+            TEST_TENANT,
+            &CreateAllocation {
                 supernet_id: sn.id.clone(),
-                cidr: "10.0.0.0/25".to_string(),
+                cidr: "10.0.1.0/24".to_string(),
                 status: None,
                 resource_id: None,
                 resource_type: None,
@@ -1584,24 +1574,73 @@ mod tests {
                 parent_allocation_id: None,
                 tags: None,
                 ttl_seconds: None,
-            })
+            },
+        )
+        .await
+        .unwrap();
+
+        let found = ops.find_by_ip(TEST_TENANT, "10.0.1.50").await.unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].cidr, "10.0.1.0/24");
+
+        let not_found = ops.find_by_ip(TEST_TENANT, "10.0.2.50").await.unwrap();
+        assert!(not_found.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_release_frees_space() {
+        let ops = test_ops().await;
+
+        let sn = ops
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "10.0.0.0/24".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
-        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
-            supernet_id: sn.id.clone(),
-            cidr: "10.0.0.128/25".to_string(),
-            status: None,
-            resource_id: None,
-            resource_type: None,
-            name: None,
-            description: None,
-            environment: None,
-            owner: None,
-            parent_allocation_id: None,
-            tags: None,
-            ttl_seconds: None,
-        })
+        let a1 = ops
+            .allocate_specific(
+                TEST_TENANT,
+                &CreateAllocation {
+                    supernet_id: sn.id.clone(),
+                    cidr: "10.0.0.0/25".to_string(),
+                    status: None,
+                    resource_id: None,
+                    resource_type: None,
+                    name: None,
+                    description: None,
+                    environment: None,
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: None,
+                    ttl_seconds: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        ops.allocate_specific(
+            TEST_TENANT,
+            &CreateAllocation {
+                supernet_id: sn.id.clone(),
+                cidr: "10.0.0.128/25".to_string(),
+                status: None,
+                resource_id: None,
+                resource_type: None,
+                name: None,
+                description: None,
+                environment: None,
+                owner: None,
+                parent_allocation_id: None,
+                tags: None,
+                ttl_seconds: None,
+            },
+        )
         .await
         .unwrap();
 
@@ -1614,21 +1653,24 @@ mod tests {
 
         // Now auto-allocate should find the freed space
         let allocs = ops
-            .allocate_auto(TEST_TENANT, &AutoAllocateRequest {
-                supernet_id: sn.id.clone(),
-                prefix_length: 25,
-                count: Some(1),
-                status: None,
-                resource_id: None,
-                resource_type: None,
-                name: None,
-                description: None,
-                environment: None,
-                owner: None,
-                parent_allocation_id: None,
-                tags: None,
-                ttl_seconds: None,
-            })
+            .allocate_auto(
+                TEST_TENANT,
+                &AutoAllocateRequest {
+                    supernet_id: sn.id.clone(),
+                    prefix_length: 25,
+                    count: Some(1),
+                    status: None,
+                    resource_id: None,
+                    resource_type: None,
+                    name: None,
+                    description: None,
+                    environment: None,
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: None,
+                    ttl_seconds: None,
+                },
+            )
             .await
             .unwrap();
 
@@ -1641,20 +1683,46 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(TEST_TENANT, &CreateSupernet {
-                cidr: "10.0.0.0/24".to_string(),
-                name: None,
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "10.0.0.0/24".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
         // Active allocation
         let a1 = ops
-            .allocate_specific(TEST_TENANT, &CreateAllocation {
+            .allocate_specific(
+                TEST_TENANT,
+                &CreateAllocation {
+                    supernet_id: sn.id.clone(),
+                    cidr: "10.0.0.0/26".to_string(),
+                    status: None,
+                    resource_id: None,
+                    resource_type: None,
+                    name: None,
+                    description: None,
+                    environment: None,
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: None,
+                    ttl_seconds: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        // Reserved allocation
+        ops.allocate_specific(
+            TEST_TENANT,
+            &CreateAllocation {
                 supernet_id: sn.id.clone(),
-                cidr: "10.0.0.0/26".to_string(),
-                status: None,
+                cidr: "10.0.0.64/26".to_string(),
+                status: Some(AllocationStatus::Reserved),
                 resource_id: None,
                 resource_type: None,
                 name: None,
@@ -1664,25 +1732,8 @@ mod tests {
                 parent_allocation_id: None,
                 tags: None,
                 ttl_seconds: None,
-            })
-            .await
-            .unwrap();
-
-        // Reserved allocation
-        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
-            supernet_id: sn.id.clone(),
-            cidr: "10.0.0.64/26".to_string(),
-            status: Some(AllocationStatus::Reserved),
-            resource_id: None,
-            resource_type: None,
-            name: None,
-            description: None,
-            environment: None,
-            owner: None,
-            parent_allocation_id: None,
-            tags: None,
-            ttl_seconds: None,
-        })
+            },
+        )
         .await
         .unwrap();
 
@@ -1706,30 +1757,36 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(TEST_TENANT, &CreateSupernet {
-                cidr: "10.0.0.0/24".to_string(),
-                name: None,
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "10.0.0.0/24".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
         // Allocate with TTL of 0 seconds (already expired)
         let alloc = ops
-            .allocate_specific(TEST_TENANT, &CreateAllocation {
-                supernet_id: sn.id.clone(),
-                cidr: "10.0.0.0/25".to_string(),
-                status: None,
-                resource_id: None,
-                resource_type: None,
-                name: None,
-                description: None,
-                environment: None,
-                owner: None,
-                parent_allocation_id: None,
-                tags: None,
-                ttl_seconds: Some(0),
-            })
+            .allocate_specific(
+                TEST_TENANT,
+                &CreateAllocation {
+                    supernet_id: sn.id.clone(),
+                    cidr: "10.0.0.0/25".to_string(),
+                    status: None,
+                    resource_id: None,
+                    resource_type: None,
+                    name: None,
+                    description: None,
+                    environment: None,
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: None,
+                    ttl_seconds: Some(0),
+                },
+            )
             .await
             .unwrap();
 
@@ -1753,28 +1810,34 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(TEST_TENANT, &CreateSupernet {
-                cidr: "10.0.0.0/8".to_string(),
-                name: Some("Corp".to_string()),
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "10.0.0.0/8".to_string(),
+                    name: Some("Corp".to_string()),
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
-        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
-            supernet_id: sn.id.clone(),
-            cidr: "10.0.0.0/24".to_string(),
-            status: None,
-            resource_id: Some("vpc-1".to_string()),
-            resource_type: None,
-            name: Some("web".to_string()),
-            description: None,
-            environment: None,
-            owner: None,
-            parent_allocation_id: None,
-            tags: None,
-            ttl_seconds: None,
-        })
+        ops.allocate_specific(
+            TEST_TENANT,
+            &CreateAllocation {
+                supernet_id: sn.id.clone(),
+                cidr: "10.0.0.0/24".to_string(),
+                status: None,
+                resource_id: Some("vpc-1".to_string()),
+                resource_type: None,
+                name: Some("web".to_string()),
+                description: None,
+                environment: None,
+                owner: None,
+                parent_allocation_id: None,
+                tags: None,
+                ttl_seconds: None,
+            },
+        )
         .await
         .unwrap();
 
@@ -1812,11 +1875,14 @@ mod tests {
     async fn test_load_rejects_non_empty_store() {
         let ops = test_ops().await;
 
-        ops.create_supernet(TEST_TENANT, &CreateSupernet {
-            cidr: "10.0.0.0/8".to_string(),
-            name: None,
-            description: None,
-        })
+        ops.create_supernet(
+            TEST_TENANT,
+            &CreateSupernet {
+                cidr: "10.0.0.0/8".to_string(),
+                name: None,
+                description: None,
+            },
+        )
         .await
         .unwrap();
 
@@ -1895,30 +1961,36 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(TEST_TENANT, &CreateSupernet {
-                cidr: "2001:db8::/32".to_string(),
-                name: None,
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "2001:db8::/32".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
         // Try to allocate an IPv4 CIDR in an IPv6 supernet
         let err = ops
-            .allocate_specific(TEST_TENANT, &CreateAllocation {
-                supernet_id: sn.id.clone(),
-                cidr: "10.0.0.0/24".to_string(),
-                status: None,
-                resource_id: None,
-                resource_type: None,
-                name: None,
-                description: None,
-                environment: None,
-                owner: None,
-                parent_allocation_id: None,
-                tags: None,
-                ttl_seconds: None,
-            })
+            .allocate_specific(
+                TEST_TENANT,
+                &CreateAllocation {
+                    supernet_id: sn.id.clone(),
+                    cidr: "10.0.0.0/24".to_string(),
+                    status: None,
+                    resource_id: None,
+                    resource_type: None,
+                    name: None,
+                    description: None,
+                    environment: None,
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: None,
+                    ttl_seconds: None,
+                },
+            )
             .await
             .unwrap_err();
 
@@ -1932,29 +2004,35 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(TEST_TENANT, &CreateSupernet {
-                cidr: "10.0.0.0/8".to_string(),
-                name: None,
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "10.0.0.0/8".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
         let err = ops
-            .allocate_specific(TEST_TENANT, &CreateAllocation {
-                supernet_id: sn.id.clone(),
-                cidr: "2001:db8::/48".to_string(),
-                status: None,
-                resource_id: None,
-                resource_type: None,
-                name: None,
-                description: None,
-                environment: None,
-                owner: None,
-                parent_allocation_id: None,
-                tags: None,
-                ttl_seconds: None,
-            })
+            .allocate_specific(
+                TEST_TENANT,
+                &CreateAllocation {
+                    supernet_id: sn.id.clone(),
+                    cidr: "2001:db8::/48".to_string(),
+                    status: None,
+                    resource_id: None,
+                    resource_type: None,
+                    name: None,
+                    description: None,
+                    environment: None,
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: None,
+                    ttl_seconds: None,
+                },
+            )
             .await
             .unwrap_err();
 
@@ -1966,30 +2044,36 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(TEST_TENANT, &CreateSupernet {
-                cidr: "10.0.0.0/8".to_string(),
-                name: None,
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "10.0.0.0/8".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
         let err = ops
-            .allocate_auto(TEST_TENANT, &AutoAllocateRequest {
-                supernet_id: sn.id.clone(),
-                prefix_length: 33,
-                count: Some(1),
-                status: None,
-                resource_id: None,
-                resource_type: None,
-                name: None,
-                description: None,
-                environment: None,
-                owner: None,
-                parent_allocation_id: None,
-                tags: None,
-                ttl_seconds: None,
-            })
+            .allocate_auto(
+                TEST_TENANT,
+                &AutoAllocateRequest {
+                    supernet_id: sn.id.clone(),
+                    prefix_length: 33,
+                    count: Some(1),
+                    status: None,
+                    resource_id: None,
+                    resource_type: None,
+                    name: None,
+                    description: None,
+                    environment: None,
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: None,
+                    ttl_seconds: None,
+                },
+            )
             .await
             .unwrap_err();
 
@@ -2006,11 +2090,14 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(TEST_TENANT, &CreateSupernet {
-                cidr: "2001:db8::/32".to_string(),
-                name: Some("IPv6 Corp".to_string()),
-                description: Some("Test IPv6 supernet".to_string()),
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "2001:db8::/32".to_string(),
+                    name: Some("IPv6 Corp".to_string()),
+                    description: Some("Test IPv6 supernet".to_string()),
+                },
+            )
             .await
             .unwrap();
 
@@ -2024,20 +2111,26 @@ mod tests {
     async fn test_ipv6_supernet_overlap_rejected() {
         let ops = test_ops().await;
 
-        ops.create_supernet(TEST_TENANT, &CreateSupernet {
-            cidr: "2001:db8::/32".to_string(),
-            name: None,
-            description: None,
-        })
+        ops.create_supernet(
+            TEST_TENANT,
+            &CreateSupernet {
+                cidr: "2001:db8::/32".to_string(),
+                name: None,
+                description: None,
+            },
+        )
         .await
         .unwrap();
 
         let err = ops
-            .create_supernet(TEST_TENANT, &CreateSupernet {
-                cidr: "2001:db8:1000::/36".to_string(),
-                name: None,
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "2001:db8:1000::/36".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap_err();
 
@@ -2049,29 +2142,35 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(TEST_TENANT, &CreateSupernet {
-                cidr: "2001:db8::/32".to_string(),
-                name: None,
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "2001:db8::/32".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
         let alloc = ops
-            .allocate_specific(TEST_TENANT, &CreateAllocation {
-                supernet_id: sn.id.clone(),
-                cidr: "2001:db8::/48".to_string(),
-                status: None,
-                resource_id: Some("vpc-v6".to_string()),
-                resource_type: None,
-                name: Some("web-v6".to_string()),
-                description: None,
-                environment: Some("prod".to_string()),
-                owner: None,
-                parent_allocation_id: None,
-                tags: None,
-                ttl_seconds: None,
-            })
+            .allocate_specific(
+                TEST_TENANT,
+                &CreateAllocation {
+                    supernet_id: sn.id.clone(),
+                    cidr: "2001:db8::/48".to_string(),
+                    status: None,
+                    resource_id: Some("vpc-v6".to_string()),
+                    resource_type: None,
+                    name: Some("web-v6".to_string()),
+                    description: None,
+                    environment: Some("prod".to_string()),
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: None,
+                    ttl_seconds: None,
+                },
+            )
             .await
             .unwrap();
 
@@ -2085,36 +2184,22 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(TEST_TENANT, &CreateSupernet {
-                cidr: "2001:db8::/32".to_string(),
-                name: None,
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "2001:db8::/32".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
-        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
-            supernet_id: sn.id.clone(),
-            cidr: "2001:db8::/48".to_string(),
-            status: None,
-            resource_id: None,
-            resource_type: None,
-            name: None,
-            description: None,
-            environment: None,
-            owner: None,
-            parent_allocation_id: None,
-            tags: None,
-            ttl_seconds: None,
-        })
-        .await
-        .unwrap();
-
-        // Overlapping: /64 within the /48
-        let err = ops
-            .allocate_specific(TEST_TENANT, &CreateAllocation {
+        ops.allocate_specific(
+            TEST_TENANT,
+            &CreateAllocation {
                 supernet_id: sn.id.clone(),
-                cidr: "2001:db8::/64".to_string(),
+                cidr: "2001:db8::/48".to_string(),
                 status: None,
                 resource_id: None,
                 resource_type: None,
@@ -2125,7 +2210,30 @@ mod tests {
                 parent_allocation_id: None,
                 tags: None,
                 ttl_seconds: None,
-            })
+            },
+        )
+        .await
+        .unwrap();
+
+        // Overlapping: /64 within the /48
+        let err = ops
+            .allocate_specific(
+                TEST_TENANT,
+                &CreateAllocation {
+                    supernet_id: sn.id.clone(),
+                    cidr: "2001:db8::/64".to_string(),
+                    status: None,
+                    resource_id: None,
+                    resource_type: None,
+                    name: None,
+                    description: None,
+                    environment: None,
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: None,
+                    ttl_seconds: None,
+                },
+            )
             .await
             .unwrap_err();
 
@@ -2137,38 +2245,23 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(TEST_TENANT, &CreateSupernet {
-                cidr: "2001:db8::/32".to_string(),
-                name: None,
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "2001:db8::/32".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
         // Manually allocate first /48
-        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
-            supernet_id: sn.id.clone(),
-            cidr: "2001:db8::/48".to_string(),
-            status: None,
-            resource_id: None,
-            resource_type: None,
-            name: None,
-            description: None,
-            environment: None,
-            owner: None,
-            parent_allocation_id: None,
-            tags: None,
-            ttl_seconds: None,
-        })
-        .await
-        .unwrap();
-
-        // Auto-allocate next 3 /48s
-        let allocs = ops
-            .allocate_auto(TEST_TENANT, &AutoAllocateRequest {
+        ops.allocate_specific(
+            TEST_TENANT,
+            &CreateAllocation {
                 supernet_id: sn.id.clone(),
-                prefix_length: 48,
-                count: Some(3),
+                cidr: "2001:db8::/48".to_string(),
                 status: None,
                 resource_id: None,
                 resource_type: None,
@@ -2179,7 +2272,31 @@ mod tests {
                 parent_allocation_id: None,
                 tags: None,
                 ttl_seconds: None,
-            })
+            },
+        )
+        .await
+        .unwrap();
+
+        // Auto-allocate next 3 /48s
+        let allocs = ops
+            .allocate_auto(
+                TEST_TENANT,
+                &AutoAllocateRequest {
+                    supernet_id: sn.id.clone(),
+                    prefix_length: 48,
+                    count: Some(3),
+                    status: None,
+                    resource_id: None,
+                    resource_type: None,
+                    name: None,
+                    description: None,
+                    environment: None,
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: None,
+                    ttl_seconds: None,
+                },
+            )
             .await
             .unwrap();
 
@@ -2195,28 +2312,34 @@ mod tests {
 
         // Use a small /126 supernet (4 addresses) for easy math
         let sn = ops
-            .create_supernet(TEST_TENANT, &CreateSupernet {
-                cidr: "2001:db8::/126".to_string(),
-                name: None,
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "2001:db8::/126".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
-        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
-            supernet_id: sn.id.clone(),
-            cidr: "2001:db8::/127".to_string(),
-            status: None,
-            resource_id: None,
-            resource_type: None,
-            name: None,
-            description: None,
-            environment: None,
-            owner: None,
-            parent_allocation_id: None,
-            tags: None,
-            ttl_seconds: None,
-        })
+        ops.allocate_specific(
+            TEST_TENANT,
+            &CreateAllocation {
+                supernet_id: sn.id.clone(),
+                cidr: "2001:db8::/127".to_string(),
+                status: None,
+                resource_id: None,
+                resource_type: None,
+                name: None,
+                description: None,
+                environment: None,
+                owner: None,
+                parent_allocation_id: None,
+                tags: None,
+                ttl_seconds: None,
+            },
+        )
         .await
         .unwrap();
 
@@ -2232,33 +2355,42 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(TEST_TENANT, &CreateSupernet {
-                cidr: "2001:db8::/46".to_string(),
-                name: None,
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "2001:db8::/46".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
         // Allocate the first /48
-        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
-            supernet_id: sn.id.clone(),
-            cidr: "2001:db8::/48".to_string(),
-            status: None,
-            resource_id: None,
-            resource_type: None,
-            name: None,
-            description: None,
-            environment: None,
-            owner: None,
-            parent_allocation_id: None,
-            tags: None,
-            ttl_seconds: None,
-        })
+        ops.allocate_specific(
+            TEST_TENANT,
+            &CreateAllocation {
+                supernet_id: sn.id.clone(),
+                cidr: "2001:db8::/48".to_string(),
+                status: None,
+                resource_id: None,
+                resource_type: None,
+                name: None,
+                description: None,
+                environment: None,
+                owner: None,
+                parent_allocation_id: None,
+                tags: None,
+                ttl_seconds: None,
+            },
+        )
         .await
         .unwrap();
 
-        let report = ops.free_blocks(TEST_TENANT, &sn.id, Some(48)).await.unwrap();
+        let report = ops
+            .free_blocks(TEST_TENANT, &sn.id, Some(48))
+            .await
+            .unwrap();
         // /46 has 4 /48s; we allocated 1, so 3 free
         assert_eq!(report.blocks.len(), 3);
         assert_eq!(report.blocks[0].cidr, "2001:db8:1::/48");
@@ -2271,56 +2403,22 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(TEST_TENANT, &CreateSupernet {
-                cidr: "2001:db8::/32".to_string(),
-                name: None,
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "2001:db8::/32".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
-        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
-            supernet_id: sn.id.clone(),
-            cidr: "2001:db8:1::/48".to_string(),
-            status: None,
-            resource_id: None,
-            resource_type: None,
-            name: None,
-            description: None,
-            environment: None,
-            owner: None,
-            parent_allocation_id: None,
-            tags: None,
-            ttl_seconds: None,
-        })
-        .await
-        .unwrap();
-
-        let found = ops.find_by_ip(TEST_TENANT,"2001:db8:1::50").await.unwrap();
-        assert_eq!(found.len(), 1);
-        assert_eq!(found[0].cidr, "2001:db8:1::/48");
-
-        let not_found = ops.find_by_ip(TEST_TENANT,"2001:db8:2::1").await.unwrap();
-        assert!(not_found.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_ipv6_release_frees_space() {
-        let ops = test_ops().await;
-
-        let sn = ops
-            .create_supernet(TEST_TENANT, &CreateSupernet {
-                cidr: "2001:db8::/126".to_string(),
-                name: None,
-                description: None,
-            })
-            .await
-            .unwrap();
-
-        let a1 = ops
-            .allocate_specific(TEST_TENANT, &CreateAllocation {
+        ops.allocate_specific(
+            TEST_TENANT,
+            &CreateAllocation {
                 supernet_id: sn.id.clone(),
-                cidr: "2001:db8::/127".to_string(),
+                cidr: "2001:db8:1::/48".to_string(),
                 status: None,
                 resource_id: None,
                 resource_type: None,
@@ -2331,24 +2429,73 @@ mod tests {
                 parent_allocation_id: None,
                 tags: None,
                 ttl_seconds: None,
-            })
+            },
+        )
+        .await
+        .unwrap();
+
+        let found = ops.find_by_ip(TEST_TENANT, "2001:db8:1::50").await.unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].cidr, "2001:db8:1::/48");
+
+        let not_found = ops.find_by_ip(TEST_TENANT, "2001:db8:2::1").await.unwrap();
+        assert!(not_found.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_ipv6_release_frees_space() {
+        let ops = test_ops().await;
+
+        let sn = ops
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "2001:db8::/126".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
-        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
-            supernet_id: sn.id.clone(),
-            cidr: "2001:db8::2/127".to_string(),
-            status: None,
-            resource_id: None,
-            resource_type: None,
-            name: None,
-            description: None,
-            environment: None,
-            owner: None,
-            parent_allocation_id: None,
-            tags: None,
-            ttl_seconds: None,
-        })
+        let a1 = ops
+            .allocate_specific(
+                TEST_TENANT,
+                &CreateAllocation {
+                    supernet_id: sn.id.clone(),
+                    cidr: "2001:db8::/127".to_string(),
+                    status: None,
+                    resource_id: None,
+                    resource_type: None,
+                    name: None,
+                    description: None,
+                    environment: None,
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: None,
+                    ttl_seconds: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        ops.allocate_specific(
+            TEST_TENANT,
+            &CreateAllocation {
+                supernet_id: sn.id.clone(),
+                cidr: "2001:db8::2/127".to_string(),
+                status: None,
+                resource_id: None,
+                resource_type: None,
+                name: None,
+                description: None,
+                environment: None,
+                owner: None,
+                parent_allocation_id: None,
+                tags: None,
+                ttl_seconds: None,
+            },
+        )
         .await
         .unwrap();
 
@@ -2361,21 +2508,24 @@ mod tests {
 
         // Auto-allocate should reclaim it
         let allocs = ops
-            .allocate_auto(TEST_TENANT, &AutoAllocateRequest {
-                supernet_id: sn.id.clone(),
-                prefix_length: 127,
-                count: Some(1),
-                status: None,
-                resource_id: None,
-                resource_type: None,
-                name: None,
-                description: None,
-                environment: None,
-                owner: None,
-                parent_allocation_id: None,
-                tags: None,
-                ttl_seconds: None,
-            })
+            .allocate_auto(
+                TEST_TENANT,
+                &AutoAllocateRequest {
+                    supernet_id: sn.id.clone(),
+                    prefix_length: 127,
+                    count: Some(1),
+                    status: None,
+                    resource_id: None,
+                    resource_type: None,
+                    name: None,
+                    description: None,
+                    environment: None,
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: None,
+                    ttl_seconds: None,
+                },
+            )
             .await
             .unwrap();
 
@@ -2812,11 +2962,14 @@ mod tests {
         let ops = test_ops_concurrent(db.to_str().unwrap()).await;
 
         let sn = ops
-            .create_supernet(TEST_TENANT, &CreateSupernet {
-                cidr: "10.0.0.0/16".to_string(),
-                name: Some("concurrent-test".to_string()),
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "10.0.0.0/16".to_string(),
+                    name: Some("concurrent-test".to_string()),
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
@@ -2831,21 +2984,24 @@ mod tests {
 
             handles.push(tokio::spawn(async move {
                 barrier.wait().await;
-                ops.allocate_auto(TEST_TENANT, &AutoAllocateRequest {
-                    supernet_id: sn_id,
-                    prefix_length: 24,
-                    count: Some(1),
-                    status: None,
-                    resource_id: None,
-                    resource_type: None,
-                    name: None,
-                    description: None,
-                    environment: None,
-                    owner: None,
-                    parent_allocation_id: None,
-                    tags: None,
-                    ttl_seconds: None,
-                })
+                ops.allocate_auto(
+                    TEST_TENANT,
+                    &AutoAllocateRequest {
+                        supernet_id: sn_id,
+                        prefix_length: 24,
+                        count: Some(1),
+                        status: None,
+                        resource_id: None,
+                        resource_type: None,
+                        name: None,
+                        description: None,
+                        environment: None,
+                        owner: None,
+                        parent_allocation_id: None,
+                        tags: None,
+                        ttl_seconds: None,
+                    },
+                )
                 .await
             }));
         }
@@ -2901,11 +3057,14 @@ mod tests {
         let ops = test_ops_concurrent(db.to_str().unwrap()).await;
 
         let sn = ops
-            .create_supernet(TEST_TENANT, &CreateSupernet {
-                cidr: "10.0.0.0/16".to_string(),
-                name: None,
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "10.0.0.0/16".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
@@ -2920,20 +3079,23 @@ mod tests {
 
             handles.push(tokio::spawn(async move {
                 barrier.wait().await;
-                ops.allocate_specific(TEST_TENANT, &CreateAllocation {
-                    supernet_id: sn_id,
-                    cidr: "10.0.1.0/24".to_string(),
-                    status: None,
-                    resource_id: None,
-                    resource_type: None,
-                    name: None,
-                    description: None,
-                    environment: None,
-                    owner: None,
-                    parent_allocation_id: None,
-                    tags: None,
-                    ttl_seconds: None,
-                })
+                ops.allocate_specific(
+                    TEST_TENANT,
+                    &CreateAllocation {
+                        supernet_id: sn_id,
+                        cidr: "10.0.1.0/24".to_string(),
+                        status: None,
+                        resource_id: None,
+                        resource_type: None,
+                        name: None,
+                        description: None,
+                        environment: None,
+                        owner: None,
+                        parent_allocation_id: None,
+                        tags: None,
+                        ttl_seconds: None,
+                    },
+                )
                 .await
             }));
         }
@@ -2952,10 +3114,13 @@ mod tests {
         // before either writes, so we might get 2 successes (TOCTOU).
         // But the end state must be consistent: verify via the store.
         let allocs = ops
-            .list_allocations(TEST_TENANT, &AllocationFilter {
-                supernet_id: Some(sn.id.clone()),
-                ..Default::default()
-            })
+            .list_allocations(
+                TEST_TENANT,
+                &AllocationFilter {
+                    supernet_id: Some(sn.id.clone()),
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
 
@@ -2994,30 +3159,36 @@ mod tests {
         let ops = test_ops_concurrent(db.to_str().unwrap()).await;
 
         let sn = ops
-            .create_supernet(TEST_TENANT, &CreateSupernet {
-                cidr: "10.0.0.0/24".to_string(),
-                name: None,
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "10.0.0.0/24".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
         // Pre-allocate the first /25 block
         let existing = ops
-            .allocate_specific(TEST_TENANT, &CreateAllocation {
-                supernet_id: sn.id.clone(),
-                cidr: "10.0.0.0/25".to_string(),
-                status: None,
-                resource_id: None,
-                resource_type: None,
-                name: None,
-                description: None,
-                environment: None,
-                owner: None,
-                parent_allocation_id: None,
-                tags: None,
-                ttl_seconds: None,
-            })
+            .allocate_specific(
+                TEST_TENANT,
+                &CreateAllocation {
+                    supernet_id: sn.id.clone(),
+                    cidr: "10.0.0.0/25".to_string(),
+                    status: None,
+                    resource_id: None,
+                    resource_type: None,
+                    name: None,
+                    description: None,
+                    environment: None,
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: None,
+                    ttl_seconds: None,
+                },
+            )
             .await
             .unwrap();
 
@@ -3038,20 +3209,23 @@ mod tests {
         let b2 = Arc::clone(&barrier);
         let alloc_handle = tokio::spawn(async move {
             b2.wait().await;
-            ops2.allocate_specific(TEST_TENANT, &CreateAllocation {
-                supernet_id: sn_id,
-                cidr: "10.0.0.128/25".to_string(),
-                status: None,
-                resource_id: None,
-                resource_type: None,
-                name: None,
-                description: None,
-                environment: None,
-                owner: None,
-                parent_allocation_id: None,
-                tags: None,
-                ttl_seconds: None,
-            })
+            ops2.allocate_specific(
+                TEST_TENANT,
+                &CreateAllocation {
+                    supernet_id: sn_id,
+                    cidr: "10.0.0.128/25".to_string(),
+                    status: None,
+                    resource_id: None,
+                    resource_type: None,
+                    name: None,
+                    description: None,
+                    environment: None,
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: None,
+                    ttl_seconds: None,
+                },
+            )
             .await
         });
 
@@ -3069,10 +3243,13 @@ mod tests {
 
         // Verify final state: one released, one active
         let all = ops
-            .list_allocations(TEST_TENANT, &AllocationFilter {
-                supernet_id: Some(sn.id.clone()),
-                ..Default::default()
-            })
+            .list_allocations(
+                TEST_TENANT,
+                &AllocationFilter {
+                    supernet_id: Some(sn.id.clone()),
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
 
@@ -3112,11 +3289,14 @@ mod tests {
 
             handles.push(tokio::spawn(async move {
                 barrier.wait().await;
-                ops.create_supernet(TEST_TENANT, &CreateSupernet {
-                    cidr,
-                    name: None,
-                    description: None,
-                })
+                ops.create_supernet(
+                    TEST_TENANT,
+                    &CreateSupernet {
+                        cidr,
+                        name: None,
+                        description: None,
+                    },
+                )
                 .await
             }));
         }
@@ -3181,10 +3361,13 @@ mod tests {
     async fn test_query_audit_rejects_entity_id_with_path_traversal() {
         let ops = test_ops().await;
         let err = ops
-            .query_audit(TEST_TENANT, &AuditFilter {
-                entity_id: Some("../etc/passwd".to_string()),
-                ..Default::default()
-            })
+            .query_audit(
+                TEST_TENANT,
+                &AuditFilter {
+                    entity_id: Some("../etc/passwd".to_string()),
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap_err();
         assert!(matches!(err, NetcidrError::InvalidInput(_)));
@@ -3194,10 +3377,13 @@ mod tests {
     async fn test_query_audit_rejects_entity_id_with_null_byte() {
         let ops = test_ops().await;
         let err = ops
-            .query_audit(TEST_TENANT, &AuditFilter {
-                entity_id: Some("id\x00injected".to_string()),
-                ..Default::default()
-            })
+            .query_audit(
+                TEST_TENANT,
+                &AuditFilter {
+                    entity_id: Some("id\x00injected".to_string()),
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap_err();
         assert!(matches!(err, NetcidrError::InvalidInput(_)));
@@ -3207,10 +3393,13 @@ mod tests {
     async fn test_query_audit_rejects_entity_type_with_control_char() {
         let ops = test_ops().await;
         let err = ops
-            .query_audit(TEST_TENANT, &AuditFilter {
-                entity_type: Some("supernet\x01injected".to_string()),
-                ..Default::default()
-            })
+            .query_audit(
+                TEST_TENANT,
+                &AuditFilter {
+                    entity_type: Some("supernet\x01injected".to_string()),
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap_err();
         assert!(matches!(err, NetcidrError::InvalidInput(_)));
@@ -3220,10 +3409,13 @@ mod tests {
     async fn test_query_audit_rejects_action_with_control_char() {
         let ops = test_ops().await;
         let err = ops
-            .query_audit(TEST_TENANT, &AuditFilter {
-                action: Some("create\x07bell".to_string()),
-                ..Default::default()
-            })
+            .query_audit(
+                TEST_TENANT,
+                &AuditFilter {
+                    action: Some("create\x07bell".to_string()),
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap_err();
         assert!(matches!(err, NetcidrError::InvalidInput(_)));
@@ -3233,10 +3425,13 @@ mod tests {
     async fn test_query_audit_rejects_oversized_entity_type() {
         let ops = test_ops().await;
         let err = ops
-            .query_audit(TEST_TENANT, &AuditFilter {
-                entity_type: Some("x".repeat(1025)),
-                ..Default::default()
-            })
+            .query_audit(
+                TEST_TENANT,
+                &AuditFilter {
+                    entity_type: Some("x".repeat(1025)),
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap_err();
         assert!(matches!(err, NetcidrError::InputTooLong { .. }));
@@ -3247,12 +3442,15 @@ mod tests {
         let ops = test_ops().await;
         // No entries, but valid filter should not error.
         let entries = ops
-            .query_audit(TEST_TENANT, &AuditFilter {
-                entity_type: Some("supernet".to_string()),
-                entity_id: Some("sn-abc123".to_string()),
-                action: Some("create_supernet".to_string()),
-                limit: Some(10),
-            })
+            .query_audit(
+                TEST_TENANT,
+                &AuditFilter {
+                    entity_type: Some("supernet".to_string()),
+                    entity_id: Some("sn-abc123".to_string()),
+                    action: Some("create_supernet".to_string()),
+                    limit: Some(10),
+                },
+            )
             .await
             .unwrap();
         assert!(entries.is_empty());

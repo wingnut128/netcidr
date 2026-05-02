@@ -62,6 +62,9 @@ pub fn json_request(
         builder = builder.header(header::CONTENT_TYPE, "application/json");
     }
     builder
-        .body(body.map(|b| Body::from(b.to_string())).unwrap_or_else(Body::empty))
+        .body(
+            body.map(|b| Body::from(b.to_string()))
+                .unwrap_or_else(Body::empty),
+        )
         .unwrap()
 }

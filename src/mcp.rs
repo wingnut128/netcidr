@@ -89,7 +89,10 @@ impl McpIpamBackend {
         prefix: Option<u8>,
     ) -> crate::error::Result<FreeBlocksReport> {
         match self {
-            Self::Local(ops) => ops.free_blocks(MCP_LOCAL_TENANT_ID, supernet_id, prefix).await,
+            Self::Local(ops) => {
+                ops.free_blocks(MCP_LOCAL_TENANT_ID, supernet_id, prefix)
+                    .await
+            }
             Self::Remote(client) => client.free_blocks(supernet_id, prefix).await,
         }
     }
@@ -143,7 +146,10 @@ impl McpIpamBackend {
         supernet_id: Option<&str>,
     ) -> crate::error::Result<AllocationSummary> {
         match self {
-            Self::Local(ops) => ops.allocation_summary(MCP_LOCAL_TENANT_ID, supernet_id).await,
+            Self::Local(ops) => {
+                ops.allocation_summary(MCP_LOCAL_TENANT_ID, supernet_id)
+                    .await
+            }
             Self::Remote(client) => client.allocation_summary(supernet_id).await,
         }
     }

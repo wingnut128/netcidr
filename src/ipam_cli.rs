@@ -69,11 +69,14 @@ pub async fn handle_ipam_command(
                 description,
             } => {
                 let sn = ops
-                    .create_supernet(CLI_TENANT_ID, &CreateSupernet {
-                        cidr,
-                        name,
-                        description,
-                    })
+                    .create_supernet(
+                        CLI_TENANT_ID,
+                        &CreateSupernet {
+                            cidr,
+                            name,
+                            description,
+                        },
+                    )
                     .await?;
                 output_result(writer, output_file, &sn);
             }
@@ -110,20 +113,23 @@ pub async fn handle_ipam_command(
         } => {
             let status = parse_status(&status)?;
             let alloc = ops
-                .allocate_specific(CLI_TENANT_ID, &CreateAllocation {
-                    supernet_id,
-                    cidr,
-                    status,
-                    resource_id,
-                    resource_type,
-                    name,
-                    description,
-                    environment,
-                    owner,
-                    parent_allocation_id: parent_id,
-                    tags: None,
-                    ttl_seconds: ttl,
-                })
+                .allocate_specific(
+                    CLI_TENANT_ID,
+                    &CreateAllocation {
+                        supernet_id,
+                        cidr,
+                        status,
+                        resource_id,
+                        resource_type,
+                        name,
+                        description,
+                        environment,
+                        owner,
+                        parent_allocation_id: parent_id,
+                        tags: None,
+                        ttl_seconds: ttl,
+                    },
+                )
                 .await?;
             output_result(writer, output_file, &alloc);
         }
@@ -144,21 +150,24 @@ pub async fn handle_ipam_command(
         } => {
             let status = parse_status(&status)?;
             let allocs = ops
-                .allocate_auto(CLI_TENANT_ID, &AutoAllocateRequest {
-                    supernet_id,
-                    prefix_length: prefix,
-                    count: Some(count),
-                    status,
-                    resource_id,
-                    resource_type,
-                    name,
-                    description,
-                    environment,
-                    owner,
-                    parent_allocation_id: parent_id,
-                    tags: None,
-                    ttl_seconds: ttl,
-                })
+                .allocate_auto(
+                    CLI_TENANT_ID,
+                    &AutoAllocateRequest {
+                        supernet_id,
+                        prefix_length: prefix,
+                        count: Some(count),
+                        status,
+                        resource_id,
+                        resource_type,
+                        name,
+                        description,
+                        environment,
+                        owner,
+                        parent_allocation_id: parent_id,
+                        tags: None,
+                        ttl_seconds: ttl,
+                    },
+                )
                 .await?;
             let result = AllocationList {
                 count: allocs.len(),
@@ -182,14 +191,17 @@ pub async fn handle_ipam_command(
             } => {
                 let status = parse_status(&status)?;
                 let allocs = ops
-                    .list_allocations(CLI_TENANT_ID, &AllocationFilter {
-                        supernet_id,
-                        status,
-                        resource_id,
-                        resource_type,
-                        environment,
-                        owner,
-                    })
+                    .list_allocations(
+                        CLI_TENANT_ID,
+                        &AllocationFilter {
+                            supernet_id,
+                            status,
+                            resource_id,
+                            resource_type,
+                            environment,
+                            owner,
+                        },
+                    )
                     .await?;
                 let result = AllocationList {
                     count: allocs.len(),
@@ -270,12 +282,15 @@ pub async fn handle_ipam_command(
             limit,
         } => {
             let entries = ops
-                .query_audit(CLI_TENANT_ID, &AuditFilter {
-                    entity_type,
-                    entity_id,
-                    action,
-                    limit: Some(limit),
-                })
+                .query_audit(
+                    CLI_TENANT_ID,
+                    &AuditFilter {
+                        entity_type,
+                        entity_id,
+                        action,
+                        limit: Some(limit),
+                    },
+                )
                 .await?;
             let result = AuditList {
                 count: entries.len(),
@@ -335,7 +350,8 @@ pub async fn handle_ipam_command(
                 tags,
             } => {
                 let parsed_tags = parse_tags(&tags)?;
-                ops.set_tags(CLI_TENANT_ID, &allocation_id, &parsed_tags).await?;
+                ops.set_tags(CLI_TENANT_ID, &allocation_id, &parsed_tags)
+                    .await?;
                 let alloc = ops.get_allocation(CLI_TENANT_ID, &allocation_id).await?;
                 output_result(writer, output_file, &alloc);
             }

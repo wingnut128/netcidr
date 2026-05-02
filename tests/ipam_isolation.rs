@@ -68,7 +68,10 @@ async fn send(
         builder = builder.header("Idempotency-Key", k);
     }
     let req = builder
-        .body(body.map(|b| Body::from(b.to_string())).unwrap_or_else(Body::empty))
+        .body(
+            body.map(|b| Body::from(b.to_string()))
+                .unwrap_or_else(Body::empty),
+        )
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
     let status = resp.status();
@@ -101,7 +104,12 @@ async fn create_supernet(app: &axum::Router, tenant: &str, cidr: &str) -> String
         None,
     )
     .await;
-    assert_eq!(r.status, StatusCode::CREATED, "create_supernet failed: {:?}", r.body);
+    assert_eq!(
+        r.status,
+        StatusCode::CREATED,
+        "create_supernet failed: {:?}",
+        r.body
+    );
     r.body["id"].as_str().unwrap().to_string()
 }
 
@@ -113,7 +121,10 @@ async fn supernets_are_isolated_per_tenant() {
     // B sees zero supernets.
     let r = send(&app, "GET", "/ipam/supernets", TENANT_B, None, None).await;
     assert_eq!(r.status, StatusCode::OK);
-    assert_eq!(r.body["count"], 0, "tenant B must not see tenant A's supernet");
+    assert_eq!(
+        r.body["count"], 0,
+        "tenant B must not see tenant A's supernet"
+    );
 
     // A sees its own one supernet.
     let r = send(&app, "GET", "/ipam/supernets", TENANT_A, None, None).await;
@@ -220,7 +231,10 @@ async fn audit_log_is_isolated_per_tenant() {
     let r = send(&app, "GET", "/ipam/audit", TENANT_A, None, None).await;
     assert_eq!(r.status, StatusCode::OK);
     let entries = r.body["entries"].as_array().expect("entries array");
-    assert!(!entries.is_empty(), "tenant A must see its own audit entries");
+    assert!(
+        !entries.is_empty(),
+        "tenant A must see its own audit entries"
+    );
 }
 
 #[tokio::test]

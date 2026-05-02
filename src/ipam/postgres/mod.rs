@@ -59,14 +59,13 @@ impl PostgresStore {
         tenant_id: &str,
         allocation_id: &str,
     ) -> Result<()> {
-        let row = sqlx::query(
-            "SELECT COUNT(*) as cnt FROM allocations WHERE id = $1 AND tenant_id = $2",
-        )
-        .bind(allocation_id)
-        .bind(tenant_id)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        let row =
+            sqlx::query("SELECT COUNT(*) as cnt FROM allocations WHERE id = $1 AND tenant_id = $2")
+                .bind(allocation_id)
+                .bind(tenant_id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         let cnt: i64 = row.get("cnt");
         if cnt == 0 {
             return Err(NetcidrError::AllocationNotFound(allocation_id.to_string()));
@@ -155,11 +154,7 @@ impl IpamStore for PostgresStore {
 
     // --- supernets ---
 
-    async fn create_supernet(
-        &self,
-        tenant_id: &str,
-        input: &CreateSupernet,
-    ) -> Result<Supernet> {
+    async fn create_supernet(&self, tenant_id: &str, input: &CreateSupernet) -> Result<Supernet> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = Self::now();
         let (network, broadcast, prefix, total, ip_version) = parse_cidr_metadata(&input.cidr)?;
@@ -265,14 +260,13 @@ impl IpamStore for PostgresStore {
 
     async fn delete_supernet(&self, tenant_id: &str, id: &str) -> Result<()> {
         // Verify supernet exists in this tenant; cross-tenant ⇒ NotFound.
-        let exists_row = sqlx::query(
-            "SELECT COUNT(*) as cnt FROM supernets WHERE id = $1 AND tenant_id = $2",
-        )
-        .bind(id)
-        .bind(tenant_id)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        let exists_row =
+            sqlx::query("SELECT COUNT(*) as cnt FROM supernets WHERE id = $1 AND tenant_id = $2")
+                .bind(id)
+                .bind(tenant_id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         let exists_cnt: i64 = exists_row.get("cnt");
         if exists_cnt == 0 {
             return Err(NetcidrError::SupernetNotFound(id.to_string()));
@@ -345,14 +339,13 @@ impl IpamStore for PostgresStore {
         // Application-level cross-tenant invariant: confirm the parent
         // supernet belongs to this tenant. NotFound (not Forbidden) hides
         // existence. The DB trigger is belt-and-suspenders.
-        let supernet_row = sqlx::query(
-            "SELECT COUNT(*) as cnt FROM supernets WHERE id = $1 AND tenant_id = $2",
-        )
-        .bind(&input.supernet_id)
-        .bind(tenant_id)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        let supernet_row =
+            sqlx::query("SELECT COUNT(*) as cnt FROM supernets WHERE id = $1 AND tenant_id = $2")
+                .bind(&input.supernet_id)
+                .bind(tenant_id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         let supernet_cnt: i64 = supernet_row.get("cnt");
         if supernet_cnt == 0 {
             return Err(NetcidrError::SupernetNotFound(input.supernet_id.clone()));
@@ -641,12 +634,7 @@ impl IpamStore for PostgresStore {
 
     // --- tags ---
 
-    async fn set_tags(
-        &self,
-        tenant_id: &str,
-        allocation_id: &str,
-        tags: &[Tag],
-    ) -> Result<()> {
+    async fn set_tags(&self, tenant_id: &str, allocation_id: &str, tags: &[Tag]) -> Result<()> {
         self.assert_allocation_in_tenant(tenant_id, allocation_id)
             .await?;
 
@@ -698,11 +686,7 @@ impl IpamStore for PostgresStore {
         Ok(())
     }
 
-    async fn query_audit(
-        &self,
-        tenant_id: &str,
-        filter: &AuditFilter,
-    ) -> Result<Vec<AuditEntry>> {
+    async fn query_audit(&self, tenant_id: &str, filter: &AuditFilter) -> Result<Vec<AuditEntry>> {
         let mut sql = String::from(
             "SELECT id, tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id FROM audit_log WHERE tenant_id = $1",
         );

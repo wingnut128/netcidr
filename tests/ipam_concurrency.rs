@@ -45,20 +45,23 @@ async fn concurrent_allocate_specific_same_cidr_yields_exactly_one_winner() {
         let ops = Arc::clone(&ops);
         let sn_id = sn_id.clone();
         handles.push(tokio::spawn(async move {
-            ops.allocate_specific(TEST_TENANT, &CreateAllocation {
-                supernet_id: sn_id,
-                cidr: "10.0.1.0/24".to_string(),
-                status: None,
-                resource_id: None,
-                resource_type: None,
-                name: None,
-                description: None,
-                environment: None,
-                owner: None,
-                parent_allocation_id: None,
-                tags: None,
-                ttl_seconds: None,
-            })
+            ops.allocate_specific(
+                TEST_TENANT,
+                &CreateAllocation {
+                    supernet_id: sn_id,
+                    cidr: "10.0.1.0/24".to_string(),
+                    status: None,
+                    resource_id: None,
+                    resource_type: None,
+                    name: None,
+                    description: None,
+                    environment: None,
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: None,
+                    ttl_seconds: None,
+                },
+            )
             .await
         }));
     }
@@ -88,21 +91,24 @@ async fn concurrent_auto_allocate_produces_no_overlaps() {
         let ops = Arc::clone(&ops);
         let sn_id = sn_id.clone();
         handles.push(tokio::spawn(async move {
-            ops.allocate_auto(TEST_TENANT, &AutoAllocateRequest {
-                supernet_id: sn_id,
-                prefix_length: 24,
-                count: Some(1),
-                status: None,
-                resource_id: None,
-                resource_type: None,
-                name: None,
-                description: None,
-                environment: None,
-                owner: None,
-                parent_allocation_id: None,
-                tags: None,
-                ttl_seconds: None,
-            })
+            ops.allocate_auto(
+                TEST_TENANT,
+                &AutoAllocateRequest {
+                    supernet_id: sn_id,
+                    prefix_length: 24,
+                    count: Some(1),
+                    status: None,
+                    resource_id: None,
+                    resource_type: None,
+                    name: None,
+                    description: None,
+                    environment: None,
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: None,
+                    ttl_seconds: None,
+                },
+            )
             .await
         }));
     }

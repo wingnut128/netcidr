@@ -17,11 +17,7 @@ pub trait IpamStore: Send + Sync {
     async fn migrate(&self) -> Result<()>;
 
     // --- supernets ---
-    async fn create_supernet(
-        &self,
-        tenant_id: &str,
-        input: &CreateSupernet,
-    ) -> Result<Supernet>;
+    async fn create_supernet(&self, tenant_id: &str, input: &CreateSupernet) -> Result<Supernet>;
     async fn get_supernet(&self, tenant_id: &str, id: &str) -> Result<Supernet>;
     async fn list_supernets(&self, tenant_id: &str) -> Result<Vec<Supernet>>;
     async fn delete_supernet(&self, tenant_id: &str, id: &str) -> Result<()>;
@@ -53,22 +49,13 @@ pub trait IpamStore: Send + Sync {
     ) -> Result<Vec<Allocation>>;
 
     // --- tags ---
-    async fn set_tags(
-        &self,
-        tenant_id: &str,
-        allocation_id: &str,
-        tags: &[Tag],
-    ) -> Result<()>;
+    async fn set_tags(&self, tenant_id: &str, allocation_id: &str, tags: &[Tag]) -> Result<()>;
     async fn get_tags(&self, tenant_id: &str, allocation_id: &str) -> Result<Vec<Tag>>;
 
     // --- audit ---
     /// `entry.tenant_id` is the source of truth (already populated by caller).
     async fn append_audit(&self, entry: &AuditEntry) -> Result<()>;
-    async fn query_audit(
-        &self,
-        tenant_id: &str,
-        filter: &AuditFilter,
-    ) -> Result<Vec<AuditEntry>>;
+    async fn query_audit(&self, tenant_id: &str, filter: &AuditFilter) -> Result<Vec<AuditEntry>>;
 
     // --- idempotency ---
     async fn idempotency_get(
