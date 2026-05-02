@@ -18,6 +18,8 @@ use netcidr::ipam::operations::IpamOps;
 use netcidr::ipam::postgres::PostgresStore;
 use netcidr::ipam::store::IpamStore;
 
+const TEST_TENANT: &str = "test@example.com";
+
 const CONTAINER_NAME: &str = "netcidr-test-pg";
 const PG_PORT: u16 = 15432;
 const PG_DB: &str = "netcidr_test";
@@ -128,11 +130,14 @@ async fn test_postgres_backend() {
 
 async fn supernet_crud(store: &PostgresStore) {
     let sn = store
-        .create_supernet(&CreateSupernet {
-            cidr: "10.0.0.0/8".to_string(),
-            name: Some("RFC1918 Class A".to_string()),
-            description: None,
-        })
+        .create_supernet(
+            TEST_TENANT,
+            &CreateSupernet {
+                cidr: "10.0.0.0/8".to_string(),
+                name: Some("RFC1918 Class A".to_string()),
+                description: None,
+            },
+        )
         .await
         .unwrap();
     assert_eq!(sn.cidr, "10.0.0.0/8");
@@ -141,47 +146,53 @@ async fn supernet_crud(store: &PostgresStore) {
     assert_eq!(sn.prefix_length, 8);
     assert_eq!(sn.ip_version, 4);
 
-    let fetched = store.get_supernet(&sn.id).await.unwrap();
+    let fetched = store.get_supernet(TEST_TENANT, &sn.id).await.unwrap();
     assert_eq!(fetched.cidr, "10.0.0.0/8");
     assert_eq!(fetched.name, Some("RFC1918 Class A".to_string()));
 
-    let all = store.list_supernets().await.unwrap();
+    let all = store.list_supernets(TEST_TENANT).await.unwrap();
     assert!(all.iter().any(|s| s.id == sn.id));
 
-    store.delete_supernet(&sn.id).await.unwrap();
-    let err = store.get_supernet(&sn.id).await;
+    store.delete_supernet(TEST_TENANT, &sn.id).await.unwrap();
+    let err = store.get_supernet(TEST_TENANT, &sn.id).await;
     assert!(err.is_err());
 }
 
 async fn allocation_lifecycle(store: &PostgresStore) {
     let sn = store
-        .create_supernet(&CreateSupernet {
-            cidr: "172.16.0.0/12".to_string(),
-            name: Some("Private".to_string()),
-            description: None,
-        })
+        .create_supernet(
+            TEST_TENANT,
+            &CreateSupernet {
+                cidr: "172.16.0.0/12".to_string(),
+                name: Some("Private".to_string()),
+                description: None,
+            },
+        )
         .await
         .unwrap();
 
     // Allocate with tags
     let alloc = store
-        .create_allocation(&CreateAllocation {
-            supernet_id: sn.id.clone(),
-            cidr: "172.16.0.0/24".to_string(),
-            status: None,
-            resource_id: Some("vpc-abc".to_string()),
-            resource_type: Some("vpc".to_string()),
-            name: Some("web-tier".to_string()),
-            description: None,
-            environment: Some("production".to_string()),
-            owner: Some("platform".to_string()),
-            parent_allocation_id: None,
-            tags: Some(vec![Tag {
-                key: "team".to_string(),
-                value: "infra".to_string(),
-            }]),
-            ttl_seconds: None,
-        })
+        .create_allocation(
+            TEST_TENANT,
+            &CreateAllocation {
+                supernet_id: sn.id.clone(),
+                cidr: "172.16.0.0/24".to_string(),
+                status: None,
+                resource_id: Some("vpc-abc".to_string()),
+                resource_type: Some("vpc".to_string()),
+                name: Some("web-tier".to_string()),
+                description: None,
+                environment: Some("production".to_string()),
+                owner: Some("platform".to_string()),
+                parent_allocation_id: None,
+                tags: Some(vec![Tag {
+                    key: "team".to_string(),
+                    value: "infra".to_string(),
+                }]),
+                ttl_seconds: None,
+            },
+        )
         .await
         .unwrap();
     assert_eq!(alloc.status, AllocationStatus::Active);
@@ -189,7 +200,7 @@ async fn allocation_lifecycle(store: &PostgresStore) {
     assert_eq!(alloc.prefix_length, 24);
 
     // Get
-    let fetched = store.get_allocation(&alloc.id).await.unwrap();
+    let fetched = store.get_allocation(TEST_TENANT, &alloc.id).await.unwrap();
     assert_eq!(fetched.resource_id, Some("vpc-abc".to_string()));
     assert_eq!(fetched.tags.len(), 1);
     assert_eq!(fetched.tags[0].key, "team");
@@ -197,6 +208,7 @@ async fn allocation_lifecycle(store: &PostgresStore) {
     // Update
     let updated = store
         .update_allocation(
+            TEST_TENANT,
             &alloc.id,
             &UpdateAllocation {
                 name: None,
@@ -215,23 +227,30 @@ async fn allocation_lifecycle(store: &PostgresStore) {
 
     // List with filter
     let filtered = store
-        .list_allocations(&AllocationFilter {
-            supernet_id: Some(sn.id.clone()),
-            status: Some(AllocationStatus::Active),
-            ..Default::default()
-        })
+        .list_allocations(
+            TEST_TENANT,
+            &AllocationFilter {
+                supernet_id: Some(sn.id.clone()),
+                status: Some(AllocationStatus::Active),
+                ..Default::default()
+            },
+        )
         .await
         .unwrap();
     assert_eq!(filtered.len(), 1);
 
     // Release
-    let released = store.release_allocation(&alloc.id).await.unwrap();
+    let released = store
+        .release_allocation(TEST_TENANT, &alloc.id)
+        .await
+        .unwrap();
     assert_eq!(released.status, AllocationStatus::Released);
     assert!(released.released_at.is_some());
 
     // Find by status — should be empty (all released)
     let active = store
         .find_allocations_in_supernet(
+            TEST_TENANT,
             &sn.id,
             &[AllocationStatus::Active, AllocationStatus::Reserved],
         )
@@ -240,40 +259,47 @@ async fn allocation_lifecycle(store: &PostgresStore) {
     assert!(active.is_empty());
 
     // Delete supernet (allocations are released)
-    store.delete_supernet(&sn.id).await.unwrap();
+    store.delete_supernet(TEST_TENANT, &sn.id).await.unwrap();
 }
 
 async fn tags(store: &PostgresStore) {
     let sn = store
-        .create_supernet(&CreateSupernet {
-            cidr: "192.168.0.0/16".to_string(),
-            name: None,
-            description: None,
-        })
+        .create_supernet(
+            TEST_TENANT,
+            &CreateSupernet {
+                cidr: "192.168.0.0/16".to_string(),
+                name: None,
+                description: None,
+            },
+        )
         .await
         .unwrap();
 
     let alloc = store
-        .create_allocation(&CreateAllocation {
-            supernet_id: sn.id.clone(),
-            cidr: "192.168.1.0/24".to_string(),
-            status: None,
-            resource_id: None,
-            resource_type: None,
-            name: None,
-            description: None,
-            environment: None,
-            owner: None,
-            parent_allocation_id: None,
-            tags: None,
-            ttl_seconds: None,
-        })
+        .create_allocation(
+            TEST_TENANT,
+            &CreateAllocation {
+                supernet_id: sn.id.clone(),
+                cidr: "192.168.1.0/24".to_string(),
+                status: None,
+                resource_id: None,
+                resource_type: None,
+                name: None,
+                description: None,
+                environment: None,
+                owner: None,
+                parent_allocation_id: None,
+                tags: None,
+                ttl_seconds: None,
+            },
+        )
         .await
         .unwrap();
 
     // Set tags
     store
         .set_tags(
+            TEST_TENANT,
             &alloc.id,
             &[
                 Tag {
@@ -288,12 +314,13 @@ async fn tags(store: &PostgresStore) {
         )
         .await
         .unwrap();
-    let tags = store.get_tags(&alloc.id).await.unwrap();
+    let tags = store.get_tags(TEST_TENANT, &alloc.id).await.unwrap();
     assert_eq!(tags.len(), 2);
 
     // Replace tags
     store
         .set_tags(
+            TEST_TENANT,
             &alloc.id,
             &[Tag {
                 key: "env".to_string(),
@@ -302,19 +329,23 @@ async fn tags(store: &PostgresStore) {
         )
         .await
         .unwrap();
-    let tags = store.get_tags(&alloc.id).await.unwrap();
+    let tags = store.get_tags(TEST_TENANT, &alloc.id).await.unwrap();
     assert_eq!(tags.len(), 1);
     assert_eq!(tags[0].value, "staging");
 
     // Cleanup
-    store.release_allocation(&alloc.id).await.unwrap();
-    store.delete_supernet(&sn.id).await.unwrap();
+    store
+        .release_allocation(TEST_TENANT, &alloc.id)
+        .await
+        .unwrap();
+    store.delete_supernet(TEST_TENANT, &sn.id).await.unwrap();
 }
 
 async fn audit_log(store: &PostgresStore) {
     store
         .append_audit(&AuditEntry {
             id: String::new(),
+            tenant_id: TEST_TENANT.to_string(),
             entity_type: "supernet".to_string(),
             entity_id: "sn-1".to_string(),
             action: "create_supernet".to_string(),
@@ -328,6 +359,7 @@ async fn audit_log(store: &PostgresStore) {
     store
         .append_audit(&AuditEntry {
             id: String::new(),
+            tenant_id: TEST_TENANT.to_string(),
             entity_type: "allocation".to_string(),
             entity_id: "alloc-1".to_string(),
             action: "allocate".to_string(),
@@ -339,15 +371,21 @@ async fn audit_log(store: &PostgresStore) {
         .unwrap();
 
     // Query all
-    let entries = store.query_audit(&AuditFilter::default()).await.unwrap();
+    let entries = store
+        .query_audit(TEST_TENANT, &AuditFilter::default())
+        .await
+        .unwrap();
     assert!(entries.len() >= 2);
 
     // Query filtered by entity_id
     let entries = store
-        .query_audit(&AuditFilter {
-            entity_id: Some("sn-1".to_string()),
-            ..Default::default()
-        })
+        .query_audit(
+            TEST_TENANT,
+            &AuditFilter {
+                entity_id: Some("sn-1".to_string()),
+                ..Default::default()
+            },
+        )
         .await
         .unwrap();
     assert_eq!(entries.len(), 1);
@@ -355,10 +393,13 @@ async fn audit_log(store: &PostgresStore) {
 
     // Query with limit
     let entries = store
-        .query_audit(&AuditFilter {
-            limit: Some(1),
-            ..Default::default()
-        })
+        .query_audit(
+            TEST_TENANT,
+            &AuditFilter {
+                limit: Some(1),
+                ..Default::default()
+            },
+        )
         .await
         .unwrap();
     assert_eq!(entries.len(), 1);
@@ -368,31 +409,37 @@ async fn operations_layer(store: PostgresStore) {
     let ops = IpamOps::new(Arc::new(store));
 
     let sn = ops
-        .create_supernet(&CreateSupernet {
-            cidr: "10.100.0.0/16".to_string(),
-            name: Some("ops-test".to_string()),
-            description: None,
-        })
+        .create_supernet(
+            TEST_TENANT,
+            &CreateSupernet {
+                cidr: "10.100.0.0/16".to_string(),
+                name: Some("ops-test".to_string()),
+                description: None,
+            },
+        )
         .await
         .unwrap();
 
     // Auto-allocate 3 x /24
     let allocs = ops
-        .allocate_auto(&AutoAllocateRequest {
-            supernet_id: sn.id.clone(),
-            prefix_length: 24,
-            count: Some(3),
-            status: None,
-            resource_id: None,
-            resource_type: None,
-            name: None,
-            description: None,
-            environment: None,
-            owner: None,
-            parent_allocation_id: None,
-            tags: None,
-            ttl_seconds: None,
-        })
+        .allocate_auto(
+            TEST_TENANT,
+            &AutoAllocateRequest {
+                supernet_id: sn.id.clone(),
+                prefix_length: 24,
+                count: Some(3),
+                status: None,
+                resource_id: None,
+                resource_type: None,
+                name: None,
+                description: None,
+                environment: None,
+                owner: None,
+                parent_allocation_id: None,
+                tags: None,
+                ttl_seconds: None,
+            },
+        )
         .await
         .unwrap();
     assert_eq!(allocs.len(), 3);
@@ -401,12 +448,12 @@ async fn operations_layer(store: PostgresStore) {
     assert_eq!(allocs[2].cidr, "10.100.2.0/24");
 
     // Utilization
-    let util = ops.utilization(&sn.id).await.unwrap();
+    let util = ops.utilization(TEST_TENANT, &sn.id).await.unwrap();
     assert_eq!(util.allocation_count, 3);
     assert!(util.utilization_percent > 0.0);
 
     // Free blocks
-    let free = ops.free_blocks(&sn.id, None).await.unwrap();
+    let free = ops.free_blocks(TEST_TENANT, &sn.id, None).await.unwrap();
     assert!(!free.blocks.is_empty());
     assert!(free.total_free > 0);
 }

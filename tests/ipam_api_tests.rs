@@ -11,18 +11,22 @@ use netcidr::ipam::sqlite::SqliteStore;
 use netcidr::ipam::store::IpamStore;
 use tower::ServiceExt;
 
+mod common;
+use common::{TENANT_HEADER, TEST_TENANT, with_test_tenant};
+
 async fn ipam_app() -> axum::Router {
     let store = SqliteStore::in_memory().unwrap();
     store.initialize().await.unwrap();
     store.migrate().await.unwrap();
     let ops = Arc::new(IpamOps::new(Arc::new(store)));
-    create_router(RouterConfig {
+    let router = create_router(RouterConfig {
         server: ServerConfig {
             rate_limit_per_second: 0,
             ..Default::default()
         },
         ipam_ops: Some(ops),
-    })
+    });
+    with_test_tenant(router)
 }
 
 async fn req(
@@ -31,7 +35,10 @@ async fn req(
     uri: &str,
     body: Option<&str>,
 ) -> (StatusCode, serde_json::Value) {
-    let builder = Request::builder().method(method).uri(uri);
+    let builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(TENANT_HEADER, TEST_TENANT);
     let req = if let Some(b) = body {
         builder
             .header(header::CONTENT_TYPE, "application/json")

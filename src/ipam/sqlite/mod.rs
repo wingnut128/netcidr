@@ -10,7 +10,7 @@ use std::path::Path;
 use crate::error::{NetcidrError, Result};
 use crate::ipam::models::*;
 use crate::ipam::store::IpamStore;
-use crate::ipam::{parse_cidr_metadata, read_total_hosts, total_hosts_as_i64};
+use crate::ipam::{parse_cidr_metadata, read_total_hosts};
 
 type ConnPool = Pool<SqliteConnectionManager>;
 
@@ -59,6 +59,13 @@ impl SqliteStore {
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))
     }
 
+    /// Test-only access to the underlying connection pool, used by migration
+    /// tests that need to issue raw SQL outside the normal `IpamStore` API.
+    #[cfg(test)]
+    pub(crate) fn pool(&self) -> &ConnPool {
+        &self.pool
+    }
+
     fn now() -> String {
         Utc::now().to_rfc3339()
     }
@@ -88,16 +95,16 @@ impl SqliteStore {
         let status = status_str
             .parse::<AllocationStatus>()
             .unwrap_or(AllocationStatus::Active);
-        let total_hosts_i64: i64 = row.get("total_hosts")?;
-        let total_hosts_text: Option<String> = row.get("total_hosts_text")?;
+        let total_hosts_text: String = row.get("total_hosts")?;
         Ok(Allocation {
             id: row.get("id")?,
+            tenant_id: row.get("tenant_id")?,
             supernet_id: row.get("supernet_id")?,
             cidr: row.get("cidr")?,
             network_address: row.get("network_address")?,
             broadcast_address: row.get("broadcast_address")?,
             prefix_length: row.get::<_, u8>("prefix_length")?,
-            total_hosts: read_total_hosts(total_hosts_text, total_hosts_i64),
+            total_hosts: read_total_hosts(Some(total_hosts_text), 0),
             status,
             resource_id: row.get("resource_id")?,
             resource_type: row.get("resource_type")?,
@@ -112,6 +119,27 @@ impl SqliteStore {
             released_at: row.get("released_at")?,
             expires_at: row.get("expires_at")?,
         })
+    }
+
+    /// Verify that an allocation exists and belongs to the given tenant. Used
+    /// before reading or mutating tag tables (which don't carry tenant_id
+    /// directly).
+    fn assert_allocation_in_tenant(
+        conn: &rusqlite::Connection,
+        tenant_id: &str,
+        allocation_id: &str,
+    ) -> Result<()> {
+        let exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM allocations WHERE id = ?1 AND tenant_id = ?2",
+                params![allocation_id, tenant_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        if !exists {
+            return Err(NetcidrError::AllocationNotFound(allocation_id.to_string()));
+        }
+        Ok(())
     }
 }
 
@@ -160,7 +188,7 @@ impl IpamStore for SqliteStore {
 
     // --- supernets ---
 
-    async fn create_supernet(&self, input: &CreateSupernet) -> Result<Supernet> {
+    async fn create_supernet(&self, tenant_id: &str, input: &CreateSupernet) -> Result<Supernet> {
         let conn = self.conn()?;
         let id = uuid::Uuid::new_v4().to_string();
         let now = Self::now();
@@ -169,13 +197,14 @@ impl IpamStore for SqliteStore {
         let (network, broadcast, prefix, total, ip_version) = parse_cidr_metadata(&input.cidr)?;
 
         conn.execute(
-            "INSERT INTO supernets (id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, name, description, ip_version, created_at, updated_at)
+            "INSERT INTO supernets (id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-            params![id, input.cidr, network, broadcast, prefix, total_hosts_as_i64(total), total.to_string(), input.name, input.description, ip_version, now, now],
+            params![id, tenant_id, input.cidr, network, broadcast, prefix, total.to_string(), input.name, input.description, ip_version, now, now],
         ).map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         Ok(Supernet {
             id,
+            tenant_id: tenant_id.to_string(),
             cidr: input.cidr.clone(),
             network_address: network,
             broadcast_address: broadcast,
@@ -189,21 +218,21 @@ impl IpamStore for SqliteStore {
         })
     }
 
-    async fn get_supernet(&self, id: &str) -> Result<Supernet> {
+    async fn get_supernet(&self, tenant_id: &str, id: &str) -> Result<Supernet> {
         let conn = self.conn()?;
         conn.query_row(
-            "SELECT id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, name, description, ip_version, created_at, updated_at FROM supernets WHERE id = ?1",
-            params![id],
+            "SELECT id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM supernets WHERE id = ?1 AND tenant_id = ?2",
+            params![id, tenant_id],
             |row| {
-                let total_hosts_i64: i64 = row.get(5)?;
-                let total_hosts_text: Option<String> = row.get(6)?;
+                let total_hosts_text: String = row.get(6)?;
                 Ok(Supernet {
                     id: row.get(0)?,
-                    cidr: row.get(1)?,
-                    network_address: row.get(2)?,
-                    broadcast_address: row.get(3)?,
-                    prefix_length: row.get(4)?,
-                    total_hosts: read_total_hosts(total_hosts_text, total_hosts_i64),
+                    tenant_id: row.get(1)?,
+                    cidr: row.get(2)?,
+                    network_address: row.get(3)?,
+                    broadcast_address: row.get(4)?,
+                    prefix_length: row.get(5)?,
+                    total_hosts: read_total_hosts(Some(total_hosts_text), 0),
                     name: row.get(7)?,
                     description: row.get(8)?,
                     ip_version: row.get(9)?,
@@ -217,22 +246,22 @@ impl IpamStore for SqliteStore {
         })
     }
 
-    async fn list_supernets(&self) -> Result<Vec<Supernet>> {
+    async fn list_supernets(&self, tenant_id: &str) -> Result<Vec<Supernet>> {
         let conn = self.conn()?;
         let mut stmt = conn
-            .prepare("SELECT id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, name, description, ip_version, created_at, updated_at FROM supernets ORDER BY created_at")
+            .prepare("SELECT id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM supernets WHERE tenant_id = ?1 ORDER BY created_at")
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         let rows = stmt
-            .query_map([], |row| {
-                let total_hosts_i64: i64 = row.get(5)?;
-                let total_hosts_text: Option<String> = row.get(6)?;
+            .query_map(params![tenant_id], |row| {
+                let total_hosts_text: String = row.get(6)?;
                 Ok(Supernet {
                     id: row.get(0)?,
-                    cidr: row.get(1)?,
-                    network_address: row.get(2)?,
-                    broadcast_address: row.get(3)?,
-                    prefix_length: row.get(4)?,
-                    total_hosts: read_total_hosts(total_hosts_text, total_hosts_i64),
+                    tenant_id: row.get(1)?,
+                    cidr: row.get(2)?,
+                    network_address: row.get(3)?,
+                    broadcast_address: row.get(4)?,
+                    prefix_length: row.get(5)?,
+                    total_hosts: read_total_hosts(Some(total_hosts_text), 0),
                     name: row.get(7)?,
                     description: row.get(8)?,
                     ip_version: row.get(9)?,
@@ -246,14 +275,26 @@ impl IpamStore for SqliteStore {
         Ok(rows)
     }
 
-    async fn delete_supernet(&self, id: &str) -> Result<()> {
+    async fn delete_supernet(&self, tenant_id: &str, id: &str) -> Result<()> {
         let conn = self.conn()?;
+
+        // Verify supernet exists in this tenant first; cross-tenant ⇒ NotFound.
+        let exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM supernets WHERE id = ?1 AND tenant_id = ?2",
+                params![id, tenant_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        if !exists {
+            return Err(NetcidrError::SupernetNotFound(id.to_string()));
+        }
 
         // Check for active allocations
         let active_count: u32 = conn
             .query_row(
-                "SELECT COUNT(*) FROM allocations WHERE supernet_id = ?1 AND status != 'released'",
-                params![id],
+                "SELECT COUNT(*) FROM allocations WHERE supernet_id = ?1 AND tenant_id = ?2 AND status != 'released'",
+                params![id, tenant_id],
                 |row| row.get(0),
             )
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
@@ -264,18 +305,21 @@ impl IpamStore for SqliteStore {
 
         // Delete released allocations' tags, then allocations, then supernet
         conn.execute(
-            "DELETE FROM allocation_tags WHERE allocation_id IN (SELECT id FROM allocations WHERE supernet_id = ?1)",
-            params![id],
+            "DELETE FROM allocation_tags WHERE allocation_id IN (SELECT id FROM allocations WHERE supernet_id = ?1 AND tenant_id = ?2)",
+            params![id, tenant_id],
         ).map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         conn.execute(
-            "DELETE FROM allocations WHERE supernet_id = ?1",
-            params![id],
+            "DELETE FROM allocations WHERE supernet_id = ?1 AND tenant_id = ?2",
+            params![id, tenant_id],
         )
         .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         let deleted = conn
-            .execute("DELETE FROM supernets WHERE id = ?1", params![id])
+            .execute(
+                "DELETE FROM supernets WHERE id = ?1 AND tenant_id = ?2",
+                params![id, tenant_id],
+            )
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         if deleted == 0 {
@@ -286,7 +330,11 @@ impl IpamStore for SqliteStore {
 
     // --- allocations ---
 
-    async fn create_allocation(&self, input: &CreateAllocation) -> Result<Allocation> {
+    async fn create_allocation(
+        &self,
+        tenant_id: &str,
+        input: &CreateAllocation,
+    ) -> Result<Allocation> {
         let conn = self.conn()?;
         let id = uuid::Uuid::new_v4().to_string();
         let now = Self::now();
@@ -302,12 +350,27 @@ impl IpamStore for SqliteStore {
             .ttl_seconds
             .map(|ttl| (Utc::now() + chrono::Duration::seconds(ttl as i64)).to_rfc3339());
 
+        // Application-level cross-tenant invariant: confirm the parent
+        // supernet belongs to this tenant. Returning NotFound (not Forbidden)
+        // disguises cross-tenant references as missing rows. The DB trigger
+        // is belt-and-suspenders.
+        let supernet_in_tenant: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM supernets WHERE id = ?1 AND tenant_id = ?2",
+                params![input.supernet_id, tenant_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        if !supernet_in_tenant {
+            return Err(NetcidrError::SupernetNotFound(input.supernet_id.clone()));
+        }
+
         conn.execute(
-            "INSERT INTO allocations (id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, expires_at)
+            "INSERT INTO allocations (id, tenant_id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, expires_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
-                id, input.supernet_id, input.cidr, network, broadcast, prefix,
-                total_hosts_as_i64(total), total.to_string(),
+                id, tenant_id, input.supernet_id, input.cidr, network, broadcast, prefix,
+                total.to_string(),
                 input.resource_id, input.resource_type, input.name, input.description,
                 input.environment, input.owner, status, input.parent_allocation_id, now, now,
                 expires_at
@@ -328,6 +391,7 @@ impl IpamStore for SqliteStore {
         let tags = input.tags.clone().unwrap_or_default();
         Ok(Allocation {
             id,
+            tenant_id: tenant_id.to_string(),
             supernet_id: input.supernet_id.clone(),
             cidr: input.cidr.clone(),
             network_address: network,
@@ -350,12 +414,12 @@ impl IpamStore for SqliteStore {
         })
     }
 
-    async fn get_allocation(&self, id: &str) -> Result<Allocation> {
+    async fn get_allocation(&self, tenant_id: &str, id: &str) -> Result<Allocation> {
         let conn = self.conn()?;
         let mut alloc = conn
             .query_row(
-                "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = ?1",
-                params![id],
+                "SELECT id, tenant_id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = ?1 AND tenant_id = ?2",
+                params![id, tenant_id],
                 Self::row_to_allocation,
             )
             .map_err(|e| match e {
@@ -366,13 +430,18 @@ impl IpamStore for SqliteStore {
         Ok(alloc)
     }
 
-    async fn list_allocations(&self, filter: &AllocationFilter) -> Result<Vec<Allocation>> {
+    async fn list_allocations(
+        &self,
+        tenant_id: &str,
+        filter: &AllocationFilter,
+    ) -> Result<Vec<Allocation>> {
         let conn = self.conn()?;
         let mut sql = String::from(
-            "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE 1=1",
+            "SELECT id, tenant_id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE tenant_id = ?1",
         );
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-        let mut idx = 1;
+        param_values.push(Box::new(tenant_id.to_string()));
+        let mut idx = 2;
 
         if let Some(ref sid) = filter.supernet_id {
             sql.push_str(&format!(" AND supernet_id = ?{}", idx));
@@ -430,22 +499,17 @@ impl IpamStore for SqliteStore {
         Ok(allocations)
     }
 
-    async fn update_allocation(&self, id: &str, input: &UpdateAllocation) -> Result<Allocation> {
+    async fn update_allocation(
+        &self,
+        tenant_id: &str,
+        id: &str,
+        input: &UpdateAllocation,
+    ) -> Result<Allocation> {
         let conn = self.conn()?;
         let now = Self::now();
 
-        // Verify allocation exists
-        conn.query_row(
-            "SELECT id FROM allocations WHERE id = ?1",
-            params![id],
-            |_| Ok(()),
-        )
-        .map_err(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => {
-                NetcidrError::AllocationNotFound(id.to_string())
-            }
-            _ => NetcidrError::DatabaseError(e.to_string()),
-        })?;
+        // Verify allocation exists in this tenant
+        Self::assert_allocation_in_tenant(&conn, tenant_id, id)?;
 
         let mut sets = vec!["updated_at = ?1".to_string()];
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(now)];
@@ -476,16 +540,16 @@ impl IpamStore for SqliteStore {
             }
         }
 
+        let id_idx = idx;
+        let tenant_idx = idx + 1;
         let sql = format!(
-            "UPDATE allocations SET {} WHERE id = ?{}",
+            "UPDATE allocations SET {} WHERE id = ?{} AND tenant_id = ?{}",
             sets.join(", "),
-            idx
+            id_idx,
+            tenant_idx,
         );
         param_values.push(Box::new(id.to_string()));
-        #[allow(unused_assignments)]
-        {
-            idx += 1;
-        }
+        param_values.push(Box::new(tenant_id.to_string()));
 
         let params_refs: Vec<&dyn rusqlite::types::ToSql> =
             param_values.iter().map(|p| p.as_ref()).collect();
@@ -496,8 +560,8 @@ impl IpamStore for SqliteStore {
         // Fetch updated allocation using same connection
         let mut alloc = conn
             .query_row(
-                "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = ?1",
-                params![id],
+                "SELECT id, tenant_id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = ?1 AND tenant_id = ?2",
+                params![id, tenant_id],
                 Self::row_to_allocation,
             )
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
@@ -505,22 +569,23 @@ impl IpamStore for SqliteStore {
         Ok(alloc)
     }
 
-    async fn release_allocation(&self, id: &str) -> Result<Allocation> {
+    async fn release_allocation(&self, tenant_id: &str, id: &str) -> Result<Allocation> {
         let conn = self.conn()?;
         let now = Self::now();
 
         let updated = conn
             .execute(
-                "UPDATE allocations SET status = 'released', released_at = ?1, updated_at = ?1 WHERE id = ?2 AND status != 'released'",
-                params![now, id],
+                "UPDATE allocations SET status = 'released', released_at = ?1, updated_at = ?1 WHERE id = ?2 AND tenant_id = ?3 AND status != 'released'",
+                params![now, id, tenant_id],
             )
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         if updated == 0 {
+            // Either it doesn't exist (in this tenant) or it's already released.
             let exists: bool = conn
                 .query_row(
-                    "SELECT COUNT(*) > 0 FROM allocations WHERE id = ?1",
-                    params![id],
+                    "SELECT COUNT(*) > 0 FROM allocations WHERE id = ?1 AND tenant_id = ?2",
+                    params![id, tenant_id],
                     |row| row.get(0),
                 )
                 .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
@@ -532,8 +597,8 @@ impl IpamStore for SqliteStore {
         // Fetch using same connection to avoid pool exhaustion
         let mut alloc = conn
             .query_row(
-                "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = ?1",
-                params![id],
+                "SELECT id, tenant_id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = ?1 AND tenant_id = ?2",
+                params![id, tenant_id],
                 Self::row_to_allocation,
             )
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
@@ -543,6 +608,7 @@ impl IpamStore for SqliteStore {
 
     async fn find_allocations_in_supernet(
         &self,
+        tenant_id: &str,
         supernet_id: &str,
         statuses: &[AllocationStatus],
     ) -> Result<Vec<Allocation>> {
@@ -550,15 +616,17 @@ impl IpamStore for SqliteStore {
             return Ok(Vec::new());
         }
         let conn = self.conn()?;
+        // ?1 = supernet_id, ?2 = tenant_id, statuses start at ?3.
         let placeholders: Vec<String> =
-            (0..statuses.len()).map(|i| format!("?{}", i + 2)).collect();
+            (0..statuses.len()).map(|i| format!("?{}", i + 3)).collect();
         let sql = format!(
-            "SELECT id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, total_hosts_text, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE supernet_id = ?1 AND status IN ({}) ORDER BY network_address",
+            "SELECT id, tenant_id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE supernet_id = ?1 AND tenant_id = ?2 AND status IN ({}) ORDER BY network_address",
             placeholders.join(", ")
         );
 
         let mut params_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
         params_values.push(Box::new(supernet_id.to_string()));
+        params_values.push(Box::new(tenant_id.to_string()));
         for s in statuses {
             params_values.push(Box::new(s.to_string()));
         }
@@ -583,8 +651,10 @@ impl IpamStore for SqliteStore {
 
     // --- tags ---
 
-    async fn set_tags(&self, allocation_id: &str, tags: &[Tag]) -> Result<()> {
+    async fn set_tags(&self, tenant_id: &str, allocation_id: &str, tags: &[Tag]) -> Result<()> {
         let conn = self.conn()?;
+        Self::assert_allocation_in_tenant(&conn, tenant_id, allocation_id)?;
+
         conn.execute(
             "DELETE FROM allocation_tags WHERE allocation_id = ?1",
             params![allocation_id],
@@ -601,8 +671,9 @@ impl IpamStore for SqliteStore {
         Ok(())
     }
 
-    async fn get_tags(&self, allocation_id: &str) -> Result<Vec<Tag>> {
+    async fn get_tags(&self, tenant_id: &str, allocation_id: &str) -> Result<Vec<Tag>> {
         let conn = self.conn()?;
+        Self::assert_allocation_in_tenant(&conn, tenant_id, allocation_id)?;
         Self::load_tags_for_allocation(&conn, allocation_id)
     }
 
@@ -611,8 +682,9 @@ impl IpamStore for SqliteStore {
     async fn append_audit(&self, entry: &AuditEntry) -> Result<()> {
         let conn = self.conn()?;
         conn.execute(
-            "INSERT INTO audit_log (timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO audit_log (tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
+                entry.tenant_id,
                 entry.timestamp,
                 entry.action,
                 entry.entity_type,
@@ -627,13 +699,14 @@ impl IpamStore for SqliteStore {
         Ok(())
     }
 
-    async fn query_audit(&self, filter: &AuditFilter) -> Result<Vec<AuditEntry>> {
+    async fn query_audit(&self, tenant_id: &str, filter: &AuditFilter) -> Result<Vec<AuditEntry>> {
         let conn = self.conn()?;
         let mut sql = String::from(
-            "SELECT id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id FROM audit_log WHERE 1=1",
+            "SELECT id, tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id FROM audit_log WHERE tenant_id = ?1",
         );
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-        let mut idx = 1;
+        param_values.push(Box::new(tenant_id.to_string()));
+        let mut idx = 2;
 
         if let Some(ref et) = filter.entity_type {
             sql.push_str(&format!(" AND entity_type = ?{}", idx));
@@ -648,10 +721,7 @@ impl IpamStore for SqliteStore {
         if let Some(ref action) = filter.action {
             sql.push_str(&format!(" AND action = ?{}", idx));
             param_values.push(Box::new(action.clone()));
-            #[allow(unused_assignments)]
-            {
-                idx += 1;
-            }
+            idx += 1;
         }
 
         sql.push_str(" ORDER BY id DESC");
@@ -674,15 +744,16 @@ impl IpamStore for SqliteStore {
                 let id_int: i64 = row.get(0)?;
                 Ok(AuditEntry {
                     id: id_int.to_string(),
-                    timestamp: row.get(1)?,
-                    action: row.get(2)?,
-                    entity_type: row.get(3)?,
-                    entity_id: row.get(4)?,
-                    details: row.get(5)?,
-                    caller_sub: row.get(6)?,
-                    caller_email: row.get(7)?,
-                    source_ip: row.get(8)?,
-                    request_id: row.get(9)?,
+                    tenant_id: row.get(1)?,
+                    timestamp: row.get(2)?,
+                    action: row.get(3)?,
+                    entity_type: row.get(4)?,
+                    entity_id: row.get(5)?,
+                    details: row.get(6)?,
+                    caller_sub: row.get(7)?,
+                    caller_email: row.get(8)?,
+                    source_ip: row.get(9)?,
+                    request_id: row.get(10)?,
                 })
             })
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
@@ -691,43 +762,51 @@ impl IpamStore for SqliteStore {
         Ok(rows)
     }
 
-    async fn idempotency_get(&self, key: &str, scope: &str) -> Result<Option<IdempotencyRecord>> {
+    async fn idempotency_get(
+        &self,
+        tenant_id: &str,
+        key: &str,
+        scope: &str,
+    ) -> Result<Option<IdempotencyRecord>> {
         let conn = self.conn()?;
         let mut stmt = conn
             .prepare(
-                "SELECT key, scope, request_hash, status_code, response_body, created_at, expires_at \
-                 FROM idempotency_keys WHERE key = ?1 AND scope = ?2",
+                "SELECT tenant_id, key, scope, request_hash, status_code, response_body, created_at, expires_at \
+                 FROM idempotency_keys WHERE tenant_id = ?1 AND key = ?2 AND scope = ?3",
             )
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         let mut rows = stmt
-            .query(params![key, scope])
+            .query(params![tenant_id, key, scope])
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         if let Some(row) = rows
             .next()
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
         {
             let status_code: i64 = row
-                .get(3)
+                .get(4)
                 .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
             Ok(Some(IdempotencyRecord {
-                key: row
+                tenant_id: row
                     .get(0)
                     .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?,
-                scope: row
+                key: row
                     .get(1)
                     .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?,
-                request_hash: row
+                scope: row
                     .get(2)
+                    .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?,
+                request_hash: row
+                    .get(3)
                     .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?,
                 status_code: status_code as u16,
                 response_body: row
-                    .get(4)
-                    .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?,
-                created_at: row
                     .get(5)
                     .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?,
-                expires_at: row
+                created_at: row
                     .get(6)
+                    .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?,
+                expires_at: row
+                    .get(7)
                     .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?,
             }))
         } else {
@@ -739,10 +818,11 @@ impl IpamStore for SqliteStore {
         let conn = self.conn()?;
         conn.execute(
             "INSERT INTO idempotency_keys \
-                (key, scope, request_hash, status_code, response_body, created_at, expires_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
-             ON CONFLICT(key, scope) DO NOTHING",
+                (tenant_id, key, scope, request_hash, status_code, response_body, created_at, expires_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
+             ON CONFLICT(tenant_id, key, scope) DO NOTHING",
             params![
+                record.tenant_id,
                 record.key,
                 record.scope,
                 record.request_hash,
@@ -773,6 +853,8 @@ mod tests {
     use super::*;
     use crate::ipam::parse_cidr_metadata;
 
+    const TEST_TENANT: &str = "test@example.com";
+
     async fn test_store() -> SqliteStore {
         let store = SqliteStore::in_memory().unwrap();
         store.initialize().await.unwrap();
@@ -785,11 +867,14 @@ mod tests {
         let store = test_store().await;
 
         let sn = store
-            .create_supernet(&CreateSupernet {
-                cidr: "10.0.0.0/8".to_string(),
-                name: Some("RFC1918 Class A".to_string()),
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "10.0.0.0/8".to_string(),
+                    name: Some("RFC1918 Class A".to_string()),
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
@@ -798,15 +883,16 @@ mod tests {
         assert_eq!(sn.broadcast_address, "10.255.255.255");
         assert_eq!(sn.prefix_length, 8);
         assert_eq!(sn.ip_version, 4);
+        assert_eq!(sn.tenant_id, TEST_TENANT);
 
-        let fetched = store.get_supernet(&sn.id).await.unwrap();
+        let fetched = store.get_supernet(TEST_TENANT, &sn.id).await.unwrap();
         assert_eq!(fetched.cidr, "10.0.0.0/8");
 
-        let all = store.list_supernets().await.unwrap();
+        let all = store.list_supernets(TEST_TENANT).await.unwrap();
         assert_eq!(all.len(), 1);
 
-        store.delete_supernet(&sn.id).await.unwrap();
-        let all = store.list_supernets().await.unwrap();
+        store.delete_supernet(TEST_TENANT, &sn.id).await.unwrap();
+        let all = store.list_supernets(TEST_TENANT).await.unwrap();
         assert!(all.is_empty());
     }
 
@@ -815,45 +901,53 @@ mod tests {
         let store = test_store().await;
 
         let sn = store
-            .create_supernet(&CreateSupernet {
-                cidr: "10.0.0.0/8".to_string(),
-                name: None,
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "10.0.0.0/8".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
         let alloc = store
-            .create_allocation(&CreateAllocation {
-                supernet_id: sn.id.clone(),
-                cidr: "10.0.0.0/24".to_string(),
-                status: None,
-                resource_id: Some("vpc-123".to_string()),
-                resource_type: Some("vpc".to_string()),
-                name: Some("test".to_string()),
-                description: None,
-                environment: Some("production".to_string()),
-                owner: Some("team-a".to_string()),
-                parent_allocation_id: None,
-                tags: Some(vec![Tag {
-                    key: "env".to_string(),
-                    value: "prod".to_string(),
-                }]),
-                ttl_seconds: None,
-            })
+            .create_allocation(
+                TEST_TENANT,
+                &CreateAllocation {
+                    supernet_id: sn.id.clone(),
+                    cidr: "10.0.0.0/24".to_string(),
+                    status: None,
+                    resource_id: Some("vpc-123".to_string()),
+                    resource_type: Some("vpc".to_string()),
+                    name: Some("test".to_string()),
+                    description: None,
+                    environment: Some("production".to_string()),
+                    owner: Some("team-a".to_string()),
+                    parent_allocation_id: None,
+                    tags: Some(vec![Tag {
+                        key: "env".to_string(),
+                        value: "prod".to_string(),
+                    }]),
+                    ttl_seconds: None,
+                },
+            )
             .await
             .unwrap();
 
         assert_eq!(alloc.status, AllocationStatus::Active);
         assert_eq!(alloc.tags.len(), 1);
+        assert_eq!(alloc.tenant_id, TEST_TENANT);
 
-        let fetched = store.get_allocation(&alloc.id).await.unwrap();
+        let fetched = store.get_allocation(TEST_TENANT, &alloc.id).await.unwrap();
         assert_eq!(fetched.resource_id, Some("vpc-123".to_string()));
         assert_eq!(fetched.tags.len(), 1);
 
         // Update
         let updated = store
             .update_allocation(
+                TEST_TENANT,
                 &alloc.id,
                 &UpdateAllocation {
                     name: None,
@@ -870,7 +964,10 @@ mod tests {
         assert_eq!(updated.description, Some("updated desc".to_string()));
 
         // Release
-        let released = store.release_allocation(&alloc.id).await.unwrap();
+        let released = store
+            .release_allocation(TEST_TENANT, &alloc.id)
+            .await
+            .unwrap();
         assert_eq!(released.status, AllocationStatus::Released);
         assert!(released.released_at.is_some());
     }
@@ -880,33 +977,42 @@ mod tests {
         let store = test_store().await;
 
         let sn = store
-            .create_supernet(&CreateSupernet {
-                cidr: "10.0.0.0/8".to_string(),
-                name: None,
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "10.0.0.0/8".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
         store
-            .create_allocation(&CreateAllocation {
-                supernet_id: sn.id.clone(),
-                cidr: "10.0.0.0/24".to_string(),
-                status: None,
-                resource_id: None,
-                resource_type: None,
-                name: None,
-                description: None,
-                environment: None,
-                owner: None,
-                parent_allocation_id: None,
-                tags: None,
-                ttl_seconds: None,
-            })
+            .create_allocation(
+                TEST_TENANT,
+                &CreateAllocation {
+                    supernet_id: sn.id.clone(),
+                    cidr: "10.0.0.0/24".to_string(),
+                    status: None,
+                    resource_id: None,
+                    resource_type: None,
+                    name: None,
+                    description: None,
+                    environment: None,
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: None,
+                    ttl_seconds: None,
+                },
+            )
             .await
             .unwrap();
 
-        let err = store.delete_supernet(&sn.id).await.unwrap_err();
+        let err = store
+            .delete_supernet(TEST_TENANT, &sn.id)
+            .await
+            .unwrap_err();
         assert!(matches!(err, NetcidrError::SupernetHasActiveAllocations(_)));
     }
 
@@ -915,54 +1021,64 @@ mod tests {
         let store = test_store().await;
 
         let sn = store
-            .create_supernet(&CreateSupernet {
-                cidr: "10.0.0.0/8".to_string(),
-                name: None,
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "10.0.0.0/8".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
         let a1 = store
-            .create_allocation(&CreateAllocation {
-                supernet_id: sn.id.clone(),
-                cidr: "10.0.0.0/24".to_string(),
-                status: None,
-                resource_id: None,
-                resource_type: None,
-                name: None,
-                description: None,
-                environment: None,
-                owner: None,
-                parent_allocation_id: None,
-                tags: None,
-                ttl_seconds: None,
-            })
+            .create_allocation(
+                TEST_TENANT,
+                &CreateAllocation {
+                    supernet_id: sn.id.clone(),
+                    cidr: "10.0.0.0/24".to_string(),
+                    status: None,
+                    resource_id: None,
+                    resource_type: None,
+                    name: None,
+                    description: None,
+                    environment: None,
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: None,
+                    ttl_seconds: None,
+                },
+            )
             .await
             .unwrap();
 
         store
-            .create_allocation(&CreateAllocation {
-                supernet_id: sn.id.clone(),
-                cidr: "10.0.1.0/24".to_string(),
-                status: Some(AllocationStatus::Reserved),
-                resource_id: None,
-                resource_type: None,
-                name: None,
-                description: None,
-                environment: None,
-                owner: None,
-                parent_allocation_id: None,
-                tags: None,
-                ttl_seconds: None,
-            })
+            .create_allocation(
+                TEST_TENANT,
+                &CreateAllocation {
+                    supernet_id: sn.id.clone(),
+                    cidr: "10.0.1.0/24".to_string(),
+                    status: Some(AllocationStatus::Reserved),
+                    resource_id: None,
+                    resource_type: None,
+                    name: None,
+                    description: None,
+                    environment: None,
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: None,
+                    ttl_seconds: None,
+                },
+            )
             .await
             .unwrap();
 
-        store.release_allocation(&a1.id).await.unwrap();
+        store.release_allocation(TEST_TENANT, &a1.id).await.unwrap();
 
         let active = store
             .find_allocations_in_supernet(
+                TEST_TENANT,
                 &sn.id,
                 &[AllocationStatus::Active, AllocationStatus::Reserved],
             )
@@ -979,6 +1095,7 @@ mod tests {
         store
             .append_audit(&AuditEntry {
                 id: String::new(),
+                tenant_id: TEST_TENANT.to_string(),
                 entity_type: "supernet".to_string(),
                 entity_id: "sn-1".to_string(),
                 action: "create_supernet".to_string(),
@@ -990,10 +1107,13 @@ mod tests {
             .unwrap();
 
         let entries = store
-            .query_audit(&AuditFilter {
-                entity_id: Some("sn-1".to_string()),
-                ..Default::default()
-            })
+            .query_audit(
+                TEST_TENANT,
+                &AuditFilter {
+                    entity_id: Some("sn-1".to_string()),
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
         assert_eq!(entries.len(), 1);
@@ -1005,34 +1125,41 @@ mod tests {
         let store = test_store().await;
 
         let sn = store
-            .create_supernet(&CreateSupernet {
-                cidr: "10.0.0.0/8".to_string(),
-                name: None,
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "10.0.0.0/8".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
         let alloc = store
-            .create_allocation(&CreateAllocation {
-                supernet_id: sn.id.clone(),
-                cidr: "10.0.0.0/24".to_string(),
-                status: None,
-                resource_id: None,
-                resource_type: None,
-                name: None,
-                description: None,
-                environment: None,
-                owner: None,
-                parent_allocation_id: None,
-                tags: None,
-                ttl_seconds: None,
-            })
+            .create_allocation(
+                TEST_TENANT,
+                &CreateAllocation {
+                    supernet_id: sn.id.clone(),
+                    cidr: "10.0.0.0/24".to_string(),
+                    status: None,
+                    resource_id: None,
+                    resource_type: None,
+                    name: None,
+                    description: None,
+                    environment: None,
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: None,
+                    ttl_seconds: None,
+                },
+            )
             .await
             .unwrap();
 
         store
             .set_tags(
+                TEST_TENANT,
                 &alloc.id,
                 &[
                     Tag {
@@ -1048,12 +1175,13 @@ mod tests {
             .await
             .unwrap();
 
-        let tags = store.get_tags(&alloc.id).await.unwrap();
+        let tags = store.get_tags(TEST_TENANT, &alloc.id).await.unwrap();
         assert_eq!(tags.len(), 2);
 
         // Replace tags
         store
             .set_tags(
+                TEST_TENANT,
                 &alloc.id,
                 &[Tag {
                     key: "env".to_string(),
@@ -1062,7 +1190,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let tags = store.get_tags(&alloc.id).await.unwrap();
+        let tags = store.get_tags(TEST_TENANT, &alloc.id).await.unwrap();
         assert_eq!(tags.len(), 1);
         assert_eq!(tags[0].value, "staging");
     }
@@ -1122,24 +1250,20 @@ mod tests {
         assert_eq!(val, 256);
     }
 
-    #[test]
-    fn test_total_hosts_as_i64_clamps() {
-        use crate::ipam::total_hosts_as_i64;
-        assert_eq!(total_hosts_as_i64(256), 256);
-        assert_eq!(total_hosts_as_i64(1u128 << 96), i64::MAX);
-    }
-
     #[tokio::test]
     async fn test_ipv6_supernet_total_hosts_roundtrip() {
         let store = test_store().await;
 
         // Create an IPv6 /32 supernet (2^96 addresses > i64::MAX)
         let sn = store
-            .create_supernet(&CreateSupernet {
-                cidr: "2001:db8::/32".to_string(),
-                name: Some("IPv6 test".to_string()),
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "2001:db8::/32".to_string(),
+                    name: Some("IPv6 test".to_string()),
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
@@ -1148,11 +1272,11 @@ mod tests {
         assert_eq!(sn.ip_version, 6);
 
         // Verify roundtrip through get
-        let fetched = store.get_supernet(&sn.id).await.unwrap();
+        let fetched = store.get_supernet(TEST_TENANT, &sn.id).await.unwrap();
         assert_eq!(fetched.total_hosts, expected);
 
         // Verify roundtrip through list
-        let all = store.list_supernets().await.unwrap();
+        let all = store.list_supernets(TEST_TENANT).await.unwrap();
         assert_eq!(all[0].total_hosts, expected);
     }
 
@@ -1161,29 +1285,35 @@ mod tests {
         let store = test_store().await;
 
         let sn = store
-            .create_supernet(&CreateSupernet {
-                cidr: "2001:db8::/32".to_string(),
-                name: None,
-                description: None,
-            })
+            .create_supernet(
+                TEST_TENANT,
+                &CreateSupernet {
+                    cidr: "2001:db8::/32".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
             .await
             .unwrap();
 
         let alloc = store
-            .create_allocation(&CreateAllocation {
-                supernet_id: sn.id.clone(),
-                cidr: "2001:db8::/48".to_string(),
-                status: None,
-                resource_id: None,
-                resource_type: None,
-                name: None,
-                description: None,
-                environment: None,
-                owner: None,
-                parent_allocation_id: None,
-                tags: None,
-                ttl_seconds: None,
-            })
+            .create_allocation(
+                TEST_TENANT,
+                &CreateAllocation {
+                    supernet_id: sn.id.clone(),
+                    cidr: "2001:db8::/48".to_string(),
+                    status: None,
+                    resource_id: None,
+                    resource_type: None,
+                    name: None,
+                    description: None,
+                    environment: None,
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: None,
+                    ttl_seconds: None,
+                },
+            )
             .await
             .unwrap();
 
@@ -1191,7 +1321,7 @@ mod tests {
         assert_eq!(alloc.total_hosts, expected);
 
         // Verify roundtrip through get
-        let fetched = store.get_allocation(&alloc.id).await.unwrap();
+        let fetched = store.get_allocation(TEST_TENANT, &alloc.id).await.unwrap();
         assert_eq!(fetched.total_hosts, expected);
     }
 
@@ -1208,6 +1338,7 @@ mod tests {
             store
                 .append_audit(&AuditEntry {
                     id: String::new(),
+                    tenant_id: TEST_TENANT.to_string(),
                     entity_type: "supernet".to_string(),
                     entity_id: format!("sn-{i}"),
                     action: "create_supernet".to_string(),
@@ -1221,10 +1352,13 @@ mod tests {
 
         // A limit larger than 10_000 must be silently capped — query must succeed.
         let entries = store
-            .query_audit(&AuditFilter {
-                limit: Some(u32::MAX),
-                ..Default::default()
-            })
+            .query_audit(
+                TEST_TENANT,
+                &AuditFilter {
+                    limit: Some(u32::MAX),
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
         // All 5 entries are returned (well within the cap).
@@ -1239,6 +1373,7 @@ mod tests {
             store
                 .append_audit(&AuditEntry {
                     id: String::new(),
+                    tenant_id: TEST_TENANT.to_string(),
                     entity_type: "supernet".to_string(),
                     entity_id: format!("sn-{i}"),
                     action: "create_supernet".to_string(),
@@ -1251,10 +1386,13 @@ mod tests {
         }
 
         let entries = store
-            .query_audit(&AuditFilter {
-                limit: Some(3),
-                ..Default::default()
-            })
+            .query_audit(
+                TEST_TENANT,
+                &AuditFilter {
+                    limit: Some(3),
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
         assert_eq!(entries.len(), 3);

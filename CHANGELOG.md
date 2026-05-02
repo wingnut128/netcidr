@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-05-02
+
+### Changed
+
+- **Multi-tenant IPAM isolation.** Every supernet, allocation, audit entry, and idempotency record is now scoped to the authenticated user's email. The `IpamStore` trait and `IpamOps` struct expose `tenant_id: &str` as an explicit parameter on every method, making per-tenant filtering unforgettable at the type level. HTTP middleware extracts the tenant from the OIDC principal's verified email and exposes it via Axum extensions; cross-tenant access returns 404 (not 403) to prevent existence enumeration. CLI invocations and stdio MCP both pass the literal `"local"`. Schema is destructive: migration `006` drops and recreates `supernets`, `allocations`, `audit_log`, `idempotency_keys`, and `allocation_tags` with `tenant_id` columns, `UNIQUE(tenant_id, cidr)` on supernets, composite tenant indexes, and triggers enforcing the cross-table invariant `allocations.tenant_id == supernets.tenant_id`. Five-test isolation matrix in `tests/ipam_isolation.rs` proves the guarantee end-to-end (supernets, same-CIDR-different-tenant, allocations, audit log, idempotency keys). Sub-project 1 of 3 toward a remote MCP endpoint.
+
 ## [0.23.0] - 2026-04-30
 
 ### Changed

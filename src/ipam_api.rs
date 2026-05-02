@@ -97,6 +97,7 @@ fn error_to_parts(err: &NetcidrError) -> (StatusCode, String) {
 /// retry with the same key can still succeed once the underlying issue clears.
 async fn idempotent_post<T, F, Fut>(
     ops: Arc<IpamOps>,
+    tenant_id: String,
     headers: HeaderMap,
     body: Bytes,
     scope: String,
@@ -104,13 +105,13 @@ async fn idempotent_post<T, F, Fut>(
 ) -> Response
 where
     T: serde::de::DeserializeOwned,
-    F: FnOnce(Arc<IpamOps>, T) -> Fut,
+    F: FnOnce(Arc<IpamOps>, String, T) -> Fut,
     Fut: std::future::Future<
             Output = std::result::Result<(StatusCode, serde_json::Value), NetcidrError>,
         >,
 {
     let outcome = if body.len() <= idempotency::MAX_BODY_BYTES {
-        match idempotency::check(ops.store(), &headers, &scope, &body).await {
+        match idempotency::check(ops.store(), &tenant_id, &headers, &scope, &body).await {
             Ok(o) => o,
             Err(e) => return ipam_error_response(e),
         }
@@ -146,7 +147,7 @@ where
         Err(e) => return ipam_error_response(NetcidrError::InvalidInput(e.to_string())),
     };
 
-    let (status, value) = match handler(ops.clone(), parsed).await {
+    let (status, value) = match handler(ops.clone(), tenant_id.clone(), parsed).await {
         Ok(pair) => pair,
         Err(e) => error_to_status_value(e),
     };
@@ -157,6 +158,7 @@ where
         let cached_body = value.to_string();
         if let Err(e) = idempotency::record(
             ops.store(),
+            &tenant_id,
             &key,
             &scope,
             &request_hash,
@@ -348,9 +350,10 @@ pub fn create_ipam_router() -> Router {
 ))]
 async fn ipam_create_supernet(
     Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
     Json(body): Json<CreateSupernet>,
 ) -> impl IntoResponse {
-    match ops.create_supernet(&body).await {
+    match ops.create_supernet(tenant.as_str(), &body).await {
         Ok(supernet) => (StatusCode::CREATED, Json(supernet)).into_response(),
         Err(e) => ipam_error_response(e),
     }
@@ -364,8 +367,11 @@ async fn ipam_create_supernet(
     ),
     tag = "ipam"
 ))]
-async fn ipam_list_supernets(Extension(ops): Extension<Arc<IpamOps>>) -> impl IntoResponse {
-    match ops.list_supernets().await {
+async fn ipam_list_supernets(
+    Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
+) -> impl IntoResponse {
+    match ops.list_supernets(tenant.as_str()).await {
         Ok(supernets) => {
             let list = SupernetList {
                 count: supernets.len(),
@@ -391,9 +397,10 @@ async fn ipam_list_supernets(Extension(ops): Extension<Arc<IpamOps>>) -> impl In
 ))]
 async fn ipam_get_supernet(
     Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match ops.get_supernet(&id).await {
+    match ops.get_supernet(tenant.as_str(), &id).await {
         Ok(supernet) => Json(supernet).into_response(),
         Err(e) => ipam_error_response(e),
     }
@@ -414,9 +421,10 @@ async fn ipam_get_supernet(
 ))]
 async fn ipam_delete_supernet(
     Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match ops.delete_supernet(&id).await {
+    match ops.delete_supernet(tenant.as_str(), &id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => ipam_error_response(e),
     }
@@ -439,6 +447,7 @@ async fn ipam_delete_supernet(
 ))]
 async fn ipam_allocate_specific(
     Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
     Path(supernet_id): Path<String>,
     headers: HeaderMap,
     body: Bytes,
@@ -446,10 +455,11 @@ async fn ipam_allocate_specific(
     let scope = format!("allocate-specific:{supernet_id}");
     idempotent_post::<AllocateSpecificRequest, _, _>(
         ops,
+        tenant.0,
         headers,
         body,
         scope,
-        move |ops, parsed: AllocateSpecificRequest| {
+        move |ops, tenant_id, parsed: AllocateSpecificRequest| {
             let supernet_id = supernet_id.clone();
             async move {
                 let input = CreateAllocation {
@@ -466,7 +476,7 @@ async fn ipam_allocate_specific(
                     tags: parsed.tags,
                     ttl_seconds: parsed.ttl_seconds,
                 };
-                let allocation = ops.allocate_specific(&input).await?;
+                let allocation = ops.allocate_specific(&tenant_id, &input).await?;
                 Ok((
                     StatusCode::CREATED,
                     serde_json::to_value(&allocation).unwrap_or(serde_json::Value::Null),
@@ -493,6 +503,7 @@ async fn ipam_allocate_specific(
 ))]
 async fn ipam_auto_allocate(
     Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
     Path(supernet_id): Path<String>,
     headers: HeaderMap,
     body: Bytes,
@@ -500,10 +511,11 @@ async fn ipam_auto_allocate(
     let scope = format!("auto-allocate:{supernet_id}");
     idempotent_post::<AutoAllocateBody, _, _>(
         ops,
+        tenant.0,
         headers,
         body,
         scope,
-        move |ops, parsed: AutoAllocateBody| {
+        move |ops, tenant_id, parsed: AutoAllocateBody| {
             let supernet_id = supernet_id.clone();
             async move {
                 let request = AutoAllocateRequest {
@@ -521,7 +533,7 @@ async fn ipam_auto_allocate(
                     tags: parsed.tags,
                     ttl_seconds: parsed.ttl_seconds,
                 };
-                let allocations = ops.allocate_auto(&request).await?;
+                let allocations = ops.allocate_auto(&tenant_id, &request).await?;
                 let list = AllocationList {
                     count: allocations.len(),
                     allocations,
@@ -551,6 +563,7 @@ async fn ipam_auto_allocate(
 ))]
 async fn ipam_list_supernet_allocations(
     Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
     Path(supernet_id): Path<String>,
     Query(query): Query<AllocationFilterQuery>,
 ) -> impl IntoResponse {
@@ -563,7 +576,7 @@ async fn ipam_list_supernet_allocations(
         environment: query.environment,
         owner: query.owner,
     };
-    match ops.list_allocations(&filter).await {
+    match ops.list_allocations(tenant.as_str(), &filter).await {
         Ok(allocations) => {
             let list = AllocationList {
                 count: allocations.len(),
@@ -590,10 +603,14 @@ async fn ipam_list_supernet_allocations(
 ))]
 async fn ipam_free_blocks(
     Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
     Path(supernet_id): Path<String>,
     Query(query): Query<FreeBlocksQuery>,
 ) -> impl IntoResponse {
-    match ops.free_blocks(&supernet_id, query.prefix).await {
+    match ops
+        .free_blocks(tenant.as_str(), &supernet_id, query.prefix)
+        .await
+    {
         Ok(report) => Json(report).into_response(),
         Err(e) => ipam_error_response(e),
     }
@@ -613,9 +630,10 @@ async fn ipam_free_blocks(
 ))]
 async fn ipam_utilization(
     Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
     Path(supernet_id): Path<String>,
 ) -> impl IntoResponse {
-    match ops.utilization(&supernet_id).await {
+    match ops.utilization(tenant.as_str(), &supernet_id).await {
         Ok(report) => Json(report).into_response(),
         Err(e) => ipam_error_response(e),
     }
@@ -635,9 +653,10 @@ async fn ipam_utilization(
 ))]
 async fn ipam_get_allocation(
     Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match ops.get_allocation(&id).await {
+    match ops.get_allocation(tenant.as_str(), &id).await {
         Ok(allocation) => Json(allocation).into_response(),
         Err(e) => ipam_error_response(e),
     }
@@ -658,10 +677,11 @@ async fn ipam_get_allocation(
 ))]
 async fn ipam_update_allocation(
     Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
     Path(id): Path<String>,
     Json(body): Json<UpdateAllocation>,
 ) -> impl IntoResponse {
-    match ops.update_allocation(&id, &body).await {
+    match ops.update_allocation(tenant.as_str(), &id, &body).await {
         Ok(allocation) => Json(allocation).into_response(),
         Err(e) => ipam_error_response(e),
     }
@@ -681,9 +701,10 @@ async fn ipam_update_allocation(
 ))]
 async fn ipam_release_allocation(
     Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match ops.release_allocation(&id).await {
+    match ops.release_allocation(tenant.as_str(), &id).await {
         Ok(allocation) => Json(allocation).into_response(),
         Err(e) => ipam_error_response(e),
     }
@@ -702,9 +723,10 @@ async fn ipam_release_allocation(
 ))]
 async fn ipam_find_ip(
     Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
     Path(address): Path<String>,
 ) -> impl IntoResponse {
-    match ops.find_by_ip(&address).await {
+    match ops.find_by_ip(tenant.as_str(), &address).await {
         Ok(allocations) => {
             let list = AllocationList {
                 count: allocations.len(),
@@ -729,9 +751,10 @@ async fn ipam_find_ip(
 ))]
 async fn ipam_find_resource(
     Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
     Path(resource_id): Path<String>,
 ) -> impl IntoResponse {
-    match ops.find_by_resource(&resource_id).await {
+    match ops.find_by_resource(tenant.as_str(), &resource_id).await {
         Ok(allocations) => {
             let list = AllocationList {
                 count: allocations.len(),
@@ -754,6 +777,7 @@ async fn ipam_find_resource(
 ))]
 async fn ipam_query_audit(
     Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
     Query(query): Query<AuditQuery>,
 ) -> impl IntoResponse {
     let filter = AuditFilter {
@@ -762,7 +786,7 @@ async fn ipam_query_audit(
         action: query.action,
         limit: query.limit,
     };
-    match ops.query_audit(&filter).await {
+    match ops.query_audit(tenant.as_str(), &filter).await {
         Ok(entries) => {
             let list = AuditList {
                 count: entries.len(),
@@ -789,13 +813,14 @@ async fn ipam_query_audit(
 ))]
 async fn ipam_set_tags(
     Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
     Path(id): Path<String>,
     Json(body): Json<TagsBody>,
 ) -> impl IntoResponse {
-    if let Err(e) = ops.set_tags(&id, &body.tags).await {
+    if let Err(e) = ops.set_tags(tenant.as_str(), &id, &body.tags).await {
         return ipam_error_response(e);
     }
-    match ops.get_allocation(&id).await {
+    match ops.get_allocation(tenant.as_str(), &id).await {
         Ok(allocation) => Json(allocation).into_response(),
         Err(e) => ipam_error_response(e),
     }
@@ -807,17 +832,19 @@ async fn ipam_set_tags(
 
 async fn ipam_batch_allocate(
     Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
     let scope = "batch-allocate".to_string();
     idempotent_post::<Vec<BatchAllocateItem>, _, _>(
         ops,
+        tenant.0,
         headers,
         body,
         scope,
-        |ops, items: Vec<BatchAllocateItem>| async move {
-            let result = ops.batch_allocate(&items).await?;
+        |ops, tenant_id, items: Vec<BatchAllocateItem>| async move {
+            let result = ops.batch_allocate(&tenant_id, &items).await?;
             Ok((
                 StatusCode::OK,
                 serde_json::to_value(&result).unwrap_or(serde_json::Value::Null),
@@ -829,9 +856,10 @@ async fn ipam_batch_allocate(
 
 async fn ipam_batch_release(
     Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
     Json(body): Json<BatchReleaseRequest>,
 ) -> impl IntoResponse {
-    match ops.batch_release(&body).await {
+    match ops.batch_release(tenant.as_str(), &body).await {
         Ok(result) => Json(result).into_response(),
         Err(e) => ipam_error_response(e),
     }
@@ -839,9 +867,13 @@ async fn ipam_batch_release(
 
 async fn ipam_batch_summary(
     Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
     Query(query): Query<SummaryQuery>,
 ) -> impl IntoResponse {
-    match ops.allocation_summary(query.supernet_id.as_deref()).await {
+    match ops
+        .allocation_summary(tenant.as_str(), query.supernet_id.as_deref())
+        .await
+    {
         Ok(summary) => Json(summary).into_response(),
         Err(e) => ipam_error_response(e),
     }

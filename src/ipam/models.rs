@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct Supernet {
     pub id: String,
+    pub tenant_id: String,
     pub cidr: String,
     pub network_address: String,
     pub broadcast_address: String,
@@ -77,6 +78,7 @@ impl std::str::FromStr for AllocationStatus {
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct Allocation {
     pub id: String,
+    pub tenant_id: String,
     pub supernet_id: String,
     pub cidr: String,
     pub network_address: String,
@@ -188,6 +190,7 @@ pub struct Tag {
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct AuditEntry {
     pub id: String,
+    pub tenant_id: String,
     pub entity_type: String,
     pub entity_id: String,
     pub action: String,
@@ -444,6 +447,7 @@ pub struct IpamDump {
 /// the same result without re-executing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdempotencyRecord {
+    pub tenant_id: String,
     pub key: String,
     pub scope: String,
     pub request_hash: String,
