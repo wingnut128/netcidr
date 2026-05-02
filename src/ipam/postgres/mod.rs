@@ -28,6 +28,13 @@ impl PostgresStore {
         Ok(Self { pool })
     }
 
+    /// Test-only access to the underlying connection pool, used by migration
+    /// tests that need to issue raw SQL outside the normal `IpamStore` API.
+    #[cfg(test)]
+    pub(crate) fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+
     fn now() -> String {
         Utc::now().to_rfc3339()
     }
