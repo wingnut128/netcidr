@@ -20,6 +20,11 @@ use crate::summarize::{summarize_ipv4, summarize_ipv6};
 // IPAM backend abstraction — local IpamOps or remote HTTP client
 // ---------------------------------------------------------------------------
 
+/// Local MCP backend uses local SQLite, single-tenant by definition.
+/// The remote backend goes through HTTP and authenticates via OIDC, so it
+/// does not need a tenant_id literal here — the API server enforces tenancy.
+const MCP_LOCAL_TENANT_ID: &str = "local";
+
 #[derive(Debug, Clone)]
 pub enum McpIpamBackend {
     Local(Arc<IpamOps>),
@@ -29,14 +34,14 @@ pub enum McpIpamBackend {
 impl McpIpamBackend {
     pub async fn create_supernet(&self, input: &CreateSupernet) -> crate::error::Result<Supernet> {
         match self {
-            Self::Local(ops) => ops.create_supernet(input).await,
+            Self::Local(ops) => ops.create_supernet(MCP_LOCAL_TENANT_ID, input).await,
             Self::Remote(client) => client.create_supernet(input).await,
         }
     }
 
     pub async fn list_supernets(&self) -> crate::error::Result<Vec<Supernet>> {
         match self {
-            Self::Local(ops) => ops.list_supernets().await,
+            Self::Local(ops) => ops.list_supernets(MCP_LOCAL_TENANT_ID).await,
             Self::Remote(client) => client.list_supernets().await,
         }
     }
@@ -46,7 +51,7 @@ impl McpIpamBackend {
         request: &AutoAllocateRequest,
     ) -> crate::error::Result<Vec<Allocation>> {
         match self {
-            Self::Local(ops) => ops.allocate_auto(request).await,
+            Self::Local(ops) => ops.allocate_auto(MCP_LOCAL_TENANT_ID, request).await,
             Self::Remote(client) => client.allocate_auto(request).await,
         }
     }
@@ -56,14 +61,14 @@ impl McpIpamBackend {
         input: &CreateAllocation,
     ) -> crate::error::Result<Allocation> {
         match self {
-            Self::Local(ops) => ops.allocate_specific(input).await,
+            Self::Local(ops) => ops.allocate_specific(MCP_LOCAL_TENANT_ID, input).await,
             Self::Remote(client) => client.allocate_specific(input).await,
         }
     }
 
     pub async fn release_allocation(&self, id: &str) -> crate::error::Result<Allocation> {
         match self {
-            Self::Local(ops) => ops.release_allocation(id).await,
+            Self::Local(ops) => ops.release_allocation(MCP_LOCAL_TENANT_ID, id).await,
             Self::Remote(client) => client.release_allocation(id).await,
         }
     }
@@ -73,7 +78,7 @@ impl McpIpamBackend {
         filter: &AllocationFilter,
     ) -> crate::error::Result<Vec<Allocation>> {
         match self {
-            Self::Local(ops) => ops.list_allocations(filter).await,
+            Self::Local(ops) => ops.list_allocations(MCP_LOCAL_TENANT_ID, filter).await,
             Self::Remote(client) => client.list_allocations(filter).await,
         }
     }
@@ -84,21 +89,21 @@ impl McpIpamBackend {
         prefix: Option<u8>,
     ) -> crate::error::Result<FreeBlocksReport> {
         match self {
-            Self::Local(ops) => ops.free_blocks(supernet_id, prefix).await,
+            Self::Local(ops) => ops.free_blocks(MCP_LOCAL_TENANT_ID, supernet_id, prefix).await,
             Self::Remote(client) => client.free_blocks(supernet_id, prefix).await,
         }
     }
 
     pub async fn utilization(&self, supernet_id: &str) -> crate::error::Result<UtilizationReport> {
         match self {
-            Self::Local(ops) => ops.utilization(supernet_id).await,
+            Self::Local(ops) => ops.utilization(MCP_LOCAL_TENANT_ID, supernet_id).await,
             Self::Remote(client) => client.utilization(supernet_id).await,
         }
     }
 
     pub async fn find_by_ip(&self, address: &str) -> crate::error::Result<Vec<Allocation>> {
         match self {
-            Self::Local(ops) => ops.find_by_ip(address).await,
+            Self::Local(ops) => ops.find_by_ip(MCP_LOCAL_TENANT_ID, address).await,
             Self::Remote(client) => client.find_by_ip(address).await,
         }
     }
@@ -108,7 +113,7 @@ impl McpIpamBackend {
         resource_id: &str,
     ) -> crate::error::Result<Vec<Allocation>> {
         match self {
-            Self::Local(ops) => ops.find_by_resource(resource_id).await,
+            Self::Local(ops) => ops.find_by_resource(MCP_LOCAL_TENANT_ID, resource_id).await,
             Self::Remote(client) => client.find_by_resource(resource_id).await,
         }
     }
@@ -118,7 +123,7 @@ impl McpIpamBackend {
         items: &[BatchAllocateItem],
     ) -> crate::error::Result<BatchAllocateResult> {
         match self {
-            Self::Local(ops) => ops.batch_allocate(items).await,
+            Self::Local(ops) => ops.batch_allocate(MCP_LOCAL_TENANT_ID, items).await,
             Self::Remote(client) => client.batch_allocate(items).await,
         }
     }
@@ -128,7 +133,7 @@ impl McpIpamBackend {
         request: &BatchReleaseRequest,
     ) -> crate::error::Result<BatchReleaseResult> {
         match self {
-            Self::Local(ops) => ops.batch_release(request).await,
+            Self::Local(ops) => ops.batch_release(MCP_LOCAL_TENANT_ID, request).await,
             Self::Remote(client) => client.batch_release(request).await,
         }
     }
@@ -138,7 +143,7 @@ impl McpIpamBackend {
         supernet_id: Option<&str>,
     ) -> crate::error::Result<AllocationSummary> {
         match self {
-            Self::Local(ops) => ops.allocation_summary(supernet_id).await,
+            Self::Local(ops) => ops.allocation_summary(MCP_LOCAL_TENANT_ID, supernet_id).await,
             Self::Remote(client) => client.allocation_summary(supernet_id).await,
         }
     }
