@@ -55,7 +55,11 @@ impl IpamOps {
     // Supernet operations
     // -----------------------------------------------------------------------
 
-    pub async fn create_supernet(&self, input: &CreateSupernet) -> Result<Supernet> {
+    pub async fn create_supernet(
+        &self,
+        tenant_id: &str,
+        input: &CreateSupernet,
+    ) -> Result<Supernet> {
         validation::validate_cidr(&input.cidr)?;
         validation::validate_optional_text(&input.name, 0)?;
         validation::validate_optional_text(&input.description, 0)?;
@@ -63,7 +67,7 @@ impl IpamOps {
         let candidate = parse_range(&input.cidr)?;
 
         // Check for overlap with existing supernets
-        let existing = self.store.list_supernets().await?;
+        let existing = self.store.list_supernets(tenant_id).await?;
         for sn in &existing {
             let existing_range = parse_range(&sn.cidr)?;
             if ranges_overlap(&candidate, &existing_range) {
@@ -74,8 +78,9 @@ impl IpamOps {
             }
         }
 
-        let supernet = self.store.create_supernet(input).await?;
+        let supernet = self.store.create_supernet(tenant_id, input).await?;
         self.audit(
+            tenant_id,
             "create_supernet",
             "supernet",
             &supernet.id,
@@ -85,20 +90,20 @@ impl IpamOps {
         Ok(supernet)
     }
 
-    pub async fn get_supernet(&self, id: &str) -> Result<Supernet> {
+    pub async fn get_supernet(&self, tenant_id: &str, id: &str) -> Result<Supernet> {
         validation::validate_identifier(id)?;
-        self.store.get_supernet(id).await
+        self.store.get_supernet(tenant_id, id).await
     }
 
-    pub async fn list_supernets(&self) -> Result<Vec<Supernet>> {
-        self.store.list_supernets().await
+    pub async fn list_supernets(&self, tenant_id: &str) -> Result<Vec<Supernet>> {
+        self.store.list_supernets(tenant_id).await
     }
 
-    pub async fn delete_supernet(&self, id: &str) -> Result<()> {
+    pub async fn delete_supernet(&self, tenant_id: &str, id: &str) -> Result<()> {
         validation::validate_identifier(id)?;
-        let sn = self.store.get_supernet(id).await?;
-        self.store.delete_supernet(id).await?;
-        self.audit("delete_supernet", "supernet", id, Some(&sn.cidr))
+        let sn = self.store.get_supernet(tenant_id, id).await?;
+        self.store.delete_supernet(tenant_id, id).await?;
+        self.audit(tenant_id, "delete_supernet", "supernet", id, Some(&sn.cidr))
             .await?;
         Ok(())
     }
@@ -108,13 +113,17 @@ impl IpamOps {
     // -----------------------------------------------------------------------
 
     /// Allocate a specific CIDR block within a supernet.
-    pub async fn allocate_specific(&self, input: &CreateAllocation) -> Result<Allocation> {
+    pub async fn allocate_specific(
+        &self,
+        tenant_id: &str,
+        input: &CreateAllocation,
+    ) -> Result<Allocation> {
         Self::validate_create_allocation(input)?;
 
         let lock = self.supernet_lock(&input.supernet_id);
         let _guard = lock.lock().await;
 
-        let supernet = self.store.get_supernet(&input.supernet_id).await?;
+        let supernet = self.store.get_supernet(tenant_id, &input.supernet_id).await?;
         let supernet_range = parse_range(&supernet.cidr)?;
         let candidate_range = parse_range(&input.cidr)?;
 
@@ -131,7 +140,7 @@ impl IpamOps {
 
         // Check for parent containment if specified
         if let Some(ref parent_id) = input.parent_allocation_id {
-            let parent = self.store.get_allocation(parent_id).await?;
+            let parent = self.store.get_allocation(tenant_id, parent_id).await?;
             let parent_range = parse_range(&parent.cidr)?;
             if !range_contains(&parent_range, &candidate_range) {
                 return Err(NetcidrError::AllocationConflict {
@@ -142,14 +151,18 @@ impl IpamOps {
         }
 
         // Check overlap with existing active/reserved allocations
-        self.check_overlap(&input.supernet_id, &candidate_range, &input.cidr)
+        self.check_overlap(tenant_id, &input.supernet_id, &candidate_range, &input.cidr)
             .await?;
 
         // If a released allocation exists with the exact same CIDR, reactivate
         // it instead of creating a duplicate record.
         let released = self
             .store
-            .find_allocations_in_supernet(&input.supernet_id, &[AllocationStatus::Released])
+            .find_allocations_in_supernet(
+                tenant_id,
+                &input.supernet_id,
+                &[AllocationStatus::Released],
+            )
             .await?;
         if let Some(existing) = released.iter().find(|a| a.cidr == input.cidr) {
             let update = UpdateAllocation {
@@ -164,20 +177,39 @@ impl IpamOps {
                 owner: input.owner.clone().or(existing.owner.clone()),
                 status: Some(input.status.clone().unwrap_or(AllocationStatus::Active)),
             };
-            let alloc = self.store.update_allocation(&existing.id, &update).await?;
-            self.audit("reactivate", "allocation", &alloc.id, Some(&alloc.cidr))
+            let alloc = self
+                .store
+                .update_allocation(tenant_id, &existing.id, &update)
                 .await?;
+            self.audit(
+                tenant_id,
+                "reactivate",
+                "allocation",
+                &alloc.id,
+                Some(&alloc.cidr),
+            )
+            .await?;
             return Ok(alloc);
         }
 
-        let alloc = self.store.create_allocation(input).await?;
-        self.audit("allocate", "allocation", &alloc.id, Some(&alloc.cidr))
-            .await?;
+        let alloc = self.store.create_allocation(tenant_id, input).await?;
+        self.audit(
+            tenant_id,
+            "allocate",
+            "allocation",
+            &alloc.id,
+            Some(&alloc.cidr),
+        )
+        .await?;
         Ok(alloc)
     }
 
     /// Auto-allocate the next available block(s) of a given prefix length.
-    pub async fn allocate_auto(&self, request: &AutoAllocateRequest) -> Result<Vec<Allocation>> {
+    pub async fn allocate_auto(
+        &self,
+        tenant_id: &str,
+        request: &AutoAllocateRequest,
+    ) -> Result<Vec<Allocation>> {
         validation::validate_identifier(&request.supernet_id)?;
         validation::validate_optional_text(&request.name, 0)?;
         validation::validate_optional_text(&request.description, 0)?;
@@ -189,7 +221,7 @@ impl IpamOps {
         let lock = self.supernet_lock(&request.supernet_id);
         let _guard = lock.lock().await;
 
-        let supernet = self.store.get_supernet(&request.supernet_id).await?;
+        let supernet = self.store.get_supernet(tenant_id, &request.supernet_id).await?;
         let supernet_range = parse_range(&supernet.cidr)?;
         let count = request.count.unwrap_or(1);
 
@@ -207,6 +239,7 @@ impl IpamOps {
         let existing = self
             .store
             .find_allocations_in_supernet(
+                tenant_id,
                 &request.supernet_id,
                 &[AllocationStatus::Active, AllocationStatus::Reserved],
             )
@@ -247,27 +280,38 @@ impl IpamOps {
                 tags: request.tags.clone(),
                 ttl_seconds: request.ttl_seconds,
             };
-            let alloc = self.store.create_allocation(&input).await?;
-            self.audit("allocate", "allocation", &alloc.id, Some(&alloc.cidr))
-                .await?;
+            let alloc = self.store.create_allocation(tenant_id, &input).await?;
+            self.audit(
+                tenant_id,
+                "allocate",
+                "allocation",
+                &alloc.id,
+                Some(&alloc.cidr),
+            )
+            .await?;
             allocations.push(alloc);
         }
         Ok(allocations)
     }
 
-    pub async fn get_allocation(&self, id: &str) -> Result<Allocation> {
+    pub async fn get_allocation(&self, tenant_id: &str, id: &str) -> Result<Allocation> {
         validation::validate_identifier(id)?;
-        self.store.get_allocation(id).await
+        self.store.get_allocation(tenant_id, id).await
     }
 
-    pub async fn list_allocations(&self, filter: &AllocationFilter) -> Result<Vec<Allocation>> {
+    pub async fn list_allocations(
+        &self,
+        tenant_id: &str,
+        filter: &AllocationFilter,
+    ) -> Result<Vec<Allocation>> {
         validation::validate_optional_identifier(&filter.supernet_id)?;
         validation::validate_optional_identifier(&filter.resource_id)?;
-        self.store.list_allocations(filter).await
+        self.store.list_allocations(tenant_id, filter).await
     }
 
     pub async fn update_allocation(
         &self,
+        tenant_id: &str,
         id: &str,
         input: &UpdateAllocation,
     ) -> Result<Allocation> {
@@ -280,7 +324,7 @@ impl IpamOps {
 
         // Resolve the parent supernet so we can serialize against concurrent
         // allocations into it.
-        let existing = self.store.get_allocation(id).await?;
+        let existing = self.store.get_allocation(tenant_id, id).await?;
         let lock = self.supernet_lock(&existing.supernet_id);
         let _guard = lock.lock().await;
 
@@ -291,27 +335,38 @@ impl IpamOps {
             && existing.status == AllocationStatus::Released
         {
             let candidate_range = parse_range(&existing.cidr)?;
-            self.check_overlap(&existing.supernet_id, &candidate_range, &existing.cidr)
-                .await?;
+            self.check_overlap(
+                tenant_id,
+                &existing.supernet_id,
+                &candidate_range,
+                &existing.cidr,
+            )
+            .await?;
         }
 
-        let alloc = self.store.update_allocation(id, input).await?;
-        self.audit("update", "allocation", id, None).await?;
+        let alloc = self.store.update_allocation(tenant_id, id, input).await?;
+        self.audit(tenant_id, "update", "allocation", id, None).await?;
         Ok(alloc)
     }
 
-    pub async fn release_allocation(&self, id: &str) -> Result<Allocation> {
+    pub async fn release_allocation(&self, tenant_id: &str, id: &str) -> Result<Allocation> {
         validation::validate_identifier(id)?;
 
         // Lock the parent supernet so a concurrent allocate_specific that
         // races a release sees a consistent snapshot.
-        let existing = self.store.get_allocation(id).await?;
+        let existing = self.store.get_allocation(tenant_id, id).await?;
         let lock = self.supernet_lock(&existing.supernet_id);
         let _guard = lock.lock().await;
 
-        let alloc = self.store.release_allocation(id).await?;
-        self.audit("release", "allocation", id, Some(&alloc.cidr))
-            .await?;
+        let alloc = self.store.release_allocation(tenant_id, id).await?;
+        self.audit(
+            tenant_id,
+            "release",
+            "allocation",
+            id,
+            Some(&alloc.cidr),
+        )
+        .await?;
         Ok(alloc)
     }
 
@@ -320,14 +375,19 @@ impl IpamOps {
     // -----------------------------------------------------------------------
 
     /// Calculate utilization for a supernet with per-status breakdown.
-    pub async fn utilization(&self, supernet_id: &str) -> Result<UtilizationReport> {
+    pub async fn utilization(
+        &self,
+        tenant_id: &str,
+        supernet_id: &str,
+    ) -> Result<UtilizationReport> {
         validation::validate_identifier(supernet_id)?;
-        let supernet = self.store.get_supernet(supernet_id).await?;
+        let supernet = self.store.get_supernet(tenant_id, supernet_id).await?;
 
         // Fetch active + reserved allocations (these consume space)
         let active_reserved = self
             .store
             .find_allocations_in_supernet(
+                tenant_id,
                 supernet_id,
                 &[AllocationStatus::Active, AllocationStatus::Reserved],
             )
@@ -336,7 +396,11 @@ impl IpamOps {
         // Fetch released allocations for the breakdown
         let released = self
             .store
-            .find_allocations_in_supernet(supernet_id, &[AllocationStatus::Released])
+            .find_allocations_in_supernet(
+                tenant_id,
+                supernet_id,
+                &[AllocationStatus::Released],
+            )
             .await?;
 
         let mut active_addresses: u128 = 0;
@@ -392,16 +456,18 @@ impl IpamOps {
     /// List free blocks in a supernet, optionally filtered by prefix length.
     pub async fn free_blocks(
         &self,
+        tenant_id: &str,
         supernet_id: &str,
         target_prefix: Option<u8>,
     ) -> Result<FreeBlocksReport> {
         validation::validate_identifier(supernet_id)?;
-        let supernet = self.store.get_supernet(supernet_id).await?;
+        let supernet = self.store.get_supernet(tenant_id, supernet_id).await?;
         let supernet_range = parse_range(&supernet.cidr)?;
 
         let active = self
             .store
             .find_allocations_in_supernet(
+                tenant_id,
                 supernet_id,
                 &[AllocationStatus::Active, AllocationStatus::Reserved],
             )
@@ -463,12 +529,12 @@ impl IpamOps {
     }
 
     /// Find allocations containing a given IP address.
-    pub async fn find_by_ip(&self, address: &str) -> Result<Vec<Allocation>> {
+    pub async fn find_by_ip(&self, tenant_id: &str, address: &str) -> Result<Vec<Allocation>> {
         validation::validate_ip_address(address)?;
         let ip = parse_ip(address)?;
 
         // Search all supernets
-        let supernets = self.store.list_supernets().await?;
+        let supernets = self.store.list_supernets(tenant_id).await?;
         let mut results = Vec::new();
 
         for sn in &supernets {
@@ -479,6 +545,7 @@ impl IpamOps {
             let allocs = self
                 .store
                 .find_allocations_in_supernet(
+                    tenant_id,
                     &sn.id,
                     &[AllocationStatus::Active, AllocationStatus::Reserved],
                 )
@@ -496,23 +563,34 @@ impl IpamOps {
     }
 
     /// Find allocations by resource ID.
-    pub async fn find_by_resource(&self, resource_id: &str) -> Result<Vec<Allocation>> {
+    pub async fn find_by_resource(
+        &self,
+        tenant_id: &str,
+        resource_id: &str,
+    ) -> Result<Vec<Allocation>> {
         validation::validate_identifier(resource_id)?;
         self.store
-            .list_allocations(&AllocationFilter {
-                resource_id: Some(resource_id.to_string()),
-                ..Default::default()
-            })
+            .list_allocations(
+                tenant_id,
+                &AllocationFilter {
+                    resource_id: Some(resource_id.to_string()),
+                    ..Default::default()
+                },
+            )
             .await
     }
 
     /// Query the audit log.
-    pub async fn query_audit(&self, filter: &AuditFilter) -> Result<Vec<AuditEntry>> {
+    pub async fn query_audit(
+        &self,
+        tenant_id: &str,
+        filter: &AuditFilter,
+    ) -> Result<Vec<AuditEntry>> {
         // Validate filter fields — consistent with all other string inputs.
         validation::validate_optional_identifier(&filter.entity_id)?;
         validation::validate_optional_text(&filter.entity_type, 0)?;
         validation::validate_optional_text(&filter.action, 0)?;
-        self.store.query_audit(filter).await
+        self.store.query_audit(tenant_id, filter).await
     }
 
     // -----------------------------------------------------------------------
@@ -521,15 +599,16 @@ impl IpamOps {
 
     /// Release all allocations whose `expires_at` has passed.
     /// Returns the number of expired allocations released.
-    pub async fn reap_expired(&self) -> Result<usize> {
+    pub async fn reap_expired(&self, tenant_id: &str) -> Result<usize> {
         let now = Utc::now().to_rfc3339();
-        let supernets = self.store.list_supernets().await?;
+        let supernets = self.store.list_supernets(tenant_id).await?;
         let mut reaped = 0;
 
         for sn in &supernets {
             let active = self
                 .store
                 .find_allocations_in_supernet(
+                    tenant_id,
                     &sn.id,
                     &[AllocationStatus::Active, AllocationStatus::Reserved],
                 )
@@ -539,9 +618,15 @@ impl IpamOps {
                 if let Some(ref expires) = alloc.expires_at
                     && expires.as_str() <= now.as_str()
                 {
-                    self.store.release_allocation(&alloc.id).await?;
-                    self.audit("expire", "allocation", &alloc.id, Some(&alloc.cidr))
-                        .await?;
+                    self.store.release_allocation(tenant_id, &alloc.id).await?;
+                    self.audit(
+                        tenant_id,
+                        "expire",
+                        "allocation",
+                        &alloc.id,
+                        Some(&alloc.cidr),
+                    )
+                    .await?;
                     reaped += 1;
                 }
             }
@@ -556,7 +641,11 @@ impl IpamOps {
     /// Batch allocate: process multiple allocation requests in a single call.
     /// Each item is processed sequentially (required for conflict detection).
     /// Per-item errors are captured rather than aborting the entire batch.
-    pub async fn batch_allocate(&self, items: &[BatchAllocateItem]) -> Result<BatchAllocateResult> {
+    pub async fn batch_allocate(
+        &self,
+        tenant_id: &str,
+        items: &[BatchAllocateItem],
+    ) -> Result<BatchAllocateResult> {
         const MAX_BATCH_SIZE: usize = 100;
         if items.len() > MAX_BATCH_SIZE {
             return Err(NetcidrError::InvalidInput(format!(
@@ -585,7 +674,7 @@ impl IpamOps {
                 ttl_seconds: None,
             };
 
-            match self.allocate_auto(&request).await {
+            match self.allocate_auto(tenant_id, &request).await {
                 Ok(allocs) => {
                     let compact: Vec<CompactAllocation> =
                         allocs.iter().map(CompactAllocation::from).collect();
@@ -615,7 +704,11 @@ impl IpamOps {
 
     /// Batch release: release multiple allocations in a single call.
     /// Supports release by explicit IDs, by resource_id, or by supernet_id.
-    pub async fn batch_release(&self, request: &BatchReleaseRequest) -> Result<BatchReleaseResult> {
+    pub async fn batch_release(
+        &self,
+        tenant_id: &str,
+        request: &BatchReleaseRequest,
+    ) -> Result<BatchReleaseResult> {
         const MAX_BATCH_RELEASE_ITEMS: usize = 10_000;
 
         if let Some(ref ids) = request.allocation_ids
@@ -632,7 +725,7 @@ impl IpamOps {
             // Explicit IDs — look up each to get the CIDR for the response
             let mut resolved = Vec::with_capacity(ids.len());
             for id in ids {
-                match self.store.get_allocation(id).await {
+                match self.store.get_allocation(tenant_id, id).await {
                     Ok(alloc) => resolved.push((alloc.id, alloc.cidr)),
                     Err(_) => resolved.push((id.clone(), "unknown".to_string())),
                 }
@@ -646,13 +739,17 @@ impl IpamOps {
                 status: Some(AllocationStatus::Active),
                 ..Default::default()
             };
-            let allocs = self.store.list_allocations(&filter).await?;
+            let allocs = self.store.list_allocations(tenant_id, &filter).await?;
             allocs.into_iter().map(|a| (a.id, a.cidr)).collect()
         } else if let Some(ref supernet_id) = request.supernet_id {
             // All active allocations in a supernet
             let allocs = self
                 .store
-                .find_allocations_in_supernet(supernet_id, &[AllocationStatus::Active])
+                .find_allocations_in_supernet(
+                    tenant_id,
+                    supernet_id,
+                    &[AllocationStatus::Active],
+                )
                 .await?;
             allocs.into_iter().map(|a| (a.id, a.cidr)).collect()
         } else {
@@ -667,7 +764,7 @@ impl IpamOps {
         let mut results = Vec::with_capacity(total_requested);
 
         for (id, cidr) in ids_to_release {
-            match self.release_allocation(&id).await {
+            match self.release_allocation(tenant_id, &id).await {
                 Ok(_) => {
                     total_released += 1;
                     results.push(BatchReleaseItemResult {
@@ -694,11 +791,15 @@ impl IpamOps {
     }
 
     /// Get a grouped allocation summary across all (or one) supernet(s).
-    pub async fn allocation_summary(&self, supernet_id: Option<&str>) -> Result<AllocationSummary> {
+    pub async fn allocation_summary(
+        &self,
+        tenant_id: &str,
+        supernet_id: Option<&str>,
+    ) -> Result<AllocationSummary> {
         let supernets = if let Some(id) = supernet_id {
-            vec![self.store.get_supernet(id).await?]
+            vec![self.store.get_supernet(tenant_id, id).await?]
         } else {
-            self.store.list_supernets().await?
+            self.store.list_supernets(tenant_id).await?
         };
 
         let mut total_allocations = 0usize;
@@ -709,6 +810,7 @@ impl IpamOps {
             let active = self
                 .store
                 .find_allocations_in_supernet(
+                    tenant_id,
                     &sn.id,
                     &[AllocationStatus::Active, AllocationStatus::Reserved],
                 )
@@ -771,11 +873,11 @@ impl IpamOps {
     // -----------------------------------------------------------------------
 
     /// Export all IPAM data as a serializable dump.
-    pub async fn dump(&self) -> Result<IpamDump> {
-        let supernets = self.store.list_supernets().await?;
+    pub async fn dump(&self, tenant_id: &str) -> Result<IpamDump> {
+        let supernets = self.store.list_supernets(tenant_id).await?;
         let allocations = self
             .store
-            .list_allocations(&AllocationFilter::default())
+            .list_allocations(tenant_id, &AllocationFilter::default())
             .await?;
 
         Ok(IpamDump {
@@ -787,9 +889,9 @@ impl IpamOps {
     }
 
     /// Import IPAM data from a dump. Fails if any supernets already exist.
-    pub async fn load(&self, dump: &IpamDump) -> Result<(usize, usize)> {
+    pub async fn load(&self, tenant_id: &str, dump: &IpamDump) -> Result<(usize, usize)> {
         // Check for existing data
-        let existing = self.store.list_supernets().await?;
+        let existing = self.store.list_supernets(tenant_id).await?;
         if !existing.is_empty() {
             return Err(NetcidrError::InvalidInput(
                 "cannot import into a non-empty store — existing supernets found".to_string(),
@@ -802,17 +904,20 @@ impl IpamOps {
         // Import supernets first (allocations depend on them)
         for sn in &dump.supernets {
             self.store
-                .create_supernet(&CreateSupernet {
-                    cidr: sn.cidr.clone(),
-                    name: sn.name.clone(),
-                    description: sn.description.clone(),
-                })
+                .create_supernet(
+                    tenant_id,
+                    &CreateSupernet {
+                        cidr: sn.cidr.clone(),
+                        name: sn.name.clone(),
+                        description: sn.description.clone(),
+                    },
+                )
                 .await?;
             sn_count += 1;
         }
 
         // Build a mapping from old supernet CIDR -> new supernet ID
-        let new_supernets = self.store.list_supernets().await?;
+        let new_supernets = self.store.list_supernets(tenant_id).await?;
         let cidr_to_id: std::collections::HashMap<&str, &str> = new_supernets
             .iter()
             .map(|sn| (sn.cidr.as_str(), sn.id.as_str()))
@@ -842,8 +947,10 @@ impl IpamOps {
                 })?;
 
             self.store
-                .create_allocation(&CreateAllocation {
-                    supernet_id: new_sn_id.to_string(),
+                .create_allocation(
+                    tenant_id,
+                    &CreateAllocation {
+                        supernet_id: new_sn_id.to_string(),
                     cidr: alloc.cidr.clone(),
                     status: Some(alloc.status.clone()),
                     resource_id: alloc.resource_id.clone(),
@@ -859,7 +966,8 @@ impl IpamOps {
                         Some(alloc.tags.clone())
                     },
                     ttl_seconds: None,
-                })
+                    },
+                )
                 .await?;
             alloc_count += 1;
         }
@@ -871,18 +979,23 @@ impl IpamOps {
     // Tags
     // -----------------------------------------------------------------------
 
-    pub async fn set_tags(&self, allocation_id: &str, tags: &[Tag]) -> Result<()> {
+    pub async fn set_tags(
+        &self,
+        tenant_id: &str,
+        allocation_id: &str,
+        tags: &[Tag],
+    ) -> Result<()> {
         validation::validate_identifier(allocation_id)?;
         for tag in tags {
             validation::validate_text_field(&tag.key, 0)?;
             validation::validate_text_field(&tag.value, 0)?;
         }
-        self.store.set_tags(allocation_id, tags).await
+        self.store.set_tags(tenant_id, allocation_id, tags).await
     }
 
-    pub async fn get_tags(&self, allocation_id: &str) -> Result<Vec<Tag>> {
+    pub async fn get_tags(&self, tenant_id: &str, allocation_id: &str) -> Result<Vec<Tag>> {
         validation::validate_identifier(allocation_id)?;
-        self.store.get_tags(allocation_id).await
+        self.store.get_tags(tenant_id, allocation_id).await
     }
 
     // -----------------------------------------------------------------------
@@ -907,6 +1020,7 @@ impl IpamOps {
 
     async fn check_overlap(
         &self,
+        tenant_id: &str,
         supernet_id: &str,
         candidate: &IpRange,
         candidate_cidr: &str,
@@ -914,6 +1028,7 @@ impl IpamOps {
         let existing = self
             .store
             .find_allocations_in_supernet(
+                tenant_id,
                 supernet_id,
                 &[AllocationStatus::Active, AllocationStatus::Reserved],
             )
@@ -934,6 +1049,7 @@ impl IpamOps {
 
     async fn audit(
         &self,
+        tenant_id: &str,
         action: &str,
         entity_type: &str,
         entity_id: &str,
@@ -943,6 +1059,7 @@ impl IpamOps {
         self.store
             .append_audit(&AuditEntry {
                 id: String::new(),
+                tenant_id: tenant_id.to_string(),
                 entity_type: entity_type.to_string(),
                 entity_id: entity_id.to_string(),
                 action: action.to_string(),
@@ -1178,6 +1295,8 @@ mod tests {
     use super::*;
     use crate::ipam::sqlite::SqliteStore;
 
+    const TEST_TENANT: &str = "test-tenant";
+
     async fn test_ops() -> IpamOps {
         let store = SqliteStore::in_memory().unwrap();
         store.initialize().await.unwrap();
@@ -1189,7 +1308,7 @@ mod tests {
     async fn test_create_supernet_overlap_rejected() {
         let ops = test_ops().await;
 
-        ops.create_supernet(&CreateSupernet {
+        ops.create_supernet(TEST_TENANT, &CreateSupernet {
             cidr: "10.0.0.0/8".to_string(),
             name: None,
             description: None,
@@ -1198,7 +1317,7 @@ mod tests {
         .unwrap();
 
         let err = ops
-            .create_supernet(&CreateSupernet {
+            .create_supernet(TEST_TENANT, &CreateSupernet {
                 cidr: "10.128.0.0/9".to_string(),
                 name: None,
                 description: None,
@@ -1214,7 +1333,7 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(&CreateSupernet {
+            .create_supernet(TEST_TENANT, &CreateSupernet {
                 cidr: "10.0.0.0/8".to_string(),
                 name: None,
                 description: None,
@@ -1223,7 +1342,7 @@ mod tests {
             .unwrap();
 
         let a1 = ops
-            .allocate_specific(&CreateAllocation {
+            .allocate_specific(TEST_TENANT, &CreateAllocation {
                 supernet_id: sn.id.clone(),
                 cidr: "10.0.0.0/24".to_string(),
                 status: None,
@@ -1244,7 +1363,7 @@ mod tests {
 
         // Overlapping allocation should fail
         let err = ops
-            .allocate_specific(&CreateAllocation {
+            .allocate_specific(TEST_TENANT, &CreateAllocation {
                 supernet_id: sn.id.clone(),
                 cidr: "10.0.0.128/25".to_string(),
                 status: None,
@@ -1269,7 +1388,7 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(&CreateSupernet {
+            .create_supernet(TEST_TENANT, &CreateSupernet {
                 cidr: "10.0.0.0/16".to_string(),
                 name: None,
                 description: None,
@@ -1278,7 +1397,7 @@ mod tests {
             .unwrap();
 
         // Allocate first /24
-        ops.allocate_specific(&CreateAllocation {
+        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
             supernet_id: sn.id.clone(),
             cidr: "10.0.0.0/24".to_string(),
             status: None,
@@ -1297,7 +1416,7 @@ mod tests {
 
         // Auto-allocate next 3 /24s
         let allocs = ops
-            .allocate_auto(&AutoAllocateRequest {
+            .allocate_auto(TEST_TENANT, &AutoAllocateRequest {
                 supernet_id: sn.id.clone(),
                 prefix_length: 24,
                 count: Some(3),
@@ -1326,7 +1445,7 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(&CreateSupernet {
+            .create_supernet(TEST_TENANT, &CreateSupernet {
                 cidr: "10.0.0.0/24".to_string(),
                 name: None,
                 description: None,
@@ -1334,7 +1453,7 @@ mod tests {
             .await
             .unwrap();
 
-        ops.allocate_specific(&CreateAllocation {
+        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
             supernet_id: sn.id.clone(),
             cidr: "10.0.0.0/25".to_string(),
             status: None,
@@ -1351,7 +1470,7 @@ mod tests {
         .await
         .unwrap();
 
-        let util = ops.utilization(&sn.id).await.unwrap();
+        let util = ops.utilization(TEST_TENANT, &sn.id).await.unwrap();
         assert_eq!(util.total_addresses, 256);
         assert_eq!(util.allocated_addresses, 128);
         assert_eq!(util.free_addresses, 128);
@@ -1369,7 +1488,7 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(&CreateSupernet {
+            .create_supernet(TEST_TENANT, &CreateSupernet {
                 cidr: "10.0.0.0/24".to_string(),
                 name: None,
                 description: None,
@@ -1377,7 +1496,7 @@ mod tests {
             .await
             .unwrap();
 
-        ops.allocate_specific(&CreateAllocation {
+        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
             supernet_id: sn.id.clone(),
             cidr: "10.0.0.0/25".to_string(),
             status: None,
@@ -1394,7 +1513,7 @@ mod tests {
         .await
         .unwrap();
 
-        let report = ops.free_blocks(&sn.id, None).await.unwrap();
+        let report = ops.free_blocks(TEST_TENANT, &sn.id, None).await.unwrap();
         assert_eq!(report.blocks.len(), 1);
         assert_eq!(report.blocks[0].cidr, "10.0.0.128/25");
         assert_eq!(report.total_free, 128);
@@ -1405,7 +1524,7 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(&CreateSupernet {
+            .create_supernet(TEST_TENANT, &CreateSupernet {
                 cidr: "10.0.0.0/8".to_string(),
                 name: None,
                 description: None,
@@ -1413,7 +1532,7 @@ mod tests {
             .await
             .unwrap();
 
-        ops.allocate_specific(&CreateAllocation {
+        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
             supernet_id: sn.id.clone(),
             cidr: "10.0.1.0/24".to_string(),
             status: None,
@@ -1430,11 +1549,11 @@ mod tests {
         .await
         .unwrap();
 
-        let found = ops.find_by_ip("10.0.1.50").await.unwrap();
+        let found = ops.find_by_ip(TEST_TENANT,"10.0.1.50").await.unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].cidr, "10.0.1.0/24");
 
-        let not_found = ops.find_by_ip("10.0.2.50").await.unwrap();
+        let not_found = ops.find_by_ip(TEST_TENANT,"10.0.2.50").await.unwrap();
         assert!(not_found.is_empty());
     }
 
@@ -1443,7 +1562,7 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(&CreateSupernet {
+            .create_supernet(TEST_TENANT, &CreateSupernet {
                 cidr: "10.0.0.0/24".to_string(),
                 name: None,
                 description: None,
@@ -1452,7 +1571,7 @@ mod tests {
             .unwrap();
 
         let a1 = ops
-            .allocate_specific(&CreateAllocation {
+            .allocate_specific(TEST_TENANT, &CreateAllocation {
                 supernet_id: sn.id.clone(),
                 cidr: "10.0.0.0/25".to_string(),
                 status: None,
@@ -1469,7 +1588,7 @@ mod tests {
             .await
             .unwrap();
 
-        ops.allocate_specific(&CreateAllocation {
+        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
             supernet_id: sn.id.clone(),
             cidr: "10.0.0.128/25".to_string(),
             status: None,
@@ -1487,15 +1606,15 @@ mod tests {
         .unwrap();
 
         // Supernet fully allocated
-        let util = ops.utilization(&sn.id).await.unwrap();
+        let util = ops.utilization(TEST_TENANT, &sn.id).await.unwrap();
         assert!((util.utilization_percent - 100.0).abs() < 0.1);
 
         // Release first block
-        ops.release_allocation(&a1.id).await.unwrap();
+        ops.release_allocation(TEST_TENANT, &a1.id).await.unwrap();
 
         // Now auto-allocate should find the freed space
         let allocs = ops
-            .allocate_auto(&AutoAllocateRequest {
+            .allocate_auto(TEST_TENANT, &AutoAllocateRequest {
                 supernet_id: sn.id.clone(),
                 prefix_length: 25,
                 count: Some(1),
@@ -1522,7 +1641,7 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(&CreateSupernet {
+            .create_supernet(TEST_TENANT, &CreateSupernet {
                 cidr: "10.0.0.0/24".to_string(),
                 name: None,
                 description: None,
@@ -1532,7 +1651,7 @@ mod tests {
 
         // Active allocation
         let a1 = ops
-            .allocate_specific(&CreateAllocation {
+            .allocate_specific(TEST_TENANT, &CreateAllocation {
                 supernet_id: sn.id.clone(),
                 cidr: "10.0.0.0/26".to_string(),
                 status: None,
@@ -1550,7 +1669,7 @@ mod tests {
             .unwrap();
 
         // Reserved allocation
-        ops.allocate_specific(&CreateAllocation {
+        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
             supernet_id: sn.id.clone(),
             cidr: "10.0.0.64/26".to_string(),
             status: Some(AllocationStatus::Reserved),
@@ -1568,9 +1687,9 @@ mod tests {
         .unwrap();
 
         // Release the first allocation
-        ops.release_allocation(&a1.id).await.unwrap();
+        ops.release_allocation(TEST_TENANT, &a1.id).await.unwrap();
 
-        let util = ops.utilization(&sn.id).await.unwrap();
+        let util = ops.utilization(TEST_TENANT, &sn.id).await.unwrap();
         // Only reserved counts as allocated (active was released)
         assert_eq!(util.allocated_addresses, 64);
         assert_eq!(util.free_addresses, 192);
@@ -1587,7 +1706,7 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(&CreateSupernet {
+            .create_supernet(TEST_TENANT, &CreateSupernet {
                 cidr: "10.0.0.0/24".to_string(),
                 name: None,
                 description: None,
@@ -1597,7 +1716,7 @@ mod tests {
 
         // Allocate with TTL of 0 seconds (already expired)
         let alloc = ops
-            .allocate_specific(&CreateAllocation {
+            .allocate_specific(TEST_TENANT, &CreateAllocation {
                 supernet_id: sn.id.clone(),
                 cidr: "10.0.0.0/25".to_string(),
                 status: None,
@@ -1617,15 +1736,15 @@ mod tests {
         assert!(alloc.expires_at.is_some());
 
         // Reap expired — should release the allocation
-        let reaped = ops.reap_expired().await.unwrap();
+        let reaped = ops.reap_expired(TEST_TENANT).await.unwrap();
         assert_eq!(reaped, 1);
 
         // Verify it's released
-        let fetched = ops.get_allocation(&alloc.id).await.unwrap();
+        let fetched = ops.get_allocation(TEST_TENANT, &alloc.id).await.unwrap();
         assert_eq!(fetched.status, AllocationStatus::Released);
 
         // Reap again — nothing to reap
-        let reaped = ops.reap_expired().await.unwrap();
+        let reaped = ops.reap_expired(TEST_TENANT).await.unwrap();
         assert_eq!(reaped, 0);
     }
 
@@ -1634,7 +1753,7 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(&CreateSupernet {
+            .create_supernet(TEST_TENANT, &CreateSupernet {
                 cidr: "10.0.0.0/8".to_string(),
                 name: Some("Corp".to_string()),
                 description: None,
@@ -1642,7 +1761,7 @@ mod tests {
             .await
             .unwrap();
 
-        ops.allocate_specific(&CreateAllocation {
+        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
             supernet_id: sn.id.clone(),
             cidr: "10.0.0.0/24".to_string(),
             status: None,
@@ -1660,7 +1779,7 @@ mod tests {
         .unwrap();
 
         // Dump
-        let dump = ops.dump().await.unwrap();
+        let dump = ops.dump(TEST_TENANT).await.unwrap();
         assert_eq!(dump.supernets.len(), 1);
         assert_eq!(dump.allocations.len(), 1);
         assert_eq!(dump.version, 1);
@@ -1673,16 +1792,16 @@ mod tests {
 
         // Load into a fresh store
         let ops2 = test_ops().await;
-        let (sn_count, alloc_count) = ops2.load(&parsed).await.unwrap();
+        let (sn_count, alloc_count) = ops2.load(TEST_TENANT, &parsed).await.unwrap();
         assert_eq!(sn_count, 1);
         assert_eq!(alloc_count, 1);
 
         // Verify data
-        let supernets = ops2.list_supernets().await.unwrap();
+        let supernets = ops2.list_supernets(TEST_TENANT).await.unwrap();
         assert_eq!(supernets[0].cidr, "10.0.0.0/8");
 
         let allocs = ops2
-            .list_allocations(&AllocationFilter::default())
+            .list_allocations(TEST_TENANT, &AllocationFilter::default())
             .await
             .unwrap();
         assert_eq!(allocs[0].cidr, "10.0.0.0/24");
@@ -1693,7 +1812,7 @@ mod tests {
     async fn test_load_rejects_non_empty_store() {
         let ops = test_ops().await;
 
-        ops.create_supernet(&CreateSupernet {
+        ops.create_supernet(TEST_TENANT, &CreateSupernet {
             cidr: "10.0.0.0/8".to_string(),
             name: None,
             description: None,
@@ -1708,7 +1827,7 @@ mod tests {
             allocations: vec![],
         };
 
-        let err = ops.load(&dump).await.unwrap_err();
+        let err = ops.load(TEST_TENANT, &dump).await.unwrap_err();
         assert!(matches!(err, NetcidrError::InvalidInput(_)));
     }
 
@@ -1776,7 +1895,7 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(&CreateSupernet {
+            .create_supernet(TEST_TENANT, &CreateSupernet {
                 cidr: "2001:db8::/32".to_string(),
                 name: None,
                 description: None,
@@ -1786,7 +1905,7 @@ mod tests {
 
         // Try to allocate an IPv4 CIDR in an IPv6 supernet
         let err = ops
-            .allocate_specific(&CreateAllocation {
+            .allocate_specific(TEST_TENANT, &CreateAllocation {
                 supernet_id: sn.id.clone(),
                 cidr: "10.0.0.0/24".to_string(),
                 status: None,
@@ -1813,7 +1932,7 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(&CreateSupernet {
+            .create_supernet(TEST_TENANT, &CreateSupernet {
                 cidr: "10.0.0.0/8".to_string(),
                 name: None,
                 description: None,
@@ -1822,7 +1941,7 @@ mod tests {
             .unwrap();
 
         let err = ops
-            .allocate_specific(&CreateAllocation {
+            .allocate_specific(TEST_TENANT, &CreateAllocation {
                 supernet_id: sn.id.clone(),
                 cidr: "2001:db8::/48".to_string(),
                 status: None,
@@ -1847,7 +1966,7 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(&CreateSupernet {
+            .create_supernet(TEST_TENANT, &CreateSupernet {
                 cidr: "10.0.0.0/8".to_string(),
                 name: None,
                 description: None,
@@ -1856,7 +1975,7 @@ mod tests {
             .unwrap();
 
         let err = ops
-            .allocate_auto(&AutoAllocateRequest {
+            .allocate_auto(TEST_TENANT, &AutoAllocateRequest {
                 supernet_id: sn.id.clone(),
                 prefix_length: 33,
                 count: Some(1),
@@ -1887,7 +2006,7 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(&CreateSupernet {
+            .create_supernet(TEST_TENANT, &CreateSupernet {
                 cidr: "2001:db8::/32".to_string(),
                 name: Some("IPv6 Corp".to_string()),
                 description: Some("Test IPv6 supernet".to_string()),
@@ -1905,7 +2024,7 @@ mod tests {
     async fn test_ipv6_supernet_overlap_rejected() {
         let ops = test_ops().await;
 
-        ops.create_supernet(&CreateSupernet {
+        ops.create_supernet(TEST_TENANT, &CreateSupernet {
             cidr: "2001:db8::/32".to_string(),
             name: None,
             description: None,
@@ -1914,7 +2033,7 @@ mod tests {
         .unwrap();
 
         let err = ops
-            .create_supernet(&CreateSupernet {
+            .create_supernet(TEST_TENANT, &CreateSupernet {
                 cidr: "2001:db8:1000::/36".to_string(),
                 name: None,
                 description: None,
@@ -1930,7 +2049,7 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(&CreateSupernet {
+            .create_supernet(TEST_TENANT, &CreateSupernet {
                 cidr: "2001:db8::/32".to_string(),
                 name: None,
                 description: None,
@@ -1939,7 +2058,7 @@ mod tests {
             .unwrap();
 
         let alloc = ops
-            .allocate_specific(&CreateAllocation {
+            .allocate_specific(TEST_TENANT, &CreateAllocation {
                 supernet_id: sn.id.clone(),
                 cidr: "2001:db8::/48".to_string(),
                 status: None,
@@ -1966,7 +2085,7 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(&CreateSupernet {
+            .create_supernet(TEST_TENANT, &CreateSupernet {
                 cidr: "2001:db8::/32".to_string(),
                 name: None,
                 description: None,
@@ -1974,7 +2093,7 @@ mod tests {
             .await
             .unwrap();
 
-        ops.allocate_specific(&CreateAllocation {
+        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
             supernet_id: sn.id.clone(),
             cidr: "2001:db8::/48".to_string(),
             status: None,
@@ -1993,7 +2112,7 @@ mod tests {
 
         // Overlapping: /64 within the /48
         let err = ops
-            .allocate_specific(&CreateAllocation {
+            .allocate_specific(TEST_TENANT, &CreateAllocation {
                 supernet_id: sn.id.clone(),
                 cidr: "2001:db8::/64".to_string(),
                 status: None,
@@ -2018,7 +2137,7 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(&CreateSupernet {
+            .create_supernet(TEST_TENANT, &CreateSupernet {
                 cidr: "2001:db8::/32".to_string(),
                 name: None,
                 description: None,
@@ -2027,7 +2146,7 @@ mod tests {
             .unwrap();
 
         // Manually allocate first /48
-        ops.allocate_specific(&CreateAllocation {
+        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
             supernet_id: sn.id.clone(),
             cidr: "2001:db8::/48".to_string(),
             status: None,
@@ -2046,7 +2165,7 @@ mod tests {
 
         // Auto-allocate next 3 /48s
         let allocs = ops
-            .allocate_auto(&AutoAllocateRequest {
+            .allocate_auto(TEST_TENANT, &AutoAllocateRequest {
                 supernet_id: sn.id.clone(),
                 prefix_length: 48,
                 count: Some(3),
@@ -2076,7 +2195,7 @@ mod tests {
 
         // Use a small /126 supernet (4 addresses) for easy math
         let sn = ops
-            .create_supernet(&CreateSupernet {
+            .create_supernet(TEST_TENANT, &CreateSupernet {
                 cidr: "2001:db8::/126".to_string(),
                 name: None,
                 description: None,
@@ -2084,7 +2203,7 @@ mod tests {
             .await
             .unwrap();
 
-        ops.allocate_specific(&CreateAllocation {
+        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
             supernet_id: sn.id.clone(),
             cidr: "2001:db8::/127".to_string(),
             status: None,
@@ -2101,7 +2220,7 @@ mod tests {
         .await
         .unwrap();
 
-        let util = ops.utilization(&sn.id).await.unwrap();
+        let util = ops.utilization(TEST_TENANT, &sn.id).await.unwrap();
         assert_eq!(util.total_addresses, 4);
         assert_eq!(util.allocated_addresses, 2);
         assert_eq!(util.free_addresses, 2);
@@ -2113,7 +2232,7 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(&CreateSupernet {
+            .create_supernet(TEST_TENANT, &CreateSupernet {
                 cidr: "2001:db8::/46".to_string(),
                 name: None,
                 description: None,
@@ -2122,7 +2241,7 @@ mod tests {
             .unwrap();
 
         // Allocate the first /48
-        ops.allocate_specific(&CreateAllocation {
+        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
             supernet_id: sn.id.clone(),
             cidr: "2001:db8::/48".to_string(),
             status: None,
@@ -2139,7 +2258,7 @@ mod tests {
         .await
         .unwrap();
 
-        let report = ops.free_blocks(&sn.id, Some(48)).await.unwrap();
+        let report = ops.free_blocks(TEST_TENANT, &sn.id, Some(48)).await.unwrap();
         // /46 has 4 /48s; we allocated 1, so 3 free
         assert_eq!(report.blocks.len(), 3);
         assert_eq!(report.blocks[0].cidr, "2001:db8:1::/48");
@@ -2152,7 +2271,7 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(&CreateSupernet {
+            .create_supernet(TEST_TENANT, &CreateSupernet {
                 cidr: "2001:db8::/32".to_string(),
                 name: None,
                 description: None,
@@ -2160,7 +2279,7 @@ mod tests {
             .await
             .unwrap();
 
-        ops.allocate_specific(&CreateAllocation {
+        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
             supernet_id: sn.id.clone(),
             cidr: "2001:db8:1::/48".to_string(),
             status: None,
@@ -2177,11 +2296,11 @@ mod tests {
         .await
         .unwrap();
 
-        let found = ops.find_by_ip("2001:db8:1::50").await.unwrap();
+        let found = ops.find_by_ip(TEST_TENANT,"2001:db8:1::50").await.unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].cidr, "2001:db8:1::/48");
 
-        let not_found = ops.find_by_ip("2001:db8:2::1").await.unwrap();
+        let not_found = ops.find_by_ip(TEST_TENANT,"2001:db8:2::1").await.unwrap();
         assert!(not_found.is_empty());
     }
 
@@ -2190,7 +2309,7 @@ mod tests {
         let ops = test_ops().await;
 
         let sn = ops
-            .create_supernet(&CreateSupernet {
+            .create_supernet(TEST_TENANT, &CreateSupernet {
                 cidr: "2001:db8::/126".to_string(),
                 name: None,
                 description: None,
@@ -2199,7 +2318,7 @@ mod tests {
             .unwrap();
 
         let a1 = ops
-            .allocate_specific(&CreateAllocation {
+            .allocate_specific(TEST_TENANT, &CreateAllocation {
                 supernet_id: sn.id.clone(),
                 cidr: "2001:db8::/127".to_string(),
                 status: None,
@@ -2216,7 +2335,7 @@ mod tests {
             .await
             .unwrap();
 
-        ops.allocate_specific(&CreateAllocation {
+        ops.allocate_specific(TEST_TENANT, &CreateAllocation {
             supernet_id: sn.id.clone(),
             cidr: "2001:db8::2/127".to_string(),
             status: None,
@@ -2234,15 +2353,15 @@ mod tests {
         .unwrap();
 
         // Fully allocated
-        let util = ops.utilization(&sn.id).await.unwrap();
+        let util = ops.utilization(TEST_TENANT, &sn.id).await.unwrap();
         assert!((util.utilization_percent - 100.0).abs() < 0.1);
 
         // Release first block
-        ops.release_allocation(&a1.id).await.unwrap();
+        ops.release_allocation(TEST_TENANT, &a1.id).await.unwrap();
 
         // Auto-allocate should reclaim it
         let allocs = ops
-            .allocate_auto(&AutoAllocateRequest {
+            .allocate_auto(TEST_TENANT, &AutoAllocateRequest {
                 supernet_id: sn.id.clone(),
                 prefix_length: 127,
                 count: Some(1),
@@ -2581,7 +2700,7 @@ mod tests {
 
                     let cidr = format!("10.0.0.0/{}", sn_prefix);
                     let sn = ops_engine
-                        .create_supernet(&CreateSupernet {
+                        .create_supernet(TEST_TENANT, &CreateSupernet {
                             cidr,
                             name: None,
                             description: None,
@@ -2595,7 +2714,7 @@ mod tests {
                         match op {
                             Op::AutoAllocate { prefix } => {
                                 if let Ok(allocs) = ops_engine
-                                    .allocate_auto(&AutoAllocateRequest {
+                                    .allocate_auto(TEST_TENANT, &AutoAllocateRequest {
                                         supernet_id: sn.id.clone(),
                                         prefix_length: *prefix,
                                         count: Some(1),
@@ -2622,7 +2741,7 @@ mod tests {
                                 if !allocation_ids.is_empty() {
                                     // Release the last allocation (deterministic given the sequence)
                                     let id = allocation_ids.pop().unwrap();
-                                    let _ = ops_engine.release_allocation(&id).await;
+                                    let _ = ops_engine.release_allocation(TEST_TENANT, &id).await;
                                 }
                             }
                         }
@@ -2632,6 +2751,7 @@ mod tests {
                     let active = ops_engine
                         .store()
                         .find_allocations_in_supernet(
+                            TEST_TENANT,
                             &sn.id,
                             &[AllocationStatus::Active, AllocationStatus::Reserved],
                         )
@@ -2655,7 +2775,7 @@ mod tests {
                     }
 
                     // Also verify address space conservation
-                    let util = ops_engine.utilization(&sn.id).await.unwrap();
+                    let util = ops_engine.utilization(TEST_TENANT, &sn.id).await.unwrap();
                     assert_eq!(
                         util.allocated_addresses + util.free_addresses,
                         util.total_addresses,
@@ -2692,7 +2812,7 @@ mod tests {
         let ops = test_ops_concurrent(db.to_str().unwrap()).await;
 
         let sn = ops
-            .create_supernet(&CreateSupernet {
+            .create_supernet(TEST_TENANT, &CreateSupernet {
                 cidr: "10.0.0.0/16".to_string(),
                 name: Some("concurrent-test".to_string()),
                 description: None,
@@ -2711,7 +2831,7 @@ mod tests {
 
             handles.push(tokio::spawn(async move {
                 barrier.wait().await;
-                ops.allocate_auto(&AutoAllocateRequest {
+                ops.allocate_auto(TEST_TENANT, &AutoAllocateRequest {
                     supernet_id: sn_id,
                     prefix_length: 24,
                     count: Some(1),
@@ -2781,7 +2901,7 @@ mod tests {
         let ops = test_ops_concurrent(db.to_str().unwrap()).await;
 
         let sn = ops
-            .create_supernet(&CreateSupernet {
+            .create_supernet(TEST_TENANT, &CreateSupernet {
                 cidr: "10.0.0.0/16".to_string(),
                 name: None,
                 description: None,
@@ -2800,7 +2920,7 @@ mod tests {
 
             handles.push(tokio::spawn(async move {
                 barrier.wait().await;
-                ops.allocate_specific(&CreateAllocation {
+                ops.allocate_specific(TEST_TENANT, &CreateAllocation {
                     supernet_id: sn_id,
                     cidr: "10.0.1.0/24".to_string(),
                     status: None,
@@ -2832,7 +2952,7 @@ mod tests {
         // before either writes, so we might get 2 successes (TOCTOU).
         // But the end state must be consistent: verify via the store.
         let allocs = ops
-            .list_allocations(&AllocationFilter {
+            .list_allocations(TEST_TENANT, &AllocationFilter {
                 supernet_id: Some(sn.id.clone()),
                 ..Default::default()
             })
@@ -2874,7 +2994,7 @@ mod tests {
         let ops = test_ops_concurrent(db.to_str().unwrap()).await;
 
         let sn = ops
-            .create_supernet(&CreateSupernet {
+            .create_supernet(TEST_TENANT, &CreateSupernet {
                 cidr: "10.0.0.0/24".to_string(),
                 name: None,
                 description: None,
@@ -2884,7 +3004,7 @@ mod tests {
 
         // Pre-allocate the first /25 block
         let existing = ops
-            .allocate_specific(&CreateAllocation {
+            .allocate_specific(TEST_TENANT, &CreateAllocation {
                 supernet_id: sn.id.clone(),
                 cidr: "10.0.0.0/25".to_string(),
                 status: None,
@@ -2909,7 +3029,7 @@ mod tests {
         let b1 = Arc::clone(&barrier);
         let free_handle = tokio::spawn(async move {
             b1.wait().await;
-            ops1.release_allocation(&alloc_id).await
+            ops1.release_allocation(TEST_TENANT, &alloc_id).await
         });
 
         // Task 2: allocate a new /25 block (the second half, which is always free)
@@ -2918,7 +3038,7 @@ mod tests {
         let b2 = Arc::clone(&barrier);
         let alloc_handle = tokio::spawn(async move {
             b2.wait().await;
-            ops2.allocate_specific(&CreateAllocation {
+            ops2.allocate_specific(TEST_TENANT, &CreateAllocation {
                 supernet_id: sn_id,
                 cidr: "10.0.0.128/25".to_string(),
                 status: None,
@@ -2949,7 +3069,7 @@ mod tests {
 
         // Verify final state: one released, one active
         let all = ops
-            .list_allocations(&AllocationFilter {
+            .list_allocations(TEST_TENANT, &AllocationFilter {
                 supernet_id: Some(sn.id.clone()),
                 ..Default::default()
             })
@@ -2992,7 +3112,7 @@ mod tests {
 
             handles.push(tokio::spawn(async move {
                 barrier.wait().await;
-                ops.create_supernet(&CreateSupernet {
+                ops.create_supernet(TEST_TENANT, &CreateSupernet {
                     cidr,
                     name: None,
                     description: None,
@@ -3012,7 +3132,7 @@ mod tests {
         }
 
         // Verify the supernet list is consistent
-        let supernets = ops.list_supernets().await.unwrap();
+        let supernets = ops.list_supernets(TEST_TENANT).await.unwrap();
 
         if conflict_count > 0 {
             // If a conflict was detected, exactly one should have succeeded
@@ -3031,7 +3151,7 @@ mod tests {
 
         // Regardless of how many succeeded, verify no panics occurred
         // and the store is in a queryable state
-        let list_result = ops.list_supernets().await;
+        let list_result = ops.list_supernets(TEST_TENANT).await;
         assert!(
             list_result.is_ok(),
             "store should remain queryable after concurrent operations"
@@ -3049,7 +3169,7 @@ mod tests {
             supernet_id: None,
         };
 
-        let err = ops.batch_release(&request).await.unwrap_err();
+        let err = ops.batch_release(TEST_TENANT, &request).await.unwrap_err();
         assert!(matches!(err, NetcidrError::InvalidInput(_)));
     }
 
@@ -3061,7 +3181,7 @@ mod tests {
     async fn test_query_audit_rejects_entity_id_with_path_traversal() {
         let ops = test_ops().await;
         let err = ops
-            .query_audit(&AuditFilter {
+            .query_audit(TEST_TENANT, &AuditFilter {
                 entity_id: Some("../etc/passwd".to_string()),
                 ..Default::default()
             })
@@ -3074,7 +3194,7 @@ mod tests {
     async fn test_query_audit_rejects_entity_id_with_null_byte() {
         let ops = test_ops().await;
         let err = ops
-            .query_audit(&AuditFilter {
+            .query_audit(TEST_TENANT, &AuditFilter {
                 entity_id: Some("id\x00injected".to_string()),
                 ..Default::default()
             })
@@ -3087,7 +3207,7 @@ mod tests {
     async fn test_query_audit_rejects_entity_type_with_control_char() {
         let ops = test_ops().await;
         let err = ops
-            .query_audit(&AuditFilter {
+            .query_audit(TEST_TENANT, &AuditFilter {
                 entity_type: Some("supernet\x01injected".to_string()),
                 ..Default::default()
             })
@@ -3100,7 +3220,7 @@ mod tests {
     async fn test_query_audit_rejects_action_with_control_char() {
         let ops = test_ops().await;
         let err = ops
-            .query_audit(&AuditFilter {
+            .query_audit(TEST_TENANT, &AuditFilter {
                 action: Some("create\x07bell".to_string()),
                 ..Default::default()
             })
@@ -3113,7 +3233,7 @@ mod tests {
     async fn test_query_audit_rejects_oversized_entity_type() {
         let ops = test_ops().await;
         let err = ops
-            .query_audit(&AuditFilter {
+            .query_audit(TEST_TENANT, &AuditFilter {
                 entity_type: Some("x".repeat(1025)),
                 ..Default::default()
             })
@@ -3127,7 +3247,7 @@ mod tests {
         let ops = test_ops().await;
         // No entries, but valid filter should not error.
         let entries = ops
-            .query_audit(&AuditFilter {
+            .query_audit(TEST_TENANT, &AuditFilter {
                 entity_type: Some("supernet".to_string()),
                 entity_id: Some("sn-abc123".to_string()),
                 action: Some("create_supernet".to_string()),
