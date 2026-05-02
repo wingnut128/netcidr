@@ -6,6 +6,7 @@ pub const MIGRATIONS: &[(u32, &str)] = &[
     (3, MIGRATION_003),
     (4, MIGRATION_004),
     (5, MIGRATION_005),
+    (6, MIGRATION_006),
 ];
 
 const MIGRATION_001: &str = r#"
@@ -110,3 +111,175 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
 
 CREATE INDEX IF NOT EXISTS idx_idempotency_expires ON idempotency_keys(expires_at);
 "#;
+
+/// Migration 006: multi-tenant isolation. Destructively drops and recreates
+/// `supernets`, `allocations`, `audit_log`, `idempotency_keys`, and
+/// `allocation_tags` (last one because it FKs allocations) so we can add
+/// `tenant_id` columns, replace `UNIQUE(cidr)` with `UNIQUE(tenant_id, cidr)`
+/// on supernets, add composite tenant indexes, and install triggers
+/// enforcing the cross-table invariant
+/// `allocations.tenant_id == supernets.tenant_id`.
+const MIGRATION_006: &str = r#"
+DROP TABLE IF EXISTS allocation_tags;
+DROP TABLE IF EXISTS allocations;
+DROP TABLE IF EXISTS supernets;
+DROP TABLE IF EXISTS audit_log;
+DROP TABLE IF EXISTS idempotency_keys;
+
+CREATE TABLE supernets (
+    id                TEXT PRIMARY KEY,
+    tenant_id         TEXT NOT NULL,
+    cidr              TEXT NOT NULL,
+    network_address   TEXT NOT NULL,
+    broadcast_address TEXT NOT NULL,
+    prefix_length     INTEGER NOT NULL,
+    total_hosts       TEXT NOT NULL,
+    name              TEXT,
+    description       TEXT,
+    ip_version        INTEGER NOT NULL,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    UNIQUE (tenant_id, cidr)
+);
+CREATE INDEX idx_supernets_tenant ON supernets(tenant_id);
+
+CREATE TABLE allocations (
+    id                    TEXT PRIMARY KEY,
+    tenant_id             TEXT NOT NULL,
+    supernet_id           TEXT NOT NULL REFERENCES supernets(id),
+    cidr                  TEXT NOT NULL,
+    network_address       TEXT NOT NULL,
+    broadcast_address     TEXT NOT NULL,
+    prefix_length         INTEGER NOT NULL,
+    total_hosts           TEXT NOT NULL,
+    status                TEXT NOT NULL,
+    resource_id           TEXT,
+    resource_type         TEXT,
+    name                  TEXT,
+    description           TEXT,
+    environment           TEXT,
+    owner                 TEXT,
+    parent_allocation_id  TEXT REFERENCES allocations(id),
+    created_at            TEXT NOT NULL,
+    updated_at            TEXT NOT NULL,
+    released_at           TEXT,
+    expires_at            TEXT
+);
+CREATE INDEX idx_allocations_tenant     ON allocations(tenant_id);
+CREATE INDEX idx_allocations_tenant_sn  ON allocations(tenant_id, supernet_id);
+CREATE INDEX idx_allocations_supernet   ON allocations(supernet_id);
+CREATE INDEX idx_allocations_status     ON allocations(status);
+CREATE INDEX idx_allocations_cidr       ON allocations(cidr);
+
+-- Cross-table invariant: allocations.tenant_id must match the parent supernet's.
+CREATE TRIGGER trg_allocations_tenant_match_insert
+    BEFORE INSERT ON allocations
+    FOR EACH ROW
+    WHEN NEW.tenant_id != (SELECT tenant_id FROM supernets WHERE id = NEW.supernet_id)
+    BEGIN
+        SELECT RAISE(ABORT, 'allocation tenant_id must match parent supernet tenant_id');
+    END;
+CREATE TRIGGER trg_allocations_tenant_match_update
+    BEFORE UPDATE OF tenant_id, supernet_id ON allocations
+    FOR EACH ROW
+    WHEN NEW.tenant_id != (SELECT tenant_id FROM supernets WHERE id = NEW.supernet_id)
+    BEGIN
+        SELECT RAISE(ABORT, 'allocation tenant_id must match parent supernet tenant_id');
+    END;
+
+CREATE TABLE allocation_tags (
+    allocation_id TEXT NOT NULL REFERENCES allocations(id) ON DELETE CASCADE,
+    key           TEXT NOT NULL,
+    value         TEXT NOT NULL,
+    PRIMARY KEY (allocation_id, key)
+);
+
+CREATE TABLE audit_log (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id     TEXT NOT NULL,
+    entity_type   TEXT NOT NULL,
+    entity_id     TEXT NOT NULL,
+    action        TEXT NOT NULL,
+    details       TEXT,
+    timestamp     TEXT NOT NULL,
+    caller_sub    TEXT,
+    caller_email  TEXT,
+    source_ip     TEXT,
+    request_id    TEXT
+);
+CREATE INDEX idx_audit_tenant         ON audit_log(tenant_id);
+CREATE INDEX idx_audit_tenant_entity  ON audit_log(tenant_id, entity_type, entity_id);
+CREATE INDEX idx_audit_request_id     ON audit_log(request_id);
+CREATE INDEX idx_audit_caller_sub     ON audit_log(caller_sub);
+
+CREATE TABLE idempotency_keys (
+    tenant_id     TEXT NOT NULL,
+    key           TEXT NOT NULL,
+    scope         TEXT NOT NULL,
+    request_hash  TEXT NOT NULL,
+    status_code   INTEGER NOT NULL,
+    response_body TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    expires_at    TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, key, scope)
+);
+CREATE INDEX idx_idempotency_expires ON idempotency_keys(expires_at);
+"#;
+
+#[cfg(test)]
+mod tests {
+    use crate::ipam::sqlite::SqliteStore;
+    use crate::ipam::store::IpamStore;
+
+    #[tokio::test]
+    async fn allocation_with_mismatched_tenant_id_is_rejected_by_trigger() {
+        let store = SqliteStore::in_memory().unwrap();
+        store.initialize().await.unwrap();
+        store.migrate().await.unwrap();
+
+        let conn = store.pool().get().expect("pool checkout");
+
+        // Insert a supernet for tenant "a@x".
+        conn.execute(
+            r#"INSERT INTO supernets
+               (id, tenant_id, cidr, network_address, broadcast_address,
+                prefix_length, total_hosts, ip_version, created_at, updated_at)
+               VALUES ('s1','a@x','10.0.0.0/8','10.0.0.0','10.255.255.255',
+                       8,'16777216',4,'2026-05-02T00:00:00Z','2026-05-02T00:00:00Z')"#,
+            [],
+        )
+        .expect("insert supernet");
+
+        // Attempt to insert allocation with mismatched tenant_id.
+        let result = conn.execute(
+            r#"INSERT INTO allocations
+               (id, tenant_id, supernet_id, cidr, network_address, broadcast_address,
+                prefix_length, total_hosts, status, created_at, updated_at)
+               VALUES ('a1','b@x','s1','10.1.0.0/16','10.1.0.0','10.1.255.255',
+                       16,'65536','active','2026-05-02T00:00:00Z','2026-05-02T00:00:00Z')"#,
+            [],
+        );
+
+        assert!(
+            result.is_err(),
+            "trigger should reject allocation whose tenant_id != supernet's tenant_id"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("allocation tenant_id must match"),
+            "unexpected error: {}",
+            err
+        );
+
+        // Matching tenant_id should succeed.
+        conn.execute(
+            r#"INSERT INTO allocations
+               (id, tenant_id, supernet_id, cidr, network_address, broadcast_address,
+                prefix_length, total_hosts, status, created_at, updated_at)
+               VALUES ('a2','a@x','s1','10.1.0.0/16','10.1.0.0','10.1.255.255',
+                       16,'65536','active','2026-05-02T00:00:00Z','2026-05-02T00:00:00Z')"#,
+            [],
+        )
+        .expect("matching tenant insert should succeed");
+    }
+}
