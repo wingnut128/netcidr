@@ -7,12 +7,15 @@ use axum::{
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tracing::warn;
 
 use crate::config::AuthMode;
+use crate::ipam::store::IpamStore;
+use crate::pat::{self, PatPepper};
 
 const GOOGLE_ISSUERS: &[&str] = &["https://accounts.google.com", "accounts.google.com"];
 const GOOGLE_JWKS_URL: &str = "https://www.googleapis.com/oauth2/v3/certs";
@@ -26,21 +29,63 @@ pub enum PrincipalKind {
     Oidc,
 }
 
+/// How the request principal authenticated. Carried on `AuthenticatedPrincipal`
+/// and propagated into the audit context so every mutation records its
+/// auth method (and the originating PAT id, when applicable).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthMethod {
+    Oidc,
+    Pat,
+    Bearer,
+}
+
+impl AuthMethod {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AuthMethod::Oidc => "oidc",
+            AuthMethod::Pat => "pat",
+            AuthMethod::Bearer => "bearer",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AuthenticatedPrincipal {
     pub kind: PrincipalKind,
     pub subject: String,
     pub email: Option<String>,
     pub audience: Option<String>,
+    pub auth_method: AuthMethod,
+    /// `Some(id)` only when `auth_method == AuthMethod::Pat`.
+    pub pat_id: Option<String>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct AuthConfig {
     mode: AuthMode,
     bearer_token: Option<String>,
     oidc_audience: Option<String>,
     allowed_emails: Vec<String>,
     admin_emails: Vec<String>,
+    /// Optional store + pepper used by the PAT verifier. Both must be set
+    /// for the `Bearer ncdr_pat_…` branch of `require_auth` to succeed;
+    /// otherwise PAT-shaped tokens fall through to a generic 401.
+    pat_store: Option<Arc<dyn IpamStore>>,
+    pat_pepper: Option<Arc<PatPepper>>,
+}
+
+impl std::fmt::Debug for AuthConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthConfig")
+            .field("mode", &self.mode)
+            .field("bearer_token", &self.bearer_token.as_ref().map(|_| "<set>"))
+            .field("oidc_audience", &self.oidc_audience)
+            .field("allowed_emails", &self.allowed_emails)
+            .field("admin_emails", &self.admin_emails)
+            .field("pat_store", &self.pat_store.as_ref().map(|_| "<set>"))
+            .field("pat_pepper", &self.pat_pepper.as_ref().map(|_| "<set>"))
+            .finish()
+    }
 }
 
 impl AuthConfig {
@@ -59,7 +104,25 @@ impl AuthConfig {
                 .map(|e| e.to_ascii_lowercase())
                 .collect(),
             admin_emails: Vec::new(),
+            pat_store: None,
+            pat_pepper: None,
         }
+    }
+
+    /// Attach the IPAM store + pepper used by the PAT verifier. Set on
+    /// `serve` startup; left unset for unit tests that don't exercise PATs.
+    pub fn with_pat_backend(
+        mut self,
+        store: Arc<dyn IpamStore>,
+        pepper: Arc<PatPepper>,
+    ) -> Self {
+        self.pat_store = Some(store);
+        self.pat_pepper = Some(pepper);
+        self
+    }
+
+    pub fn has_pat_backend(&self) -> bool {
+        self.pat_store.is_some() && self.pat_pepper.is_some()
     }
 
     pub fn disabled() -> Self {
@@ -114,6 +177,21 @@ impl AuthConfig {
     /// missing/invalid. Callers (e.g. /me) use this when they want to know
     /// "is this user signed in at all?" independent of allowlist status.
     pub async fn authenticate(&self, headers: &HeaderMap) -> Option<AuthenticatedPrincipal> {
+        // Mirrors the dispatch logic in `require_auth` so /me and /admin
+        // (which use this method outside the IPAM middleware) accept PATs
+        // too. PAT verification needs the store + pepper configured; if
+        // they're absent we silently skip the PAT branch.
+        if let Some(token) = bearer_token(headers.get(header::AUTHORIZATION))
+            && token.starts_with("ncdr_pat_")
+        {
+            if let (Some(store), Some(pepper)) = (self.pat_store.as_ref(), self.pat_pepper.as_ref())
+            {
+                return verify_pat(store, pepper.as_ref(), &self.allowed_emails, token)
+                    .await
+                    .ok();
+            }
+            return None;
+        }
         match self.mode {
             AuthMode::None => None,
             AuthMode::Bearer => authenticate_bearer(headers, self.bearer_token.as_deref()),
@@ -152,12 +230,38 @@ pub async fn require_auth(config: AuthConfig, mut request: Request, next: Next) 
         return next.run(request).await;
     }
 
-    let principal = match config.mode {
-        AuthMode::None => None,
-        AuthMode::Bearer => authenticate_bearer(request.headers(), config.bearer_token.as_deref()),
-        AuthMode::Oidc => {
-            authenticate_oidc(request.headers(), config.oidc_audience.as_deref()).await
+    // Dispatch by header content. PAT-shaped bearer tokens take priority
+    // over the OIDC/bearer branches: a `ncdr_pat_…` value can never be a
+    // valid JWT or static bearer token, so trying those first would just
+    // burn cycles for the same generic 401.
+    let raw_bearer = bearer_token(request.headers().get(header::AUTHORIZATION));
+    let principal = if let Some(token) = raw_bearer {
+        if token.starts_with("ncdr_pat_") {
+            let (Some(store), Some(pepper)) =
+                (config.pat_store.as_ref(), config.pat_pepper.as_ref())
+            else {
+                // PAT-shaped bearer with no PAT backend configured: cannot
+                // succeed. Fall back to a generic 401 without leaking the
+                // misconfiguration.
+                return unauthorized(config.mode);
+            };
+            match verify_pat(store, pepper.as_ref(), &config.allowed_emails, token).await {
+                Ok(p) => Some(p),
+                Err(_) => return unauthorized(config.mode),
+            }
+        } else {
+            match config.mode {
+                AuthMode::None => None,
+                AuthMode::Bearer => {
+                    authenticate_bearer(request.headers(), config.bearer_token.as_deref())
+                }
+                AuthMode::Oidc => {
+                    authenticate_oidc(request.headers(), config.oidc_audience.as_deref()).await
+                }
+            }
         }
+    } else {
+        None
     };
 
     let Some(principal) = principal else {
@@ -175,7 +279,8 @@ pub async fn require_auth(config: AuthConfig, mut request: Request, next: Next) 
     // Derive tenant identity from the authenticated principal. OIDC mode
     // requires a verified email; bearer-token mode (single-operator deploys)
     // falls back to the constant subject "bearer-token" so a single-tenant
-    // bucket still exists.
+    // bucket still exists. PAT auth carries the OIDC owner_email, so it
+    // takes the same email-as-tenant path as OIDC.
     let tenant_id = match principal.kind {
         PrincipalKind::Oidc => match principal.email.clone() {
             Some(email) => email,
@@ -198,10 +303,77 @@ pub async fn require_auth(config: AuthConfig, mut request: Request, next: Next) 
             .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
             .map(|ci| ci.0.ip().to_string()),
         request_id: Some(uuid::Uuid::new_v4().to_string()),
+        auth_method: Some(principal.auth_method.as_str().to_string()),
+        pat_id: principal.pat_id.clone(),
     };
 
     request.extensions_mut().insert(principal);
     crate::audit_context::scope(ctx, next.run(request)).await
+}
+
+/// Errors surfaced by [`verify_pat`]. All variants are externally collapsed
+/// to a generic 401 by [`require_auth`] so the verifier doesn't leak which
+/// failure mode (shape, miss, expired/revoked, allowlist) was hit.
+#[derive(Debug)]
+pub enum AuthError {
+    Unauthorized,
+}
+
+/// Verify a `ncdr_pat_…` plaintext bearer token against the store. The token
+/// must have already had its `Bearer ` prefix stripped.
+///
+/// Steps, in order:
+///   1. Shape-check via [`pat::hash_for_lookup`] — invalid shape returns
+///      Unauthorized without any DB access.
+///   2. Store lookup with `(token_hash, now)` — the SQL predicate already
+///      filters revoked / expired so any miss is a single uniform 401.
+///   3. Allowlist check on `owner_email` (matching the existing OIDC
+///      semantics: empty allowlist disables the check).
+///   4. Detached `tokio::spawn` to update `last_used_at` — fire and forget,
+///      errors logged at WARN; the request never blocks on this write.
+pub(crate) async fn verify_pat(
+    store: &Arc<dyn IpamStore>,
+    pepper: &PatPepper,
+    allowed_emails: &[String],
+    token: &str,
+) -> Result<AuthenticatedPrincipal, AuthError> {
+    let hash = pat::hash_for_lookup(token, pepper).ok_or(AuthError::Unauthorized)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let row = store
+        .pat_get_by_hash(&hash, &now)
+        .await
+        .map_err(|_| AuthError::Unauthorized)?
+        .ok_or(AuthError::Unauthorized)?;
+
+    if !allowed_emails.is_empty() {
+        let needle = row.owner_email.to_ascii_lowercase();
+        if !allowed_emails.iter().any(|e| e == &needle) {
+            return Err(AuthError::Unauthorized);
+        }
+    }
+
+    let principal = AuthenticatedPrincipal {
+        kind: PrincipalKind::Oidc,
+        subject: row.owner_sub.clone(),
+        email: Some(row.owner_email.clone()),
+        audience: None,
+        auth_method: AuthMethod::Pat,
+        pat_id: Some(row.id.clone()),
+    };
+
+    // Detached last_used_at update — fire-and-forget so the request path
+    // never waits on this write. WARN-level on failure (rare; transient
+    // DB errors) is enough to surface persistent breakage in metrics.
+    let touch_store = Arc::clone(store);
+    let touch_id = row.id.clone();
+    let touch_now = now;
+    tokio::spawn(async move {
+        if let Err(e) = touch_store.pat_touch_last_used(&touch_id, &touch_now).await {
+            warn!(error = %e, pat_id = %touch_id, "failed to update PAT last_used_at");
+        }
+    });
+
+    Ok(principal)
 }
 
 pub async fn require_bearer_auth(config: AuthConfig, request: Request, next: Next) -> Response {
@@ -223,6 +395,8 @@ fn authenticate_bearer(
         subject: "bearer-token".to_string(),
         email: None,
         audience: None,
+        auth_method: AuthMethod::Bearer,
+        pat_id: None,
     })
 }
 
@@ -242,6 +416,8 @@ async fn authenticate_oidc(
             .email
             .filter(|_| claims.email_verified.unwrap_or(false)),
         audience: Some(claims.aud),
+        auth_method: AuthMethod::Oidc,
+        pat_id: None,
     })
 }
 

@@ -25,6 +25,7 @@ async fn ipam_app() -> axum::Router {
             ..Default::default()
         },
         ipam_ops: Some(ops),
+        pat_pepper: None,
     });
     with_test_tenant(router)
 }
@@ -396,6 +397,7 @@ async fn ipam_app_with_bearer_auth() -> axum::Router {
             ..Default::default()
         },
         ipam_ops: Some(ops),
+        pat_pepper: None,
     })
 }
 

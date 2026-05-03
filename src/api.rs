@@ -115,6 +115,10 @@ pub struct ApiDoc;
 pub struct RouterConfig {
     pub server: ServerConfig,
     pub ipam_ops: Option<Arc<crate::ipam::operations::IpamOps>>,
+    /// Server pepper used by the PAT verifier. Required by `serve` startup
+    /// when OIDC is configured; left `None` for tests that don't exercise
+    /// PATs and for non-IPAM deployments.
+    pub pat_pepper: Option<Arc<crate::pat::PatPepper>>,
 }
 
 #[derive(Deserialize)]
@@ -341,7 +345,14 @@ fn format_response<T: Serialize + TextOutput + CsvOutput>(
 
 pub fn create_router(config: RouterConfig) -> Router {
     let config_ext = Arc::new(config.server.clone());
-    let auth_config = config.server.auth_config();
+    let mut auth_config = config.server.auth_config();
+    // If both a PAT-capable store and pepper are present, attach them so
+    // `Bearer ncdr_pat_…` tokens authenticate through `verify_pat`. The
+    // store comes from IpamOps (the only persistent store in the binary);
+    // PATs require IPAM to be enabled.
+    if let (Some(ops), Some(pepper)) = (&config.ipam_ops, &config.pat_pepper) {
+        auth_config = auth_config.with_pat_backend(ops.store_arc(), Arc::clone(pepper));
+    }
 
     let router = Router::new()
         .route("/health", get(health))

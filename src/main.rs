@@ -404,9 +404,30 @@ async fn async_main(cli: Cli) {
                 None
             };
 
+            // PAT pepper bootstrap. We require NETCIDR_PAT_PEPPER whenever
+            // OIDC auth is active (the only mode that mints PATs); refuse
+            // to start otherwise so a misconfiguration can't silently
+            // disable PAT verification. Bearer-only and unauthenticated
+            // modes don't need a pepper.
+            let pat_pepper = if matches!(server_config.auth_mode, netcidr::config::AuthMode::Oidc) {
+                match netcidr::pat::PatPepper::from_env() {
+                    Ok(p) => Some(std::sync::Arc::new(p)),
+                    Err(e) => {
+                        eprintln!(
+                            "Error: NETCIDR_PAT_PEPPER must be set when auth_mode='oidc': {}",
+                            e
+                        );
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                None
+            };
+
             let router_config = RouterConfig {
                 server: server_config,
                 ipam_ops,
+                pat_pepper,
             };
             let router = create_router(router_config);
 

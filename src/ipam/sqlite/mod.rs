@@ -682,7 +682,7 @@ impl IpamStore for SqliteStore {
     async fn append_audit(&self, entry: &AuditEntry) -> Result<()> {
         let conn = self.conn()?;
         conn.execute(
-            "INSERT INTO audit_log (tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO audit_log (tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id, auth_method, pat_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 entry.tenant_id,
                 entry.timestamp,
@@ -694,6 +694,8 @@ impl IpamStore for SqliteStore {
                 entry.caller_email,
                 entry.source_ip,
                 entry.request_id,
+                if entry.auth_method.is_empty() { "oidc".to_string() } else { entry.auth_method.clone() },
+                entry.pat_id,
             ],
         ).map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         Ok(())
@@ -702,7 +704,7 @@ impl IpamStore for SqliteStore {
     async fn query_audit(&self, tenant_id: &str, filter: &AuditFilter) -> Result<Vec<AuditEntry>> {
         let conn = self.conn()?;
         let mut sql = String::from(
-            "SELECT id, tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id FROM audit_log WHERE tenant_id = ?1",
+            "SELECT id, tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id, auth_method, pat_id FROM audit_log WHERE tenant_id = ?1",
         );
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
         param_values.push(Box::new(tenant_id.to_string()));
@@ -754,6 +756,8 @@ impl IpamStore for SqliteStore {
                     caller_email: row.get(8)?,
                     source_ip: row.get(9)?,
                     request_id: row.get(10)?,
+                    auth_method: row.get(11)?,
+                    pat_id: row.get(12)?,
                 })
             })
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?

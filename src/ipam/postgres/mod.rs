@@ -668,7 +668,7 @@ impl IpamStore for PostgresStore {
 
     async fn append_audit(&self, entry: &AuditEntry) -> Result<()> {
         sqlx::query(
-            "INSERT INTO audit_log (tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+            "INSERT INTO audit_log (tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id, auth_method, pat_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
         )
         .bind(&entry.tenant_id)
         .bind(&entry.timestamp)
@@ -680,6 +680,8 @@ impl IpamStore for PostgresStore {
         .bind(&entry.caller_email)
         .bind(&entry.source_ip)
         .bind(&entry.request_id)
+        .bind(if entry.auth_method.is_empty() { "oidc".to_string() } else { entry.auth_method.clone() })
+        .bind(&entry.pat_id)
         .execute(&self.pool)
         .await
         .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
@@ -688,7 +690,7 @@ impl IpamStore for PostgresStore {
 
     async fn query_audit(&self, tenant_id: &str, filter: &AuditFilter) -> Result<Vec<AuditEntry>> {
         let mut sql = String::from(
-            "SELECT id, tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id FROM audit_log WHERE tenant_id = $1",
+            "SELECT id, tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id, auth_method, pat_id FROM audit_log WHERE tenant_id = $1",
         );
         let mut param_values: Vec<String> = Vec::new();
         param_values.push(tenant_id.to_string());
@@ -748,6 +750,10 @@ impl IpamStore for PostgresStore {
                     caller_email: row.try_get("caller_email").ok(),
                     source_ip: row.try_get("source_ip").ok(),
                     request_id: row.try_get("request_id").ok(),
+                    auth_method: row
+                        .try_get::<String, _>("auth_method")
+                        .unwrap_or_else(|_| "oidc".to_string()),
+                    pat_id: row.try_get("pat_id").ok(),
                 }
             })
             .collect())

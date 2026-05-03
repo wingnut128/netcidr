@@ -24,6 +24,7 @@ async fn bearer_ipam_test_config() -> RouterConfig {
             ..ServerConfig::default()
         },
         ipam_ops: Some(ops),
+        pat_pepper: None,
     }
 }
 
