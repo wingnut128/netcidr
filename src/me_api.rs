@@ -52,7 +52,7 @@ const MAX_EXPIRES_IN_DAYS: u32 = 365;
 /// Maximum length of the user-supplied `name` field, in bytes.
 const MAX_NAME_LEN: usize = 64;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CreateTokenRequest {
     pub name: String,
     /// Number of days from now until the token expires. `None` defaults
@@ -62,7 +62,7 @@ pub struct CreateTokenRequest {
 
 /// One-time response to a successful mint. The `token` field is the
 /// plaintext secret — surfaced exactly once and never again.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CreateTokenResponse {
     pub id: String,
     pub name: String,
@@ -76,7 +76,7 @@ pub struct CreateTokenResponse {
 
 /// `GET /me/tokens` envelope. Mirrors the `SupernetList` shape used by
 /// `/ipam/supernets` — `{ tokens: [...], count: N }`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TokenListResponse {
     pub tokens: Vec<PersonalAccessTokenSummary>,
     pub count: usize,

@@ -17,6 +17,7 @@ use std::net::SocketAddr;
 use tracing::{info, warn};
 
 mod ipam_cli;
+mod token_cli;
 
 /// Print to stdout, handling broken pipe errors gracefully.
 /// When output is piped to commands like `head`, the pipe may close early.
@@ -230,6 +231,15 @@ async fn async_main(cli: Cli) {
         Some(Commands::Ipam { db, command }) => {
             if let Err(e) =
                 ipam_cli::handle_ipam_command(&writer, &cli.output, db.as_deref(), command).await
+            {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Some(Commands::Token { api_url, command }) => {
+            if let Err(e) =
+                token_cli::handle_token_command(&writer, &cli.output, api_url.as_deref(), command)
+                    .await
             {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);
