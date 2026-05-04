@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **PAT minting and hashing primitives (`src/pat.rs`).** Pure-function module for generating opaque personal access tokens (`ncdr_pat_<43 b64url chars>`) and computing pepper-mixed SHA-256 storage hashes. Includes `PatPepper` (env-loaded, redacted `Debug`, ≥16-byte minimum), `MintedToken` (one-time plaintext, public prefix, hash; redacted `Debug`), `mint()` (32 random bytes from `OsRng`), `hash_for_lookup()` (regex-gated wire-format pre-validation), and the public `PAT_SHAPE` regex. No I/O, no DB, no clock — wired into auth middleware in a follow-up. Phase 2 of personal access tokens (sub-project 2 of 3 toward remote MCP).
 
+### Changed
+
+- **Gitleaks: allowlist test fixtures.** Added `.gitleaks.toml` extending the default ruleset to allowlist `tests/fixtures/*.pem` (test private-key fixtures) and the deliberately-fake `ghp_validlookingbutwrongprefix...` literal in `src/pat.rs` used to assert PAT prefix validation. Unblocks the scheduled `gitleaks` workflow on `main`.
+
 ## [0.24.0] - 2026-05-02
 
 ### Changed
