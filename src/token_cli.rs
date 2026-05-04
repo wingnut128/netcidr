@@ -312,10 +312,11 @@ pub async fn handle_token_command(
             let view: TokenListView = client.list().await?.into();
             write_view(writer, output_file, &view)
         }
-        TokenCommands::Create {
-            name,
-            expires_in_days,
-        } => {
+        TokenCommands::Create { name, expires_in } => {
+            let expires_in_days = match expires_in.as_deref() {
+                Some(s) => Some(parse_human_days(s)?),
+                None => None,
+            };
             let req = CreateTokenRequest {
                 name,
                 expires_in_days,
@@ -328,5 +329,104 @@ pub async fn handle_token_command(
             let view = RevokeView { id, revoked: true };
             write_view(writer, output_file, &view)
         }
+    }
+}
+
+/// Parse a tightly-bounded human-readable duration into days.
+///
+/// Grammar (case-sensitive, no whitespace, no decimals, no compounds):
+///
+/// ```text
+///   <duration> := <positive-integer> <unit>
+///   <unit>     := "d" | "w" | "y"
+/// ```
+///
+/// Units: `d` = 1 day, `w` = 7 days, `y` = 365 days. Leading zeros are
+/// rejected (`0d`, `01d` both fail). The result must fit in `u32`; the
+/// server enforces its own ≤365-day cap on top of this.
+///
+/// Deliberately omits `m` (minutes vs months ambiguity) and any
+/// composite forms like `1d12h`. The input surface is supposed to be
+/// boring.
+fn parse_human_days(s: &str) -> Result<u32> {
+    let bytes = s.as_bytes();
+    if bytes.len() < 2 {
+        return Err(NetcidrError::InvalidInput(format!(
+            "invalid duration {s:?}: expected <N><unit>, e.g. 30d, 12w, 1y"
+        )));
+    }
+    let (digits, unit) = bytes.split_at(bytes.len() - 1);
+    let unit = unit[0];
+
+    // Reject leading zeros and non-ASCII-digit bytes outright. `[1-9][0-9]*`.
+    if digits[0] == b'0' || !digits.iter().all(|b| b.is_ascii_digit()) {
+        return Err(NetcidrError::InvalidInput(format!(
+            "invalid duration {s:?}: digits must match [1-9][0-9]*"
+        )));
+    }
+
+    let n: u32 = std::str::from_utf8(digits)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| {
+            NetcidrError::InvalidInput(format!("invalid duration {s:?}: number out of range"))
+        })?;
+
+    let multiplier: u32 = match unit {
+        b'd' => 1,
+        b'w' => 7,
+        b'y' => 365,
+        _ => {
+            return Err(NetcidrError::InvalidInput(format!(
+                "invalid duration {s:?}: unit must be d, w, or y"
+            )));
+        }
+    };
+
+    n.checked_mul(multiplier)
+        .ok_or_else(|| NetcidrError::InvalidInput(format!("invalid duration {s:?}: too large")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_human_days;
+
+    #[test]
+    fn accepts_canonical_forms() {
+        assert_eq!(parse_human_days("1d").unwrap(), 1);
+        assert_eq!(parse_human_days("30d").unwrap(), 30);
+        assert_eq!(parse_human_days("1w").unwrap(), 7);
+        assert_eq!(parse_human_days("12w").unwrap(), 84);
+        assert_eq!(parse_human_days("1y").unwrap(), 365);
+    }
+
+    #[test]
+    fn rejects_missing_or_unknown_unit() {
+        for s in ["", "d", "30", "30s", "30h", "30M", "30D", "30Y"] {
+            assert!(parse_human_days(s).is_err(), "should reject {s:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_leading_zero_and_zero() {
+        for s in ["0d", "00d", "01d", "07w"] {
+            assert!(parse_human_days(s).is_err(), "should reject {s:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_non_canonical_shapes() {
+        for s in [
+            " 1d", "1d ", "1.5d", "1d30m", "1d12h", "+1d", "-1d", "1dd", "1 d", "one-day",
+        ] {
+            assert!(parse_human_days(s).is_err(), "should reject {s:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_overflow() {
+        assert!(parse_human_days("99999999999d").is_err());
+        // 12000000y * 365 overflows u32.
+        assert!(parse_human_days("12000000y").is_err());
     }
 }

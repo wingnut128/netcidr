@@ -486,9 +486,10 @@ pub enum TokenCommands {
         /// Display name (1-64 chars, no control chars)
         #[arg(long)]
         name: String,
-        /// Days until expiry (1-365, default 90)
+        /// Lifetime as `<N><unit>`: d=days, w=weeks, y=years.
+        /// Examples: 1d, 30d, 12w, 1y. Max 1y, default 90d.
         #[arg(long)]
-        expires_in_days: Option<u32>,
+        expires_in: Option<String>,
     },
     /// Revoke a personal access token by id
     Revoke {
