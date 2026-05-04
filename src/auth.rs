@@ -111,11 +111,7 @@ impl AuthConfig {
 
     /// Attach the IPAM store + pepper used by the PAT verifier. Set on
     /// `serve` startup; left unset for unit tests that don't exercise PATs.
-    pub fn with_pat_backend(
-        mut self,
-        store: Arc<dyn IpamStore>,
-        pepper: Arc<PatPepper>,
-    ) -> Self {
+    pub fn with_pat_backend(mut self, store: Arc<dyn IpamStore>, pepper: Arc<PatPepper>) -> Self {
         self.pat_store = Some(store);
         self.pat_pepper = Some(pepper);
         self
@@ -595,6 +591,43 @@ fn issued_in_future(iat: usize) -> bool {
         .map(|duration| duration.as_secs())
         .unwrap_or_default();
     iat as u64 > now.saturating_add(CLOCK_SKEW_SECONDS)
+}
+
+/// Test-only helpers for integration tests that need to mint OIDC tokens
+/// without contacting Google. Always compiled (so external integration
+/// tests can call them) but `#[doc(hidden)]` to keep them out of the
+/// public API surface.
+#[doc(hidden)]
+pub mod test_support {
+    use super::*;
+    use base64::Engine;
+
+    fn b64url(bytes: &[u8]) -> String {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    }
+
+    /// Install an RSA public key into the JWKS cache used by the OIDC
+    /// validator. Subsequent OIDC verifications find this key by `kid`
+    /// and skip the network fetch.
+    pub async fn install_jwks(kid: &str, n_be: &[u8], e_be: &[u8]) {
+        let mut cache = key_cache().write().await;
+        cache.keys.insert(
+            kid.to_string(),
+            GoogleKey {
+                n: b64url(n_be),
+                e: b64url(e_be),
+            },
+        );
+        cache.expires_at = Some(Instant::now() + DEFAULT_KEY_TTL);
+    }
+
+    /// Clear the JWKS cache. Tests that exercise allowlist-removal-style
+    /// scenarios call this so a stale key doesn't bleed across tests.
+    pub async fn clear_jwks() {
+        let mut cache = key_cache().write().await;
+        cache.keys.clear();
+        cache.expires_at = None;
+    }
 }
 
 #[cfg(test)]

@@ -382,12 +382,30 @@ pub fn create_router(config: RouterConfig) -> Router {
     let router = if let Some(ops) = config.ipam_ops {
         let ipam_auth = auth_config.clone();
         let ipam_router = crate::ipam_api::create_ipam_router()
-            .layer(Extension(ops))
+            .layer(Extension(Arc::clone(&ops)))
             .layer(middleware::from_fn(move |request, next| {
                 let auth_config = ipam_auth.clone();
                 async move { require_auth(auth_config, request, next).await }
             }));
-        router.nest("/ipam", ipam_router)
+        let router = router.nest("/ipam", ipam_router);
+
+        // Mount /me/tokens whenever a PAT pepper is configured. /me/tokens
+        // requires OIDC (PATs and bearer-mode static tokens are rejected
+        // by the inner `require_oidc` guard); /ipam/* continues to accept
+        // OIDC, PAT, and bearer.
+        if let Some(pepper) = config.pat_pepper.as_ref() {
+            let me_auth = auth_config.clone();
+            let me_router = crate::me_api::create_me_router()
+                .layer(Extension(Arc::clone(&ops)))
+                .layer(Extension(Arc::clone(pepper)))
+                .layer(middleware::from_fn(move |request, next| {
+                    let auth_config = me_auth.clone();
+                    async move { require_auth(auth_config, request, next).await }
+                }));
+            router.merge(me_router)
+        } else {
+            router
+        }
     } else {
         router
     };
