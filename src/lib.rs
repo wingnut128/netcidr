@@ -22,6 +22,7 @@ pub mod ipam_api;
 pub mod me_api;
 pub mod output;
 pub mod pat;
+pub mod pat_lifecycle;
 pub mod tenant;
 
 // IPAM persistence layer

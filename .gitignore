@@ -35,6 +35,7 @@ service-account*.json
 *token*
 !src/**
 !tests/**
+!dashboard/src/**
 
 # Editor swap/backup files
 *.swp

@@ -5,16 +5,23 @@ interface ModalProps {
   onClose: () => void;
   title: string;
   children: ReactNode;
+  dismissible?: boolean;
 }
 
-export function Modal({ open, onClose, title, children }: ModalProps) {
+export function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  dismissible = true,
+}: ModalProps) {
   if (!open) return null;
 
   return (
     <div
       className="fixed inset-0 z-[100] flex sm:items-center justify-center bg-black/70"
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (dismissible && e.target === e.currentTarget) onClose();
       }}
     >
       <div className="bg-surface border border-border w-full sm:max-w-lg sm:mx-4 h-full sm:h-auto sm:max-h-[90vh] overflow-y-auto flex flex-col">
@@ -22,13 +29,15 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
           <h3 className="text-xs font-medium text-text-muted">
             {title}
           </h3>
-          <button
-            className="text-text-muted hover:text-text text-lg leading-none min-h-[44px] min-w-[44px] flex items-center justify-center sm:min-h-0 sm:min-w-0"
-            onClick={onClose}
-            aria-label="Close"
-          >
-            &times;
-          </button>
+          {dismissible && (
+            <button
+              className="text-text-muted hover:text-text text-lg leading-none min-h-[44px] min-w-[44px] flex items-center justify-center sm:min-h-0 sm:min-w-0"
+              onClick={onClose}
+              aria-label="Close"
+            >
+              &times;
+            </button>
+          )}
         </div>
         <div className="p-4">{children}</div>
       </div>

@@ -38,25 +38,16 @@ use tracing::{info, instrument, warn};
 
 use crate::auth::{AuthMethod, AuthenticatedPrincipal};
 use crate::error::NetcidrError;
-use crate::ipam::models::{CreatePersonalAccessToken, PersonalAccessTokenSummary};
+use crate::ipam::models::PersonalAccessTokenSummary;
 use crate::ipam::operations::IpamOps;
-use crate::pat::{self, PatPepper};
-use crate::validation;
-
-/// Default token lifetime in days when `expires_in_days` is omitted.
-const DEFAULT_EXPIRES_IN_DAYS: u32 = 90;
-
-/// Hard upper bound on `expires_in_days`.
-const MAX_EXPIRES_IN_DAYS: u32 = 365;
-
-/// Maximum length of the user-supplied `name` field, in bytes.
-const MAX_NAME_LEN: usize = 64;
+use crate::pat::PatPepper;
+use crate::pat_lifecycle::{CreatePatRequest, PatLifecycle, PatOwner};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateTokenRequest {
     pub name: String,
     /// Number of days from now until the token expires. `None` defaults
-    /// to [`DEFAULT_EXPIRES_IN_DAYS`]; values outside `1..=365` are 400.
+    /// to the lifecycle default; values outside `1..=365` are 400.
     pub expires_in_days: Option<u32>,
 }
 
@@ -142,39 +133,11 @@ async fn create_token(
     Extension(principal): Extension<AuthenticatedPrincipal>,
     Json(body): Json<CreateTokenRequest>,
 ) -> Response {
-    // 1. Validate name. `validate_text_field` rejects control chars and
-    //    overlong inputs; we additionally require non-empty.
-    let name = body.name.trim();
-    if name.is_empty() {
-        return error_response(StatusCode::BAD_REQUEST, "name must not be empty");
-    }
-    if let Err(e) = validation::validate_text_field(name, MAX_NAME_LEN) {
-        return error_response(StatusCode::BAD_REQUEST, e.to_string());
-    }
-
-    // 2. Validate expires_in_days.
-    let days = match body.expires_in_days {
-        None => DEFAULT_EXPIRES_IN_DAYS,
-        Some(0) => {
-            return error_response(
-                StatusCode::BAD_REQUEST,
-                "expires_in_days must be at least 1",
-            );
-        }
-        Some(n) if n > MAX_EXPIRES_IN_DAYS => {
-            return error_response(
-                StatusCode::BAD_REQUEST,
-                format!("expires_in_days must not exceed {MAX_EXPIRES_IN_DAYS}"),
-            );
-        }
-        Some(n) => n,
-    };
-
-    // 3. Pull required identity fields off the principal. OIDC requires
+    // 1. Pull required identity fields off the principal. OIDC requires
     //    a verified email; the require_auth layer already enforces this
     //    for OIDC mode, but defend in depth.
-    let owner_email = match principal.email.clone() {
-        Some(e) => e,
+    let owner = match owner_from_principal(&principal) {
+        Some(owner) => owner,
         None => {
             return error_response(
                 StatusCode::FORBIDDEN,
@@ -182,40 +145,34 @@ async fn create_token(
             );
         }
     };
-    let owner_sub = principal.subject.clone();
 
-    // 4. Mint, compute timestamps, persist.
-    let minted = pat::mint(pepper.as_ref());
-    let now = chrono::Utc::now();
-    let expires_at = (now + chrono::Duration::days(days as i64)).to_rfc3339();
-
-    let input = CreatePersonalAccessToken {
-        tenant_id: owner_email.clone(),
-        owner_sub,
-        owner_email,
-        name: name.to_string(),
-        prefix: minted.prefix.clone(),
-        token_hash: minted.hash.to_vec(),
-        expires_at,
-    };
-
-    let row = match ops.store().pat_create(&input).await {
-        Ok(r) => r,
+    let lifecycle = PatLifecycle::new(ops.store_arc(), pepper);
+    let minted = match lifecycle
+        .mint_for_owner(
+            &owner,
+            CreatePatRequest {
+                name: body.name,
+                expires_in_days: body.expires_in_days,
+            },
+        )
+        .await
+    {
+        Ok(minted) => minted,
         Err(e) => {
-            warn!(error = %e, "pat_create failed");
+            warn!(error = %e, "PAT mint failed");
             return map_pat_error(e);
         }
     };
 
-    info!(pat_id = %row.id, "PAT minted");
+    info!(pat_id = %minted.summary.id, "PAT minted");
 
     let resp = CreateTokenResponse {
-        id: row.id,
-        name: row.name,
-        prefix: row.prefix,
+        id: minted.summary.id,
+        name: minted.summary.name,
+        prefix: minted.summary.prefix,
         token: minted.plaintext,
-        expires_at: row.expires_at,
-        created_at: row.created_at,
+        expires_at: minted.summary.expires_at,
+        created_at: minted.summary.created_at,
     };
     (StatusCode::CREATED, Json(resp)).into_response()
 }
@@ -223,10 +180,11 @@ async fn create_token(
 #[instrument(skip_all, fields(owner_email = %principal.email.as_deref().unwrap_or("<none>")))]
 async fn list_tokens(
     Extension(ops): Extension<Arc<IpamOps>>,
+    Extension(pepper): Extension<Arc<PatPepper>>,
     Extension(principal): Extension<AuthenticatedPrincipal>,
 ) -> Response {
-    let owner_email = match principal.email.clone() {
-        Some(e) => e,
+    let owner = match owner_from_principal(&principal) {
+        Some(owner) => owner,
         None => {
             return error_response(
                 StatusCode::FORBIDDEN,
@@ -235,16 +193,11 @@ async fn list_tokens(
         }
     };
 
-    match ops
-        .store()
-        .pat_list_for_owner(&owner_email, &principal.subject)
-        .await
-    {
-        Ok(rows) => {
+    let lifecycle = PatLifecycle::new(ops.store_arc(), pepper);
+    match lifecycle.list_for_owner(&owner).await {
+        Ok(tokens) => {
             // Soft-delete contract: revoked rows stay visible to their
             // owner with `revoked_at` set. Don't filter them out here.
-            let tokens: Vec<PersonalAccessTokenSummary> =
-                rows.into_iter().map(Into::into).collect();
             let count = tokens.len();
             Json(TokenListResponse { tokens, count }).into_response()
         }
@@ -258,11 +211,12 @@ async fn list_tokens(
 #[instrument(skip_all, fields(pat_id = %id, owner_email = %principal.email.as_deref().unwrap_or("<none>")))]
 async fn revoke_token(
     Extension(ops): Extension<Arc<IpamOps>>,
+    Extension(pepper): Extension<Arc<PatPepper>>,
     Extension(principal): Extension<AuthenticatedPrincipal>,
     Path(id): Path<String>,
 ) -> Response {
-    let owner_email = match principal.email.clone() {
-        Some(e) => e,
+    let owner = match owner_from_principal(&principal) {
+        Some(owner) => owner,
         None => {
             return error_response(
                 StatusCode::FORBIDDEN,
@@ -271,19 +225,11 @@ async fn revoke_token(
         }
     };
 
-    if let Err(e) = validation::validate_identifier(&id) {
-        return error_response(StatusCode::BAD_REQUEST, e.to_string());
-    }
-
-    let now = chrono::Utc::now().to_rfc3339();
-    match ops
-        .store()
-        .pat_revoke(&owner_email, &principal.subject, &id, &now)
-        .await
-    {
+    let lifecycle = PatLifecycle::new(ops.store_arc(), pepper);
+    match lifecycle.revoke_for_owner(&owner, &id).await {
         // pat_revoke is idempotent on already-revoked rows by contract,
         // so a successful Ok(_) covers both first-revoke and re-revoke.
-        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
         // Per spec: cross-tenant or unknown id → 404, never 403. Don't
         // leak whether the id exists in another user's bucket.
         Err(NetcidrError::PatNotFound(_)) => {
@@ -294,6 +240,15 @@ async fn revoke_token(
             map_pat_error(e)
         }
     }
+}
+
+fn owner_from_principal(principal: &AuthenticatedPrincipal) -> Option<PatOwner> {
+    let email = principal.email.clone()?;
+    Some(PatOwner {
+        tenant_id: email.clone(),
+        subject: principal.subject.clone(),
+        email,
+    })
 }
 
 /// Map storage-layer errors to HTTP. Mirrors the conservative pattern in

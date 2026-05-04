@@ -647,6 +647,35 @@ The `just setup` command installs a pre-commit hook that automatically runs `car
 
 `just check` runs formatting, linting, all tests (including TUI and MCP), and Semgrep security scanning.
 
+### Personal Access Tokens
+
+When `netcidr serve` runs in OIDC mode (set `NETCIDR_AUTH_MODE=oidc` and `NETCIDR_OIDC_AUDIENCE`), users can mint long-lived **personal access tokens (PATs)** to authenticate CLI calls, scripts, and CI jobs without keeping a fresh OIDC ID token. PATs look like `ncdr_pat_<43 b64url chars>` and authenticate against `/ipam/*` exactly like an OIDC bearer.
+
+**Server requirement.** Set `NETCIDR_PAT_PEPPER` to a random secret of ≥16 bytes (b64url-encoded) before starting the server. The pepper mixes into every stored hash; rotating it invalidates every existing token. Refusal-to-start is intentional: PATs without a pepper would be insecure.
+
+**Mint, list, revoke from the dashboard.** Once authenticated, the **Tokens** page (`/#/tokens`) lets you create, list, and revoke PATs. The plaintext is shown exactly once at mint time — copy it immediately.
+
+**Mint, list, revoke from the CLI.** The `netcidr token` subcommand talks to a remote `netcidr serve` instance:
+
+```bash
+# Required env (point at your server, set your OIDC ID token).
+export NETCIDR_API_URL="https://netcidr.example.com"
+export NETCIDR_API_TOKEN="<your-OIDC-id-token>"
+
+# Mint a token. --expires-in accepts <N>{d|w|y}: 30d, 12w, 1y, etc.
+netcidr token create --name ci-runner --expires-in 90d
+
+# List your tokens.
+netcidr token list
+
+# Revoke by id.
+netcidr token revoke <id>
+```
+
+The `--api-url` flag overrides `NETCIDR_API_URL` per-invocation. Output respects the global `--format json|text|csv|yaml`.
+
+**Authentication for `netcidr token` itself is OIDC-only** — PATs cannot mint or revoke other PATs (closes the privilege-escalation path). Once a PAT exists, you can use it as `NETCIDR_API_TOKEN` against `/ipam/*` endpoints elsewhere; the server distinguishes PAT-authed vs OIDC-authed operations in `audit_log` (`auth_method` + `pat_id` columns).
+
 ### Fuzz Testing
 
 Fuzz tests use [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz) with libFuzzer to verify that all parsing functions return `Result` errors (never panic) on arbitrary input.

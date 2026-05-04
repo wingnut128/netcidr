@@ -15,7 +15,8 @@ use tracing::warn;
 
 use crate::config::AuthMode;
 use crate::ipam::store::IpamStore;
-use crate::pat::{self, PatPepper};
+use crate::pat::PatPepper;
+use crate::pat_lifecycle;
 
 const GOOGLE_ISSUERS: &[&str] = &["https://accounts.google.com", "accounts.google.com"];
 const GOOGLE_JWKS_URL: &str = "https://www.googleapis.com/oauth2/v3/certs";
@@ -333,43 +334,18 @@ pub(crate) async fn verify_pat(
     allowed_emails: &[String],
     token: &str,
 ) -> Result<AuthenticatedPrincipal, AuthError> {
-    let hash = pat::hash_for_lookup(token, pepper).ok_or(AuthError::Unauthorized)?;
-    let now = chrono::Utc::now().to_rfc3339();
-    let row = store
-        .pat_get_by_hash(&hash, &now)
+    let verified = pat_lifecycle::verify_bearer_token(store, pepper, allowed_emails, token)
         .await
-        .map_err(|_| AuthError::Unauthorized)?
-        .ok_or(AuthError::Unauthorized)?;
+        .map_err(|_| AuthError::Unauthorized)?;
 
-    if !allowed_emails.is_empty() {
-        let needle = row.owner_email.to_ascii_lowercase();
-        if !allowed_emails.iter().any(|e| e == &needle) {
-            return Err(AuthError::Unauthorized);
-        }
-    }
-
-    let principal = AuthenticatedPrincipal {
+    Ok(AuthenticatedPrincipal {
         kind: PrincipalKind::Oidc,
-        subject: row.owner_sub.clone(),
-        email: Some(row.owner_email.clone()),
+        subject: verified.owner.subject,
+        email: Some(verified.owner.email),
         audience: None,
         auth_method: AuthMethod::Pat,
-        pat_id: Some(row.id.clone()),
-    };
-
-    // Detached last_used_at update — fire-and-forget so the request path
-    // never waits on this write. WARN-level on failure (rare; transient
-    // DB errors) is enough to surface persistent breakage in metrics.
-    let touch_store = Arc::clone(store);
-    let touch_id = row.id.clone();
-    let touch_now = now;
-    tokio::spawn(async move {
-        if let Err(e) = touch_store.pat_touch_last_used(&touch_id, &touch_now).await {
-            warn!(error = %e, pat_id = %touch_id, "failed to update PAT last_used_at");
-        }
-    });
-
-    Ok(principal)
+        pat_id: Some(verified.pat_id),
+    })
 }
 
 pub async fn require_bearer_auth(config: AuthConfig, request: Request, next: Next) -> Response {
