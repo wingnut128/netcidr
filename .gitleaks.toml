@@ -11,5 +11,5 @@ paths = [
 # Test PAT fixtures live in src/pat.rs unit tests — `ghp_validlookingbutwrong...`
 # is a deliberate non-secret used to exercise prefix validation.
 regexes = [
-  '''ghp_validlookingbutwrongprefix1234567890123456789012''',
+  '''ghp_validlookingbutwrongprefix1234567890''',
 ]
