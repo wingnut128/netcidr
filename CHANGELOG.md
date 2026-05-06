@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Configure release-plz for git-only releases so version detection comes from Git tags and `cargo publish` is skipped. This lets the release PR/tag/draft GitHub Release flow work for the private binary distribution model, while the existing release workflow continues attaching and publishing the built `netcidr` artifact.
+
 ## [0.24.0] - 2026-05-02
 
 ### Changed
