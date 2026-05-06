@@ -1,12 +1,12 @@
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
-// Supernet
+// CidrBlock
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
-pub struct Supernet {
+pub struct CidrBlock {
     pub id: String,
     pub tenant_id: String,
     pub cidr: String,
@@ -23,10 +23,10 @@ pub struct Supernet {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
-pub struct CreateSupernet {
+pub struct CreateCidrBlock {
     /// CIDR notation (e.g., 10.0.0.0/8 or 2001:db8::/32)
     pub cidr: String,
-    /// Optional name for the supernet
+    /// Optional name for the CIDR block
     pub name: Option<String>,
     /// Optional description
     pub description: Option<String>,
@@ -34,8 +34,8 @@ pub struct CreateSupernet {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
-pub struct SupernetList {
-    pub supernets: Vec<Supernet>,
+pub struct CidrBlockList {
+    pub cidr_blocks: Vec<CidrBlock>,
     pub count: usize,
 }
 
@@ -79,7 +79,7 @@ impl std::str::FromStr for AllocationStatus {
 pub struct Allocation {
     pub id: String,
     pub tenant_id: String,
-    pub supernet_id: String,
+    pub cidr_block_id: String,
     pub cidr: String,
     pub network_address: String,
     pub broadcast_address: String,
@@ -102,7 +102,7 @@ pub struct Allocation {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateAllocation {
-    pub supernet_id: String,
+    pub cidr_block_id: String,
     pub cidr: String,
     pub status: Option<AllocationStatus>,
     pub resource_id: Option<String>,
@@ -119,7 +119,7 @@ pub struct CreateAllocation {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AutoAllocateRequest {
-    pub supernet_id: String,
+    pub cidr_block_id: String,
     pub prefix_length: u8,
     pub count: Option<u32>,
     pub status: Option<AllocationStatus>,
@@ -156,7 +156,7 @@ pub struct UpdateAllocation {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct AllocationFilter {
-    pub supernet_id: Option<String>,
+    pub cidr_block_id: Option<String>,
     pub status: Option<AllocationStatus>,
     pub resource_id: Option<String>,
     pub resource_type: Option<String>,
@@ -244,8 +244,8 @@ pub struct StatusBreakdown {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct UtilizationReport {
-    pub supernet_id: String,
-    pub supernet_cidr: String,
+    pub cidr_block_id: String,
+    pub cidr_block_cidr: String,
     pub total_addresses: u128,
     pub allocated_addresses: u128,
     pub free_addresses: u128,
@@ -264,8 +264,8 @@ pub struct FreeBlock {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct FreeBlocksReport {
-    pub supernet_id: String,
-    pub supernet_cidr: String,
+    pub cidr_block_id: String,
+    pub cidr_block_cidr: String,
     pub blocks: Vec<FreeBlock>,
     pub total_free: u128,
 }
@@ -304,17 +304,17 @@ impl From<Allocation> for CompactAllocation {
     }
 }
 
-/// Minimal supernet view.
+/// Minimal cidr_block view.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CompactSupernet {
+pub struct CompactCidrBlock {
     pub id: String,
     pub cidr: String,
     pub name: Option<String>,
     pub total_hosts: u128,
 }
 
-impl From<&Supernet> for CompactSupernet {
-    fn from(s: &Supernet) -> Self {
+impl From<&CidrBlock> for CompactCidrBlock {
+    fn from(s: &CidrBlock) -> Self {
         Self {
             id: s.id.clone(),
             cidr: s.cidr.clone(),
@@ -324,8 +324,8 @@ impl From<&Supernet> for CompactSupernet {
     }
 }
 
-impl From<Supernet> for CompactSupernet {
-    fn from(s: Supernet) -> Self {
+impl From<CidrBlock> for CompactCidrBlock {
+    fn from(s: CidrBlock) -> Self {
         Self::from(&s)
     }
 }
@@ -337,7 +337,7 @@ impl From<Supernet> for CompactSupernet {
 /// A single item in a batch allocate request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchAllocateItem {
-    pub supernet_id: String,
+    pub cidr_block_id: String,
     pub prefix_length: u8,
     pub count: Option<u32>,
     pub name: Option<String>,
@@ -372,8 +372,8 @@ pub struct BatchReleaseRequest {
     pub allocation_ids: Option<Vec<String>>,
     /// Release all active allocations matching a resource_id
     pub resource_id: Option<String>,
-    /// Scope resource_id filter to a specific supernet
-    pub supernet_id: Option<String>,
+    /// Scope resource_id filter to a specific cidr_block
+    pub cidr_block_id: Option<String>,
 }
 
 /// Result for a single released allocation.
@@ -397,20 +397,20 @@ pub struct BatchReleaseResult {
 // Allocation summary models
 // ---------------------------------------------------------------------------
 
-/// Grouped allocation summary across supernets.
+/// Grouped allocation summary across CIDR blocks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AllocationSummary {
-    pub supernets: Vec<SupernetAllocationSummary>,
+    pub cidr_blocks: Vec<CidrBlockAllocationSummary>,
     pub total_allocations: usize,
     pub total_active: usize,
 }
 
-/// Per-supernet allocation summary with groupings.
+/// Per-cidr_block allocation summary with groupings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SupernetAllocationSummary {
-    pub supernet_id: String,
-    pub supernet_cidr: String,
-    pub supernet_name: Option<String>,
+pub struct CidrBlockAllocationSummary {
+    pub cidr_block_id: String,
+    pub cidr_block_cidr: String,
+    pub cidr_block_name: Option<String>,
     pub utilization_percent: f64,
     pub active_count: usize,
     pub by_resource: Vec<ResourceGroup>,
@@ -434,7 +434,7 @@ pub struct ResourceGroup {
 pub struct IpamDump {
     pub version: u32,
     pub exported_at: String,
-    pub supernets: Vec<Supernet>,
+    pub cidr_blocks: Vec<CidrBlock>,
     pub allocations: Vec<Allocation>,
 }
 

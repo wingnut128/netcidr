@@ -59,17 +59,17 @@ async fn req(
     (status, json)
 }
 
-// ── Supernet CRUD ─────────────────────────────────────────────────────
+// ── CidrBlock CRUD ─────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_ipam_supernet_lifecycle() {
+async fn test_ipam_cidr_block_lifecycle() {
     let app = ipam_app().await;
 
     // Create
     let (status, json) = req(
         app.clone(),
         "POST",
-        "/ipam/supernets",
+        "/ipam/cidr-blocks",
         Some(r#"{"cidr":"10.0.0.0/8","name":"test-net"}"#),
     )
     .await;
@@ -79,12 +79,12 @@ async fn test_ipam_supernet_lifecycle() {
     assert_eq!(json["name"], "test-net");
 
     // List
-    let (status, json) = req(app.clone(), "GET", "/ipam/supernets", None).await;
+    let (status, json) = req(app.clone(), "GET", "/ipam/cidr-blocks", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["count"], 1);
 
     // Get
-    let (status, json) = req(app.clone(), "GET", &format!("/ipam/supernets/{id}"), None).await;
+    let (status, json) = req(app.clone(), "GET", &format!("/ipam/cidr-blocks/{id}"), None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["cidr"], "10.0.0.0/8");
 
@@ -92,14 +92,14 @@ async fn test_ipam_supernet_lifecycle() {
     let (status, _) = req(
         app.clone(),
         "DELETE",
-        &format!("/ipam/supernets/{id}"),
+        &format!("/ipam/cidr-blocks/{id}"),
         None,
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Verify gone
-    let (status, _) = req(app, "GET", &format!("/ipam/supernets/{id}"), None).await;
+    let (status, _) = req(app, "GET", &format!("/ipam/cidr-blocks/{id}"), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
@@ -109,11 +109,11 @@ async fn test_ipam_supernet_lifecycle() {
 async fn test_ipam_allocate_specific() {
     let app = ipam_app().await;
 
-    // Create supernet
+    // Create cidr_block
     let (_, json) = req(
         app.clone(),
         "POST",
-        "/ipam/supernets",
+        "/ipam/cidr-blocks",
         Some(r#"{"cidr":"10.0.0.0/8"}"#),
     )
     .await;
@@ -123,7 +123,7 @@ async fn test_ipam_allocate_specific() {
     let (status, json) = req(
         app.clone(),
         "POST",
-        &format!("/ipam/supernets/{sn_id}/allocate-specific"),
+        &format!("/ipam/cidr-blocks/{sn_id}/allocate-specific"),
         Some(r#"{"cidr":"10.0.1.0/24","name":"web-tier"}"#),
     )
     .await;
@@ -152,7 +152,7 @@ async fn test_ipam_auto_allocate() {
     let (_, json) = req(
         app.clone(),
         "POST",
-        "/ipam/supernets",
+        "/ipam/cidr-blocks",
         Some(r#"{"cidr":"192.168.0.0/16"}"#),
     )
     .await;
@@ -161,7 +161,7 @@ async fn test_ipam_auto_allocate() {
     let (status, json) = req(
         app.clone(),
         "POST",
-        &format!("/ipam/supernets/{sn_id}/allocate"),
+        &format!("/ipam/cidr-blocks/{sn_id}/allocate"),
         Some(r#"{"prefix_length":24,"count":3}"#),
     )
     .await;
@@ -178,7 +178,7 @@ async fn test_ipam_overlap_rejected() {
     let (_, json) = req(
         app.clone(),
         "POST",
-        "/ipam/supernets",
+        "/ipam/cidr-blocks",
         Some(r#"{"cidr":"10.0.0.0/8"}"#),
     )
     .await;
@@ -188,7 +188,7 @@ async fn test_ipam_overlap_rejected() {
     let (status, _) = req(
         app.clone(),
         "POST",
-        &format!("/ipam/supernets/{sn_id}/allocate-specific"),
+        &format!("/ipam/cidr-blocks/{sn_id}/allocate-specific"),
         Some(r#"{"cidr":"10.0.0.0/24"}"#),
     )
     .await;
@@ -198,7 +198,7 @@ async fn test_ipam_overlap_rejected() {
     let (status, json) = req(
         app.clone(),
         "POST",
-        &format!("/ipam/supernets/{sn_id}/allocate-specific"),
+        &format!("/ipam/cidr-blocks/{sn_id}/allocate-specific"),
         Some(r#"{"cidr":"10.0.0.0/16"}"#),
     )
     .await;
@@ -215,7 +215,7 @@ async fn test_ipam_release_allocation() {
     let (_, json) = req(
         app.clone(),
         "POST",
-        "/ipam/supernets",
+        "/ipam/cidr-blocks",
         Some(r#"{"cidr":"10.0.0.0/8"}"#),
     )
     .await;
@@ -224,7 +224,7 @@ async fn test_ipam_release_allocation() {
     let (_, json) = req(
         app.clone(),
         "POST",
-        &format!("/ipam/supernets/{sn_id}/allocate-specific"),
+        &format!("/ipam/cidr-blocks/{sn_id}/allocate-specific"),
         Some(r#"{"cidr":"10.0.1.0/24"}"#),
     )
     .await;
@@ -250,7 +250,7 @@ async fn test_ipam_update_allocation() {
     let (_, json) = req(
         app.clone(),
         "POST",
-        "/ipam/supernets",
+        "/ipam/cidr-blocks",
         Some(r#"{"cidr":"10.0.0.0/8"}"#),
     )
     .await;
@@ -259,7 +259,7 @@ async fn test_ipam_update_allocation() {
     let (_, json) = req(
         app.clone(),
         "POST",
-        &format!("/ipam/supernets/{sn_id}/allocate-specific"),
+        &format!("/ipam/cidr-blocks/{sn_id}/allocate-specific"),
         Some(r#"{"cidr":"10.0.1.0/24"}"#),
     )
     .await;
@@ -286,7 +286,7 @@ async fn test_ipam_utilization_and_free_blocks() {
     let (_, json) = req(
         app.clone(),
         "POST",
-        "/ipam/supernets",
+        "/ipam/cidr-blocks",
         Some(r#"{"cidr":"192.168.0.0/24"}"#),
     )
     .await;
@@ -296,7 +296,7 @@ async fn test_ipam_utilization_and_free_blocks() {
     req(
         app.clone(),
         "POST",
-        &format!("/ipam/supernets/{sn_id}/allocate-specific"),
+        &format!("/ipam/cidr-blocks/{sn_id}/allocate-specific"),
         Some(r#"{"cidr":"192.168.0.0/25"}"#),
     )
     .await;
@@ -305,7 +305,7 @@ async fn test_ipam_utilization_and_free_blocks() {
     let (status, json) = req(
         app.clone(),
         "GET",
-        &format!("/ipam/supernets/{sn_id}/utilization"),
+        &format!("/ipam/cidr-blocks/{sn_id}/utilization"),
         None,
     )
     .await;
@@ -316,7 +316,7 @@ async fn test_ipam_utilization_and_free_blocks() {
     let (status, json) = req(
         app.clone(),
         "GET",
-        &format!("/ipam/supernets/{sn_id}/free"),
+        &format!("/ipam/cidr-blocks/{sn_id}/free"),
         None,
     )
     .await;
@@ -333,7 +333,7 @@ async fn test_ipam_find_ip() {
     let (_, json) = req(
         app.clone(),
         "POST",
-        "/ipam/supernets",
+        "/ipam/cidr-blocks",
         Some(r#"{"cidr":"10.0.0.0/8"}"#),
     )
     .await;
@@ -342,7 +342,7 @@ async fn test_ipam_find_ip() {
     req(
         app.clone(),
         "POST",
-        &format!("/ipam/supernets/{sn_id}/allocate-specific"),
+        &format!("/ipam/cidr-blocks/{sn_id}/allocate-specific"),
         Some(r#"{"cidr":"10.0.1.0/24"}"#),
     )
     .await;
@@ -362,7 +362,7 @@ async fn test_ipam_find_resource() {
     let (_, json) = req(
         app.clone(),
         "POST",
-        "/ipam/supernets",
+        "/ipam/cidr-blocks",
         Some(r#"{"cidr":"10.0.0.0/8"}"#),
     )
     .await;
@@ -371,7 +371,7 @@ async fn test_ipam_find_resource() {
     req(
         app.clone(),
         "POST",
-        &format!("/ipam/supernets/{sn_id}/allocate-specific"),
+        &format!("/ipam/cidr-blocks/{sn_id}/allocate-specific"),
         Some(r#"{"cidr":"10.0.1.0/24","resource_id":"vpc-123"}"#),
     )
     .await;
@@ -437,7 +437,7 @@ async fn test_ipam_audit_records_caller_identity_and_request_id() {
     let (status, _) = req_with_bearer(
         app.clone(),
         "POST",
-        "/ipam/supernets",
+        "/ipam/cidr-blocks",
         Some(r#"{"cidr":"10.0.0.0/8"}"#),
         "test-token",
     )
@@ -448,7 +448,7 @@ async fn test_ipam_audit_records_caller_identity_and_request_id() {
         req_with_bearer(app, "GET", "/ipam/audit?limit=10", None, "test-token").await;
     assert_eq!(status, StatusCode::OK);
     let entry = &json["entries"][0];
-    assert_eq!(entry["action"], "create_supernet");
+    assert_eq!(entry["action"], "create_cidr_block");
 
     // Bearer mode: subject is the static "bearer-token" sentinel; email is null.
     assert_eq!(entry["caller_sub"], "bearer-token");
@@ -474,11 +474,11 @@ async fn test_ipam_audit_records_caller_identity_and_request_id() {
 async fn test_ipam_audit_log() {
     let app = ipam_app().await;
 
-    // Create supernet (generates audit entry)
+    // Create cidr_block (generates audit entry)
     req(
         app.clone(),
         "POST",
-        "/ipam/supernets",
+        "/ipam/cidr-blocks",
         Some(r#"{"cidr":"10.0.0.0/8"}"#),
     )
     .await;
@@ -486,7 +486,7 @@ async fn test_ipam_audit_log() {
     let (status, json) = req(app.clone(), "GET", "/ipam/audit?limit=10", None).await;
     assert_eq!(status, StatusCode::OK);
     assert!(json["count"].as_u64().unwrap() >= 1);
-    assert_eq!(json["entries"][0]["action"], "create_supernet");
+    assert_eq!(json["entries"][0]["action"], "create_cidr_block");
 }
 
 // ── Tags ──────────────────────────────────────────────────────────────
@@ -498,7 +498,7 @@ async fn test_ipam_tags() {
     let (_, json) = req(
         app.clone(),
         "POST",
-        "/ipam/supernets",
+        "/ipam/cidr-blocks",
         Some(r#"{"cidr":"10.0.0.0/8"}"#),
     )
     .await;
@@ -507,7 +507,7 @@ async fn test_ipam_tags() {
     let (_, json) = req(
         app.clone(),
         "POST",
-        &format!("/ipam/supernets/{sn_id}/allocate-specific"),
+        &format!("/ipam/cidr-blocks/{sn_id}/allocate-specific"),
         Some(r#"{"cidr":"10.0.1.0/24"}"#),
     )
     .await;
@@ -536,16 +536,16 @@ async fn test_ipam_disabled_returns_404() {
         },
         ..Default::default()
     });
-    let (status, _) = req(app, "GET", "/ipam/supernets", None).await;
+    let (status, _) = req(app, "GET", "/ipam/cidr-blocks", None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 // ── Not found ─────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_ipam_supernet_not_found() {
+async fn test_ipam_cidr_block_not_found() {
     let app = ipam_app().await;
-    let (status, _) = req(app, "GET", "/ipam/supernets/nonexistent-id", None).await;
+    let (status, _) = req(app, "GET", "/ipam/cidr-blocks/nonexistent-id", None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
@@ -564,7 +564,7 @@ async fn test_ipam_invalid_cidr() {
     let (status, json) = req(
         app,
         "POST",
-        "/ipam/supernets",
+        "/ipam/cidr-blocks",
         Some(r#"{"cidr":"not-a-cidr"}"#),
     )
     .await;
@@ -572,7 +572,7 @@ async fn test_ipam_invalid_cidr() {
     assert!(!json["error"].as_str().unwrap().is_empty());
 }
 
-// ── List supernet allocations with filter ─────────────────────────────
+// ── List cidr_block allocations with filter ─────────────────────────────
 
 #[tokio::test]
 async fn test_ipam_list_allocations_with_filter() {
@@ -581,7 +581,7 @@ async fn test_ipam_list_allocations_with_filter() {
     let (_, json) = req(
         app.clone(),
         "POST",
-        "/ipam/supernets",
+        "/ipam/cidr-blocks",
         Some(r#"{"cidr":"10.0.0.0/8"}"#),
     )
     .await;
@@ -591,14 +591,14 @@ async fn test_ipam_list_allocations_with_filter() {
     req(
         app.clone(),
         "POST",
-        &format!("/ipam/supernets/{sn_id}/allocate-specific"),
+        &format!("/ipam/cidr-blocks/{sn_id}/allocate-specific"),
         Some(r#"{"cidr":"10.0.1.0/24","environment":"prod"}"#),
     )
     .await;
     req(
         app.clone(),
         "POST",
-        &format!("/ipam/supernets/{sn_id}/allocate-specific"),
+        &format!("/ipam/cidr-blocks/{sn_id}/allocate-specific"),
         Some(r#"{"cidr":"10.0.2.0/24","environment":"staging"}"#),
     )
     .await;
@@ -607,7 +607,7 @@ async fn test_ipam_list_allocations_with_filter() {
     let (status, json) = req(
         app.clone(),
         "GET",
-        &format!("/ipam/supernets/{sn_id}/allocations?environment=prod"),
+        &format!("/ipam/cidr-blocks/{sn_id}/allocations?environment=prod"),
         None,
     )
     .await;

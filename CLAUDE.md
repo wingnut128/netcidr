@@ -123,12 +123,12 @@ netcidr split 10.0.0.0/8 -p 16 -n 10   # Generate 10 /16 subnets
 netcidr split 10.0.0.0/8 -p 16 --max   # Generate all possible /16 subnets
 
 # IPAM commands
-netcidr ipam supernet create 10.0.0.0/8 --name "Corp"
-netcidr ipam allocate <supernet-id> 10.0.1.0/24 --name "Web"
-netcidr ipam auto-allocate <supernet-id> -p 24 -n 3
-netcidr ipam utilization <supernet-id> --format text
+netcidr ipam cidr_block create 10.0.0.0/8 --name "Corp"
+netcidr ipam allocate <cidr_block-id> 10.0.1.0/24 --name "Web"
+netcidr ipam auto-allocate <cidr_block-id> -p 24 -n 3
+netcidr ipam utilization <cidr_block-id> --format text
 netcidr ipam find-ip 10.0.1.50
-netcidr ipam --db /path/to/db supernet list   # Custom DB path
+netcidr ipam --db /path/to/db cidr_block list   # Custom DB path
 ```
 
 Global options: `--format json|text|csv|yaml`, `--output <file>`
@@ -143,7 +143,7 @@ This is a Rust CLI/API/MCP server for IPv4 and IPv6 subnet calculations with IPA
 
 **Key modules**:
 - `ipv4.rs` / `ipv6.rs` - Subnet calculation logic using bitwise operations (u32/u128)
-- `subnet_generator.rs` - Splits supernets into smaller subnets (supports `--count` or `--max`)
+- `subnet_generator.rs` - Splits cidr_blocks into smaller subnets (supports `--count` or `--max`)
 - `validation.rs` - Shared input validation (CIDR, IP, text fields, identifiers, status allowlist)
 - `api.rs` - Axum HTTP server with REST endpoints sharing the same data structures as CLI
 - `ipam/` - IPAM persistence layer: `operations.rs` (business logic), `store.rs` (trait), `sqlite/` (backend), `models.rs`, `config.rs`

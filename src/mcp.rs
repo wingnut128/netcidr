@@ -32,17 +32,20 @@ pub enum McpIpamBackend {
 }
 
 impl McpIpamBackend {
-    pub async fn create_supernet(&self, input: &CreateSupernet) -> crate::error::Result<Supernet> {
+    pub async fn create_cidr_block(
+        &self,
+        input: &CreateCidrBlock,
+    ) -> crate::error::Result<CidrBlock> {
         match self {
-            Self::Local(ops) => ops.create_supernet(MCP_LOCAL_TENANT_ID, input).await,
-            Self::Remote(client) => client.create_supernet(input).await,
+            Self::Local(ops) => ops.create_cidr_block(MCP_LOCAL_TENANT_ID, input).await,
+            Self::Remote(client) => client.create_cidr_block(input).await,
         }
     }
 
-    pub async fn list_supernets(&self) -> crate::error::Result<Vec<Supernet>> {
+    pub async fn list_cidr_blocks(&self) -> crate::error::Result<Vec<CidrBlock>> {
         match self {
-            Self::Local(ops) => ops.list_supernets(MCP_LOCAL_TENANT_ID).await,
-            Self::Remote(client) => client.list_supernets().await,
+            Self::Local(ops) => ops.list_cidr_blocks(MCP_LOCAL_TENANT_ID).await,
+            Self::Remote(client) => client.list_cidr_blocks().await,
         }
     }
 
@@ -85,22 +88,25 @@ impl McpIpamBackend {
 
     pub async fn free_blocks(
         &self,
-        supernet_id: &str,
+        cidr_block_id: &str,
         prefix: Option<u8>,
     ) -> crate::error::Result<FreeBlocksReport> {
         match self {
             Self::Local(ops) => {
-                ops.free_blocks(MCP_LOCAL_TENANT_ID, supernet_id, prefix)
+                ops.free_blocks(MCP_LOCAL_TENANT_ID, cidr_block_id, prefix)
                     .await
             }
-            Self::Remote(client) => client.free_blocks(supernet_id, prefix).await,
+            Self::Remote(client) => client.free_blocks(cidr_block_id, prefix).await,
         }
     }
 
-    pub async fn utilization(&self, supernet_id: &str) -> crate::error::Result<UtilizationReport> {
+    pub async fn utilization(
+        &self,
+        cidr_block_id: &str,
+    ) -> crate::error::Result<UtilizationReport> {
         match self {
-            Self::Local(ops) => ops.utilization(MCP_LOCAL_TENANT_ID, supernet_id).await,
-            Self::Remote(client) => client.utilization(supernet_id).await,
+            Self::Local(ops) => ops.utilization(MCP_LOCAL_TENANT_ID, cidr_block_id).await,
+            Self::Remote(client) => client.utilization(cidr_block_id).await,
         }
     }
 
@@ -143,14 +149,14 @@ impl McpIpamBackend {
 
     pub async fn allocation_summary(
         &self,
-        supernet_id: Option<&str>,
+        cidr_block_id: Option<&str>,
     ) -> crate::error::Result<AllocationSummary> {
         match self {
             Self::Local(ops) => {
-                ops.allocation_summary(MCP_LOCAL_TENANT_ID, supernet_id)
+                ops.allocation_summary(MCP_LOCAL_TENANT_ID, cidr_block_id)
                     .await
             }
-            Self::Remote(client) => client.allocation_summary(supernet_id).await,
+            Self::Remote(client) => client.allocation_summary(cidr_block_id).await,
         }
     }
 }
@@ -167,7 +173,7 @@ struct SubnetCalcParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct SubnetSplitParams {
-    /// Supernet in CIDR notation, e.g. 10.0.0.0/8
+    /// CIDR block in CIDR notation, e.g. 10.0.0.0/8
     cidr: String,
     /// New prefix length for the generated subnets
     prefix: u8,
@@ -204,22 +210,22 @@ struct SummarizeParams {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize, JsonSchema)]
-struct IpamCreateSupernetParams {
-    /// CIDR notation for the supernet, e.g. 10.0.0.0/8 or 2001:db8::/32
+struct IpamCreateCidrBlockParams {
+    /// CIDR notation for the CIDR block, e.g. 10.0.0.0/8 or 2001:db8::/32
     cidr: String,
-    /// Optional name for the supernet
+    /// Optional name for the CIDR block
     name: Option<String>,
     /// Optional description
     description: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-struct IpamListSupernetsParams {}
+struct IpamListCidrBlocksParams {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct IpamAllocateParams {
-    /// Supernet ID to allocate from
-    supernet_id: String,
+    /// CIDR block ID to allocate from
+    cidr_block_id: String,
     /// Desired prefix length for the allocation
     prefix_length: u8,
     /// Number of blocks to allocate (default: 1)
@@ -236,8 +242,8 @@ struct IpamAllocateParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct IpamAllocateSpecificParams {
-    /// Supernet ID to allocate within
-    supernet_id: String,
+    /// CIDR block ID to allocate within
+    cidr_block_id: String,
     /// Specific CIDR to allocate, e.g. 10.0.1.0/24
     cidr: String,
     /// Human-readable name
@@ -258,8 +264,8 @@ struct IpamReleaseParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct IpamListAllocationsParams {
-    /// Supernet ID to list allocations for
-    supernet_id: String,
+    /// CIDR block ID to list allocations for
+    cidr_block_id: String,
     /// Filter by status (active, reserved, released)
     status: Option<String>,
     /// Filter by environment
@@ -270,16 +276,16 @@ struct IpamListAllocationsParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct IpamFreeBlocksParams {
-    /// Supernet ID to check for free space
-    supernet_id: String,
+    /// CIDR block ID to check for free space
+    cidr_block_id: String,
     /// Filter by minimum prefix length
     prefix: Option<u8>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct IpamUtilizationParams {
-    /// Supernet ID to get utilization for
-    supernet_id: String,
+    /// CIDR block ID to get utilization for
+    cidr_block_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -300,8 +306,8 @@ struct IpamFindResourceParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct BatchAllocateItemParam {
-    /// Supernet ID to allocate from
-    supernet_id: String,
+    /// CIDR block ID to allocate from
+    cidr_block_id: String,
     /// Desired prefix length
     prefix_length: u8,
     /// Number of blocks to allocate per item (default: 1)
@@ -328,14 +334,14 @@ struct IpamBatchReleaseParams {
     allocation_ids: Option<Vec<String>>,
     /// Release all active allocations matching this resource ID
     resource_id: Option<String>,
-    /// Scope to a specific supernet (used with resource_id, or alone to release all in supernet)
-    supernet_id: Option<String>,
+    /// Scope to a specific CIDR block (used with resource_id, or alone to release all in CIDR block)
+    cidr_block_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct IpamAllocationSummaryParams {
-    /// Optional supernet ID to scope the summary (omit for all supernets)
-    supernet_id: Option<String>,
+    /// Optional CIDR block ID to scope the summary (omit for all CIDR blocks)
+    cidr_block_id: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -386,7 +392,7 @@ impl NetcidrMcp {
 
     #[tool(
         name = "subnet_split",
-        description = "Split a supernet into smaller subnets. Provide either a count or set max=true to generate all possible subnets. Auto-detects IPv4 vs IPv6."
+        description = "Split a CIDR block into smaller subnets. Provide either a count or set max=true to generate all possible subnets. Auto-detects IPv4 vs IPv6."
     )]
     async fn subnet_split(&self, Parameters(params): Parameters<SubnetSplitParams>) -> String {
         let max = params.max.unwrap_or(false);
@@ -466,48 +472,48 @@ impl NetcidrMcp {
     // -------------------------------------------------------------------
 
     #[tool(
-        name = "ipam_create_supernet",
-        description = "Create a new IPAM supernet (top-level address space). Returns the created supernet with its ID. Rejects overlapping supernets."
+        name = "ipam_create_cidr_block",
+        description = "Create a new IPAM CIDR block (top-level address space). Returns the created CIDR block with its ID. Rejects overlapping CIDR blocks."
     )]
-    async fn ipam_create_supernet(
+    async fn ipam_create_cidr_block(
         &self,
-        Parameters(params): Parameters<IpamCreateSupernetParams>,
+        Parameters(params): Parameters<IpamCreateCidrBlockParams>,
     ) -> String {
         let Some(backend) = &self.ipam else {
             return IPAM_NOT_ENABLED.to_string();
         };
-        let input = CreateSupernet {
+        let input = CreateCidrBlock {
             cidr: params.cidr,
             name: params.name,
             description: params.description,
         };
-        result_to_string(backend.create_supernet(&input).await)
+        result_to_string(backend.create_cidr_block(&input).await)
     }
 
     #[tool(
-        name = "ipam_list_supernets",
-        description = "List all IPAM supernets. Returns an array of supernets with their IDs, CIDRs, and metadata."
+        name = "ipam_list_cidr_blocks",
+        description = "List all IPAM CIDR blocks. Returns an array of CIDR blocks with their IDs, CIDRs, and metadata."
     )]
-    async fn ipam_list_supernets(
+    async fn ipam_list_cidr_blocks(
         &self,
-        Parameters(_params): Parameters<IpamListSupernetsParams>,
+        Parameters(_params): Parameters<IpamListCidrBlocksParams>,
     ) -> String {
         let Some(backend) = &self.ipam else {
             return IPAM_NOT_ENABLED.to_string();
         };
-        result_to_string(backend.list_supernets().await)
+        result_to_string(backend.list_cidr_blocks().await)
     }
 
     #[tool(
         name = "ipam_allocate",
-        description = "Auto-allocate the next available CIDR block(s) from a supernet. Specify the desired prefix length and optional count. Returns the created allocation(s)."
+        description = "Auto-allocate the next available CIDR block(s) from a CIDR block. Specify the desired prefix length and optional count. Returns the created allocation(s)."
     )]
     async fn ipam_allocate(&self, Parameters(params): Parameters<IpamAllocateParams>) -> String {
         let Some(backend) = &self.ipam else {
             return IPAM_NOT_ENABLED.to_string();
         };
         let request = AutoAllocateRequest {
-            supernet_id: params.supernet_id,
+            cidr_block_id: params.cidr_block_id,
             prefix_length: params.prefix_length,
             count: params.count,
             status: None,
@@ -526,7 +532,7 @@ impl NetcidrMcp {
 
     #[tool(
         name = "ipam_allocate_specific",
-        description = "Allocate a specific CIDR block from a supernet. Rejects if the block overlaps with existing allocations."
+        description = "Allocate a specific CIDR block from a CIDR block. Rejects if the block overlaps with existing allocations."
     )]
     async fn ipam_allocate_specific(
         &self,
@@ -536,7 +542,7 @@ impl NetcidrMcp {
             return IPAM_NOT_ENABLED.to_string();
         };
         let input = CreateAllocation {
-            supernet_id: params.supernet_id,
+            cidr_block_id: params.cidr_block_id,
             cidr: params.cidr,
             status: None,
             resource_id: params.resource_id,
@@ -565,7 +571,7 @@ impl NetcidrMcp {
 
     #[tool(
         name = "ipam_list_allocations",
-        description = "List allocations within a supernet. Optionally filter by status, environment, or owner."
+        description = "List allocations within a CIDR block. Optionally filter by status, environment, or owner."
     )]
     async fn ipam_list_allocations(
         &self,
@@ -576,7 +582,7 @@ impl NetcidrMcp {
         };
         let status = params.status.and_then(|s| s.parse().ok());
         let filter = AllocationFilter {
-            supernet_id: Some(params.supernet_id),
+            cidr_block_id: Some(params.cidr_block_id),
             status,
             resource_id: None,
             resource_type: None,
@@ -588,7 +594,7 @@ impl NetcidrMcp {
 
     #[tool(
         name = "ipam_free_blocks",
-        description = "Find free (unallocated) CIDR blocks within a supernet. Optionally filter by minimum prefix length."
+        description = "Find free (unallocated) CIDR blocks within a CIDR block. Optionally filter by minimum prefix length."
     )]
     async fn ipam_free_blocks(
         &self,
@@ -599,14 +605,14 @@ impl NetcidrMcp {
         };
         result_to_string(
             backend
-                .free_blocks(&params.supernet_id, params.prefix)
+                .free_blocks(&params.cidr_block_id, params.prefix)
                 .await,
         )
     }
 
     #[tool(
         name = "ipam_utilization",
-        description = "Get utilization statistics for a supernet: total addresses, allocated addresses, free addresses, and utilization percentage."
+        description = "Get utilization statistics for a CIDR block: total addresses, allocated addresses, free addresses, and utilization percentage."
     )]
     async fn ipam_utilization(
         &self,
@@ -615,12 +621,12 @@ impl NetcidrMcp {
         let Some(backend) = &self.ipam else {
             return IPAM_NOT_ENABLED.to_string();
         };
-        result_to_string(backend.utilization(&params.supernet_id).await)
+        result_to_string(backend.utilization(&params.cidr_block_id).await)
     }
 
     #[tool(
         name = "ipam_find_ip",
-        description = "Find all IPAM allocations that contain a given IP address. Returns matching allocations across all supernets."
+        description = "Find all IPAM allocations that contain a given IP address. Returns matching allocations across all CIDR blocks."
     )]
     async fn ipam_find_ip(&self, Parameters(params): Parameters<IpamFindIpParams>) -> String {
         let Some(backend) = &self.ipam else {
@@ -649,7 +655,7 @@ impl NetcidrMcp {
 
     #[tool(
         name = "ipam_batch_allocate",
-        description = "Allocate multiple CIDR blocks in a single call. Each item specifies a supernet, prefix length, and optional metadata. Returns compact results per-item (id, cidr, name, status, resource_id, environment). Errors are captured per-item without aborting the batch. Maximum 100 items."
+        description = "Allocate multiple CIDR blocks in a single call. Each item specifies a CIDR block, prefix length, and optional metadata. Returns compact results per-item (id, cidr, name, status, resource_id, environment). Errors are captured per-item without aborting the batch. Maximum 100 items."
     )]
     async fn ipam_batch_allocate(
         &self,
@@ -662,7 +668,7 @@ impl NetcidrMcp {
             .items
             .into_iter()
             .map(|p| BatchAllocateItem {
-                supernet_id: p.supernet_id,
+                cidr_block_id: p.cidr_block_id,
                 prefix_length: p.prefix_length,
                 count: p.count,
                 name: p.name,
@@ -676,7 +682,7 @@ impl NetcidrMcp {
 
     #[tool(
         name = "ipam_batch_release",
-        description = "Release multiple IPAM allocations in a single call. Specify allocation_ids directly, or use resource_id and/or supernet_id to release matching active allocations. Per-item errors are captured individually."
+        description = "Release multiple IPAM allocations in a single call. Specify allocation_ids directly, or use resource_id and/or cidr_block_id to release matching active allocations. Per-item errors are captured individually."
     )]
     async fn ipam_batch_release(
         &self,
@@ -688,14 +694,14 @@ impl NetcidrMcp {
         let request = BatchReleaseRequest {
             allocation_ids: params.allocation_ids,
             resource_id: params.resource_id,
-            supernet_id: params.supernet_id,
+            cidr_block_id: params.cidr_block_id,
         };
         result_to_string(backend.batch_release(&request).await)
     }
 
     #[tool(
         name = "ipam_allocation_summary",
-        description = "Get a grouped summary of all allocations across supernets, organized by resource ID. Shows utilization percentage and CIDR lists per resource. Useful for a high-level overview without fetching individual allocations."
+        description = "Get a grouped summary of all allocations across CIDR blocks, organized by resource ID. Shows utilization percentage and CIDR lists per resource. Useful for a high-level overview without fetching individual allocations."
     )]
     async fn ipam_allocation_summary(
         &self,
@@ -706,7 +712,7 @@ impl NetcidrMcp {
         };
         result_to_string(
             backend
-                .allocation_summary(params.supernet_id.as_deref())
+                .allocation_summary(params.cidr_block_id.as_deref())
                 .await,
         )
     }
@@ -1048,7 +1054,7 @@ mod tests {
     async fn test_ipam_tools_disabled() {
         let server = calc_server(); // no IPAM
         let result = server
-            .ipam_list_supernets(Parameters(IpamListSupernetsParams {}))
+            .ipam_list_cidr_blocks(Parameters(IpamListCidrBlocksParams {}))
             .await;
         assert!(result.contains("IPAM is not enabled"));
     }
@@ -1058,10 +1064,10 @@ mod tests {
     // -------------------------------------------------------------------
 
     #[tokio::test]
-    async fn test_ipam_create_and_list_supernets() {
+    async fn test_ipam_create_and_list_cidr_blocks() {
         let server = ipam_server().await;
         let result = server
-            .ipam_create_supernet(Parameters(IpamCreateSupernetParams {
+            .ipam_create_cidr_block(Parameters(IpamCreateCidrBlockParams {
                 cidr: "10.0.0.0/8".into(),
                 name: Some("Corp".into()),
                 description: None,
@@ -1071,7 +1077,7 @@ mod tests {
         assert!(result.contains("10.0.0.0/8"));
 
         let result = server
-            .ipam_list_supernets(Parameters(IpamListSupernetsParams {}))
+            .ipam_list_cidr_blocks(Parameters(IpamListCidrBlocksParams {}))
             .await;
         assert!(!result.starts_with("Error"));
         assert!(result.contains("10.0.0.0/8"));
@@ -1081,21 +1087,21 @@ mod tests {
     async fn test_ipam_allocate_and_list() {
         let server = ipam_server().await;
 
-        // Create supernet
+        // Create CIDR block
         let result = server
-            .ipam_create_supernet(Parameters(IpamCreateSupernetParams {
+            .ipam_create_cidr_block(Parameters(IpamCreateCidrBlockParams {
                 cidr: "10.0.0.0/8".into(),
                 name: None,
                 description: None,
             }))
             .await;
-        let supernet: serde_json::Value = serde_json::from_str(&result).unwrap();
-        let sn_id = supernet["id"].as_str().unwrap().to_string();
+        let cidr_block: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let sn_id = cidr_block["id"].as_str().unwrap().to_string();
 
         // Auto-allocate
         let result = server
             .ipam_allocate(Parameters(IpamAllocateParams {
-                supernet_id: sn_id.clone(),
+                cidr_block_id: sn_id.clone(),
                 prefix_length: 24,
                 count: Some(2),
                 name: Some("test".into()),
@@ -1109,7 +1115,7 @@ mod tests {
         // List allocations
         let result = server
             .ipam_list_allocations(Parameters(IpamListAllocationsParams {
-                supernet_id: sn_id,
+                cidr_block_id: sn_id,
                 status: None,
                 environment: None,
                 owner: None,
@@ -1125,19 +1131,19 @@ mod tests {
         let server = ipam_server().await;
 
         let result = server
-            .ipam_create_supernet(Parameters(IpamCreateSupernetParams {
+            .ipam_create_cidr_block(Parameters(IpamCreateCidrBlockParams {
                 cidr: "10.0.0.0/8".into(),
                 name: None,
                 description: None,
             }))
             .await;
-        let supernet: serde_json::Value = serde_json::from_str(&result).unwrap();
-        let sn_id = supernet["id"].as_str().unwrap().to_string();
+        let cidr_block: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let sn_id = cidr_block["id"].as_str().unwrap().to_string();
 
         // Allocate specific
         let result = server
             .ipam_allocate_specific(Parameters(IpamAllocateSpecificParams {
-                supernet_id: sn_id,
+                cidr_block_id: sn_id,
                 cidr: "10.0.1.0/24".into(),
                 name: Some("web".into()),
                 environment: Some("prod".into()),
@@ -1164,19 +1170,19 @@ mod tests {
         let server = ipam_server().await;
 
         let result = server
-            .ipam_create_supernet(Parameters(IpamCreateSupernetParams {
+            .ipam_create_cidr_block(Parameters(IpamCreateCidrBlockParams {
                 cidr: "192.168.0.0/24".into(),
                 name: None,
                 description: None,
             }))
             .await;
-        let supernet: serde_json::Value = serde_json::from_str(&result).unwrap();
-        let sn_id = supernet["id"].as_str().unwrap().to_string();
+        let cidr_block: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let sn_id = cidr_block["id"].as_str().unwrap().to_string();
 
         // Allocate half
         server
             .ipam_allocate_specific(Parameters(IpamAllocateSpecificParams {
-                supernet_id: sn_id.clone(),
+                cidr_block_id: sn_id.clone(),
                 cidr: "192.168.0.0/25".into(),
                 name: None,
                 environment: None,
@@ -1188,7 +1194,7 @@ mod tests {
         // Utilization
         let result = server
             .ipam_utilization(Parameters(IpamUtilizationParams {
-                supernet_id: sn_id.clone(),
+                cidr_block_id: sn_id.clone(),
             }))
             .await;
         assert!(!result.starts_with("Error"));
@@ -1197,7 +1203,7 @@ mod tests {
         // Free blocks
         let result = server
             .ipam_free_blocks(Parameters(IpamFreeBlocksParams {
-                supernet_id: sn_id,
+                cidr_block_id: sn_id,
                 prefix: None,
             }))
             .await;
@@ -1210,18 +1216,18 @@ mod tests {
         let server = ipam_server().await;
 
         let result = server
-            .ipam_create_supernet(Parameters(IpamCreateSupernetParams {
+            .ipam_create_cidr_block(Parameters(IpamCreateCidrBlockParams {
                 cidr: "10.0.0.0/8".into(),
                 name: None,
                 description: None,
             }))
             .await;
-        let supernet: serde_json::Value = serde_json::from_str(&result).unwrap();
-        let sn_id = supernet["id"].as_str().unwrap().to_string();
+        let cidr_block: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let sn_id = cidr_block["id"].as_str().unwrap().to_string();
 
         server
             .ipam_allocate_specific(Parameters(IpamAllocateSpecificParams {
-                supernet_id: sn_id,
+                cidr_block_id: sn_id,
                 cidr: "10.0.1.0/24".into(),
                 name: None,
                 environment: None,
@@ -1244,18 +1250,18 @@ mod tests {
         let server = ipam_server().await;
 
         let result = server
-            .ipam_create_supernet(Parameters(IpamCreateSupernetParams {
+            .ipam_create_cidr_block(Parameters(IpamCreateCidrBlockParams {
                 cidr: "10.0.0.0/8".into(),
                 name: None,
                 description: None,
             }))
             .await;
-        let supernet: serde_json::Value = serde_json::from_str(&result).unwrap();
-        let sn_id = supernet["id"].as_str().unwrap().to_string();
+        let cidr_block: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let sn_id = cidr_block["id"].as_str().unwrap().to_string();
 
         server
             .ipam_allocate_specific(Parameters(IpamAllocateSpecificParams {
-                supernet_id: sn_id,
+                cidr_block_id: sn_id,
                 cidr: "10.0.2.0/24".into(),
                 name: None,
                 environment: None,
@@ -1281,9 +1287,9 @@ mod tests {
     async fn test_ipam_batch_allocate() {
         let server = ipam_server().await;
 
-        // Create two supernets
+        // Create two CIDR blocks
         let r1 = server
-            .ipam_create_supernet(Parameters(IpamCreateSupernetParams {
+            .ipam_create_cidr_block(Parameters(IpamCreateCidrBlockParams {
                 cidr: "10.0.0.0/16".into(),
                 name: Some("Private".into()),
                 description: None,
@@ -1293,7 +1299,7 @@ mod tests {
         let sn1_id = sn1["id"].as_str().unwrap().to_string();
 
         let r2 = server
-            .ipam_create_supernet(Parameters(IpamCreateSupernetParams {
+            .ipam_create_cidr_block(Parameters(IpamCreateCidrBlockParams {
                 cidr: "192.168.0.0/24".into(),
                 name: Some("Public".into()),
                 description: None,
@@ -1302,12 +1308,12 @@ mod tests {
         let sn2: serde_json::Value = serde_json::from_str(&r2).unwrap();
         let sn2_id = sn2["id"].as_str().unwrap().to_string();
 
-        // Batch allocate across both supernets
+        // Batch allocate across both CIDR blocks
         let result = server
             .ipam_batch_allocate(Parameters(IpamBatchAllocateParams {
                 items: vec![
                     BatchAllocateItemParam {
-                        supernet_id: sn1_id.clone(),
+                        cidr_block_id: sn1_id.clone(),
                         prefix_length: 24,
                         count: Some(3),
                         name: Some("Account-01 Private".into()),
@@ -1316,7 +1322,7 @@ mod tests {
                         resource_id: Some("acct-01".into()),
                     },
                     BatchAllocateItemParam {
-                        supernet_id: sn2_id.clone(),
+                        cidr_block_id: sn2_id.clone(),
                         prefix_length: 26,
                         count: Some(2),
                         name: Some("Account-01 Public".into()),
@@ -1352,7 +1358,7 @@ mod tests {
         let server = ipam_server().await;
 
         let r = server
-            .ipam_create_supernet(Parameters(IpamCreateSupernetParams {
+            .ipam_create_cidr_block(Parameters(IpamCreateCidrBlockParams {
                 cidr: "192.168.0.0/30".into(), // tiny: only 4 IPs
                 name: None,
                 description: None,
@@ -1365,7 +1371,7 @@ mod tests {
             .ipam_batch_allocate(Parameters(IpamBatchAllocateParams {
                 items: vec![
                     BatchAllocateItemParam {
-                        supernet_id: sn_id.clone(),
+                        cidr_block_id: sn_id.clone(),
                         prefix_length: 31,
                         count: Some(1),
                         name: Some("ok".into()),
@@ -1374,7 +1380,7 @@ mod tests {
                         resource_id: None,
                     },
                     BatchAllocateItemParam {
-                        supernet_id: sn_id.clone(),
+                        cidr_block_id: sn_id.clone(),
                         prefix_length: 24, // too big for /30
                         count: Some(1),
                         name: Some("fail".into()),
@@ -1398,7 +1404,7 @@ mod tests {
         let server = ipam_server().await;
 
         let r = server
-            .ipam_create_supernet(Parameters(IpamCreateSupernetParams {
+            .ipam_create_cidr_block(Parameters(IpamCreateCidrBlockParams {
                 cidr: "10.0.0.0/16".into(),
                 name: None,
                 description: None,
@@ -1411,7 +1417,7 @@ mod tests {
         server
             .ipam_batch_allocate(Parameters(IpamBatchAllocateParams {
                 items: vec![BatchAllocateItemParam {
-                    supernet_id: sn_id.clone(),
+                    cidr_block_id: sn_id.clone(),
                     prefix_length: 24,
                     count: Some(3),
                     name: None,
@@ -1427,7 +1433,7 @@ mod tests {
             .ipam_batch_release(Parameters(IpamBatchReleaseParams {
                 allocation_ids: None,
                 resource_id: Some("vpc-1".into()),
-                supernet_id: None,
+                cidr_block_id: None,
             }))
             .await;
 
@@ -1442,7 +1448,7 @@ mod tests {
         let server = ipam_server().await;
 
         let r = server
-            .ipam_create_supernet(Parameters(IpamCreateSupernetParams {
+            .ipam_create_cidr_block(Parameters(IpamCreateCidrBlockParams {
                 cidr: "10.0.0.0/16".into(),
                 name: Some("Test".into()),
                 description: None,
@@ -1456,7 +1462,7 @@ mod tests {
             .ipam_batch_allocate(Parameters(IpamBatchAllocateParams {
                 items: vec![
                     BatchAllocateItemParam {
-                        supernet_id: sn_id.clone(),
+                        cidr_block_id: sn_id.clone(),
                         prefix_length: 24,
                         count: Some(2),
                         name: Some("web".into()),
@@ -1465,7 +1471,7 @@ mod tests {
                         resource_id: Some("vpc-web".into()),
                     },
                     BatchAllocateItemParam {
-                        supernet_id: sn_id.clone(),
+                        cidr_block_id: sn_id.clone(),
                         prefix_length: 24,
                         count: Some(1),
                         name: Some("db".into()),
@@ -1479,7 +1485,7 @@ mod tests {
 
         let result = server
             .ipam_allocation_summary(Parameters(IpamAllocationSummaryParams {
-                supernet_id: None,
+                cidr_block_id: None,
             }))
             .await;
 
@@ -1487,9 +1493,9 @@ mod tests {
         let summary: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(summary["total_allocations"], 3);
         assert_eq!(summary["total_active"], 3);
-        assert_eq!(summary["supernets"].as_array().unwrap().len(), 1);
+        assert_eq!(summary["cidr_blocks"].as_array().unwrap().len(), 1);
 
-        let sn_summary = &summary["supernets"][0];
+        let sn_summary = &summary["cidr_blocks"][0];
         assert!(sn_summary["utilization_percent"].as_f64().unwrap() > 0.0);
         let by_resource = sn_summary["by_resource"].as_array().unwrap();
         assert_eq!(by_resource.len(), 2);
@@ -1502,7 +1508,7 @@ mod tests {
             .ipam_batch_release(Parameters(IpamBatchReleaseParams {
                 allocation_ids: None,
                 resource_id: None,
-                supernet_id: None,
+                cidr_block_id: None,
             }))
             .await;
         assert!(result.starts_with("Error"));
@@ -1514,18 +1520,18 @@ mod tests {
         let server = ipam_server().await;
 
         let result = server
-            .ipam_create_supernet(Parameters(IpamCreateSupernetParams {
+            .ipam_create_cidr_block(Parameters(IpamCreateCidrBlockParams {
                 cidr: "10.0.0.0/8".into(),
                 name: None,
                 description: None,
             }))
             .await;
-        let supernet: serde_json::Value = serde_json::from_str(&result).unwrap();
-        let sn_id = supernet["id"].as_str().unwrap().to_string();
+        let cidr_block: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let sn_id = cidr_block["id"].as_str().unwrap().to_string();
 
         server
             .ipam_allocate_specific(Parameters(IpamAllocateSpecificParams {
-                supernet_id: sn_id.clone(),
+                cidr_block_id: sn_id.clone(),
                 cidr: "10.0.0.0/16".into(),
                 name: None,
                 environment: None,
@@ -1537,7 +1543,7 @@ mod tests {
         // Overlapping allocation should fail
         let result = server
             .ipam_allocate_specific(Parameters(IpamAllocateSpecificParams {
-                supernet_id: sn_id,
+                cidr_block_id: sn_id,
                 cidr: "10.0.0.0/24".into(),
                 name: None,
                 environment: None,
@@ -1556,8 +1562,8 @@ mod tests {
     fn test_http_client_new() {
         let client = HttpIpamClient::new("http://localhost:8080").unwrap();
         assert_eq!(
-            client.url("/supernets"),
-            "http://localhost:8080/ipam/supernets"
+            client.url("/cidr-blocks"),
+            "http://localhost:8080/ipam/cidr-blocks"
         );
     }
 
@@ -1565,8 +1571,8 @@ mod tests {
     fn test_http_client_strips_trailing_slash() {
         let client = HttpIpamClient::new("http://localhost:8080/").unwrap();
         assert_eq!(
-            client.url("/supernets"),
-            "http://localhost:8080/ipam/supernets"
+            client.url("/cidr-blocks"),
+            "http://localhost:8080/ipam/cidr-blocks"
         );
     }
 

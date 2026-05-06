@@ -209,32 +209,32 @@ export type FitVerdict =
   | { kind: "invalid"; reason: string };
 
 /**
- * Decide whether `candidate` could be allocated cleanly within `supernet`
+ * Decide whether `candidate` could be allocated cleanly within `cidr_block`
  * given `taken` (active+reserved allocations). The block must:
  *   - parse as a valid CIDR (v4 or v6)
- *   - share an address family with `supernet`
- *   - sit entirely inside `supernet`
+ *   - share an address family with `cidr_block`
+ *   - sit entirely inside `cidr_block`
  *   - not overlap any taken allocation
  */
 export function checkFit(
   raw: string,
-  supernet: ParsedCidr,
+  cidr_block: ParsedCidr,
   taken: ParsedCidr[],
 ): FitVerdict {
   const candidate = parseCidr(raw);
   if (!candidate) {
     return { kind: "invalid", reason: "Not a valid IPv4 or IPv6 CIDR" };
   }
-  if (candidate.kind !== supernet.kind) {
+  if (candidate.kind !== cidr_block.kind) {
     return {
       kind: "outside",
-      reason: `${candidate.cidr} is ${candidate.kind} but supernet is ${supernet.kind}`,
+      reason: `${candidate.cidr} is ${candidate.kind} but cidr_block is ${cidr_block.kind}`,
     };
   }
-  if (relate(candidate, supernet) !== "contained") {
+  if (relate(candidate, cidr_block) !== "contained") {
     return {
       kind: "outside",
-      reason: `${candidate.cidr} is not contained within ${supernet.cidr}`,
+      reason: `${candidate.cidr} is not contained within ${cidr_block.cidr}`,
     };
   }
   for (const t of taken) {

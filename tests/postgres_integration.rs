@@ -107,8 +107,8 @@ async fn test_postgres_backend() {
             .await
             .expect("second migrate should be idempotent");
 
-        // --- supernet CRUD ---
-        supernet_crud(&store).await;
+        // --- cidr_block CRUD ---
+        cidr_block_crud(&store).await;
 
         // --- allocation lifecycle ---
         allocation_lifecycle(&store).await;
@@ -128,11 +128,11 @@ async fn test_postgres_backend() {
     result.expect("test panicked inside spawned task");
 }
 
-async fn supernet_crud(store: &PostgresStore) {
+async fn cidr_block_crud(store: &PostgresStore) {
     let sn = store
-        .create_supernet(
+        .create_cidr_block(
             TEST_TENANT,
-            &CreateSupernet {
+            &CreateCidrBlock {
                 cidr: "10.0.0.0/8".to_string(),
                 name: Some("RFC1918 Class A".to_string()),
                 description: None,
@@ -146,23 +146,23 @@ async fn supernet_crud(store: &PostgresStore) {
     assert_eq!(sn.prefix_length, 8);
     assert_eq!(sn.ip_version, 4);
 
-    let fetched = store.get_supernet(TEST_TENANT, &sn.id).await.unwrap();
+    let fetched = store.get_cidr_block(TEST_TENANT, &sn.id).await.unwrap();
     assert_eq!(fetched.cidr, "10.0.0.0/8");
     assert_eq!(fetched.name, Some("RFC1918 Class A".to_string()));
 
-    let all = store.list_supernets(TEST_TENANT).await.unwrap();
+    let all = store.list_cidr_blocks(TEST_TENANT).await.unwrap();
     assert!(all.iter().any(|s| s.id == sn.id));
 
-    store.delete_supernet(TEST_TENANT, &sn.id).await.unwrap();
-    let err = store.get_supernet(TEST_TENANT, &sn.id).await;
+    store.delete_cidr_block(TEST_TENANT, &sn.id).await.unwrap();
+    let err = store.get_cidr_block(TEST_TENANT, &sn.id).await;
     assert!(err.is_err());
 }
 
 async fn allocation_lifecycle(store: &PostgresStore) {
     let sn = store
-        .create_supernet(
+        .create_cidr_block(
             TEST_TENANT,
-            &CreateSupernet {
+            &CreateCidrBlock {
                 cidr: "172.16.0.0/12".to_string(),
                 name: Some("Private".to_string()),
                 description: None,
@@ -176,7 +176,7 @@ async fn allocation_lifecycle(store: &PostgresStore) {
         .create_allocation(
             TEST_TENANT,
             &CreateAllocation {
-                supernet_id: sn.id.clone(),
+                cidr_block_id: sn.id.clone(),
                 cidr: "172.16.0.0/24".to_string(),
                 status: None,
                 resource_id: Some("vpc-abc".to_string()),
@@ -230,7 +230,7 @@ async fn allocation_lifecycle(store: &PostgresStore) {
         .list_allocations(
             TEST_TENANT,
             &AllocationFilter {
-                supernet_id: Some(sn.id.clone()),
+                cidr_block_id: Some(sn.id.clone()),
                 status: Some(AllocationStatus::Active),
                 ..Default::default()
             },
@@ -249,7 +249,7 @@ async fn allocation_lifecycle(store: &PostgresStore) {
 
     // Find by status — should be empty (all released)
     let active = store
-        .find_allocations_in_supernet(
+        .find_allocations_in_cidr_block(
             TEST_TENANT,
             &sn.id,
             &[AllocationStatus::Active, AllocationStatus::Reserved],
@@ -258,15 +258,15 @@ async fn allocation_lifecycle(store: &PostgresStore) {
         .unwrap();
     assert!(active.is_empty());
 
-    // Delete supernet (allocations are released)
-    store.delete_supernet(TEST_TENANT, &sn.id).await.unwrap();
+    // Delete cidr_block (allocations are released)
+    store.delete_cidr_block(TEST_TENANT, &sn.id).await.unwrap();
 }
 
 async fn tags(store: &PostgresStore) {
     let sn = store
-        .create_supernet(
+        .create_cidr_block(
             TEST_TENANT,
-            &CreateSupernet {
+            &CreateCidrBlock {
                 cidr: "192.168.0.0/16".to_string(),
                 name: None,
                 description: None,
@@ -279,7 +279,7 @@ async fn tags(store: &PostgresStore) {
         .create_allocation(
             TEST_TENANT,
             &CreateAllocation {
-                supernet_id: sn.id.clone(),
+                cidr_block_id: sn.id.clone(),
                 cidr: "192.168.1.0/24".to_string(),
                 status: None,
                 resource_id: None,
@@ -338,7 +338,7 @@ async fn tags(store: &PostgresStore) {
         .release_allocation(TEST_TENANT, &alloc.id)
         .await
         .unwrap();
-    store.delete_supernet(TEST_TENANT, &sn.id).await.unwrap();
+    store.delete_cidr_block(TEST_TENANT, &sn.id).await.unwrap();
 }
 
 async fn audit_log(store: &PostgresStore) {
@@ -346,9 +346,9 @@ async fn audit_log(store: &PostgresStore) {
         .append_audit(&AuditEntry {
             id: String::new(),
             tenant_id: TEST_TENANT.to_string(),
-            entity_type: "supernet".to_string(),
+            entity_type: "cidr_block".to_string(),
             entity_id: "sn-1".to_string(),
-            action: "create_supernet".to_string(),
+            action: "create_cidr_block".to_string(),
             details: Some(r#"{"cidr":"10.0.0.0/8"}"#.to_string()),
             timestamp: "2026-03-06T00:00:00Z".to_string(),
             ..Default::default()
@@ -389,7 +389,7 @@ async fn audit_log(store: &PostgresStore) {
         .await
         .unwrap();
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].action, "create_supernet");
+    assert_eq!(entries[0].action, "create_cidr_block");
 
     // Query with limit
     let entries = store
@@ -409,9 +409,9 @@ async fn operations_layer(store: PostgresStore) {
     let ops = IpamOps::new(Arc::new(store));
 
     let sn = ops
-        .create_supernet(
+        .create_cidr_block(
             TEST_TENANT,
-            &CreateSupernet {
+            &CreateCidrBlock {
                 cidr: "10.100.0.0/16".to_string(),
                 name: Some("ops-test".to_string()),
                 description: None,
@@ -425,7 +425,7 @@ async fn operations_layer(store: PostgresStore) {
         .allocate_auto(
             TEST_TENANT,
             &AutoAllocateRequest {
-                supernet_id: sn.id.clone(),
+                cidr_block_id: sn.id.clone(),
                 prefix_length: 24,
                 count: Some(3),
                 status: None,
