@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Gitleaks: allowlist test fixtures.** Added `.gitleaks.toml` extending the default ruleset to allowlist `tests/fixtures/*.pem` (test private-key fixtures) and the deliberately-fake `ghp_validlookingbutwrongprefix...` literal in `src/pat.rs` used to assert PAT prefix validation. Unblocks the scheduled `gitleaks` workflow on `main`.
 
+### Fixed
+
+- Configure release-plz for git-only releases so version detection comes from Git tags and `cargo publish` is skipped. This lets the release PR/tag/draft GitHub Release flow work for the private binary distribution model, while the existing release workflow continues attaching and publishing the built `netcidr` artifact.
+
 ## [0.24.0] - 2026-05-02
 
 ### Changed
