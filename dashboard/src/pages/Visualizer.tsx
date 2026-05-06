@@ -25,36 +25,36 @@ function VisualizerInner() {
   const [whatIfFits, setWhatIfFits] = useState<ParsedCidr[]>([]);
   const [whatIfConflicts, setWhatIfConflicts] = useState<ParsedCidr[]>([]);
 
-  // Default-select the first supernet once the list loads.
+  // Default-select the first cidr_block once the list loads.
   useEffect(() => {
-    const first = ipam.supernets[0];
+    const first = ipam.cidr_blocks[0];
     if (!selectedId && first) {
       setSelectedId(first.id);
     }
-  }, [ipam.supernets, selectedId]);
+  }, [ipam.cidr_blocks, selectedId]);
 
   // Drive the IPAM hook's filters → fetches allocations + free blocks.
   useEffect(() => {
     if (selectedId) {
-      ipam.setFilters({ supernetId: selectedId, status: "" });
+      ipam.setFilters({ cidr_blockId: selectedId, status: "" });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
 
-  const supernet = useMemo(
-    () => ipam.supernets.find((s) => s.id === selectedId),
-    [ipam.supernets, selectedId],
+  const cidr_block = useMemo(
+    () => ipam.cidr_blocks.find((s) => s.id === selectedId),
+    [ipam.cidr_blocks, selectedId],
   );
 
   const stats = useMemo(() => {
-    if (!supernet) return null;
-    const u = ipam.utilization[supernet.id];
+    if (!cidr_block) return null;
+    const u = ipam.utilization[cidr_block.id];
     return {
       used: u?.count ?? ipam.allocations.length,
       utilization: u ? `${u.pct.toFixed(1)}%` : "—",
       freeBlocks: ipam.freeBlocks.length,
     };
-  }, [supernet, ipam.utilization, ipam.allocations.length, ipam.freeBlocks.length]);
+  }, [cidr_block, ipam.utilization, ipam.allocations.length, ipam.freeBlocks.length]);
 
   const handleAllocationClick = (a: Allocation) => {
     ipam.viewAllocation(a);
@@ -64,26 +64,26 @@ function VisualizerInner() {
     <div>
       <PageHeader
         title="Allocation Map"
-        subtitle="Visualize an IPAM supernet's address space"
+        subtitle="Visualize an IPAM CIDR block's address space"
       />
       <ErrorBanner message={ipam.error} onDismiss={ipam.clearError} />
 
-      {ipam.supernets.length === 0 ? (
+      {ipam.cidr_blocks.length === 0 ? (
         <Panel>
           <p className="text-text-muted text-sm">
-            No supernets yet. Create one on the IPAM tab first, then come back
+            No CIDR blocks yet. Create one on the IPAM tab first, then come back
             here to map it.
           </p>
         </Panel>
       ) : (
         <>
-          <Panel title="Supernet">
+          <Panel title="CIDR Block">
             <select
               value={selectedId}
               onChange={(e) => setSelectedId(e.target.value)}
               className="w-full font-mono text-base md:text-sm px-3 py-2 bg-bg border border-border rounded-md text-text outline-none focus:border-cyan focus:ring-2 focus:ring-cyan/20 transition-colors"
             >
-              {ipam.supernets.map((s) => (
+              {ipam.cidr_blocks.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.cidr}
                   {s.name ? ` — ${s.name}` : ""}
@@ -92,12 +92,12 @@ function VisualizerInner() {
             </select>
           </Panel>
 
-          {supernet && stats && (
+          {cidr_block && stats && (
             <>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                 <StatCard
                   label="Network"
-                  value={supernet.cidr}
+                  value={cidr_block.cidr}
                   color="cyan"
                   valueSize="16px"
                 />
@@ -126,7 +126,7 @@ function VisualizerInner() {
                 }
               >
                 <AllocationMap
-                  supernet={supernet}
+                  cidr_block={cidr_block}
                   allocations={ipam.allocations}
                   freeBlocks={ipam.freeBlocks}
                   whatIfFits={whatIfFits}
@@ -137,7 +137,7 @@ function VisualizerInner() {
 
               <Panel title="What if" collapsible defaultOpen={false}>
                 <WhatIfPanel
-                  supernetCidr={supernet.cidr}
+                  cidr_blockCidr={cidr_block.cidr}
                   takenCidrs={ipam.allocations}
                   onResultsChange={(fits, conflicts) => {
                     setWhatIfFits(fits);

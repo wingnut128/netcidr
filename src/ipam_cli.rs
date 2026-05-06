@@ -1,4 +1,4 @@
-use netcidr::cli::{AllocationCommands, IpamCommands, SupernetCommands, TagCommands};
+use netcidr::cli::{AllocationCommands, CidrBlockCommands, IpamCommands, TagCommands};
 use netcidr::error::Result;
 use netcidr::ipam::config::IpamConfig;
 use netcidr::ipam::models::*;
@@ -62,16 +62,16 @@ pub async fn handle_ipam_command(
     let ops = create_ops(db).await?;
 
     match command {
-        IpamCommands::Supernet { command } => match command {
-            SupernetCommands::Create {
+        IpamCommands::CidrBlock { command } => match command {
+            CidrBlockCommands::Create {
                 cidr,
                 name,
                 description,
             } => {
                 let sn = ops
-                    .create_supernet(
+                    .create_cidr_block(
                         CLI_TENANT_ID,
-                        &CreateSupernet {
+                        &CreateCidrBlock {
                             cidr,
                             name,
                             description,
@@ -80,26 +80,26 @@ pub async fn handle_ipam_command(
                     .await?;
                 output_result(writer, output_file, &sn);
             }
-            SupernetCommands::List => {
-                let list = ops.list_supernets(CLI_TENANT_ID).await?;
-                let result = SupernetList {
+            CidrBlockCommands::List => {
+                let list = ops.list_cidr_blocks(CLI_TENANT_ID).await?;
+                let result = CidrBlockList {
                     count: list.len(),
-                    supernets: list,
+                    cidr_blocks: list,
                 };
                 output_result(writer, output_file, &result);
             }
-            SupernetCommands::Get { id } => {
-                let sn = ops.get_supernet(CLI_TENANT_ID, &id).await?;
+            CidrBlockCommands::Get { id } => {
+                let sn = ops.get_cidr_block(CLI_TENANT_ID, &id).await?;
                 output_result(writer, output_file, &sn);
             }
-            SupernetCommands::Delete { id } => {
-                ops.delete_supernet(CLI_TENANT_ID, &id).await?;
-                eprintln!("Supernet {} deleted", id);
+            CidrBlockCommands::Delete { id } => {
+                ops.delete_cidr_block(CLI_TENANT_ID, &id).await?;
+                eprintln!("CIDR block {} deleted", id);
             }
         },
 
         IpamCommands::Allocate {
-            supernet_id,
+            cidr_block_id,
             cidr,
             name,
             description,
@@ -116,7 +116,7 @@ pub async fn handle_ipam_command(
                 .allocate_specific(
                     CLI_TENANT_ID,
                     &CreateAllocation {
-                        supernet_id,
+                        cidr_block_id,
                         cidr,
                         status,
                         resource_id,
@@ -135,7 +135,7 @@ pub async fn handle_ipam_command(
         }
 
         IpamCommands::AutoAllocate {
-            supernet_id,
+            cidr_block_id,
             prefix,
             count,
             name,
@@ -153,7 +153,7 @@ pub async fn handle_ipam_command(
                 .allocate_auto(
                     CLI_TENANT_ID,
                     &AutoAllocateRequest {
-                        supernet_id,
+                        cidr_block_id,
                         prefix_length: prefix,
                         count: Some(count),
                         status,
@@ -182,7 +182,7 @@ pub async fn handle_ipam_command(
                 output_result(writer, output_file, &alloc);
             }
             AllocationCommands::List {
-                supernet_id,
+                cidr_block_id,
                 status,
                 resource_id,
                 resource_type,
@@ -194,7 +194,7 @@ pub async fn handle_ipam_command(
                     .list_allocations(
                         CLI_TENANT_ID,
                         &AllocationFilter {
-                            supernet_id,
+                            cidr_block_id,
                             status,
                             resource_id,
                             resource_type,
@@ -244,16 +244,18 @@ pub async fn handle_ipam_command(
             output_result(writer, output_file, &alloc);
         }
 
-        IpamCommands::Utilization { supernet_id } => {
-            let report = ops.utilization(CLI_TENANT_ID, &supernet_id).await?;
+        IpamCommands::Utilization { cidr_block_id } => {
+            let report = ops.utilization(CLI_TENANT_ID, &cidr_block_id).await?;
             output_result(writer, output_file, &report);
         }
 
         IpamCommands::FreeBlocks {
-            supernet_id,
+            cidr_block_id,
             prefix,
         } => {
-            let report = ops.free_blocks(CLI_TENANT_ID, &supernet_id, prefix).await?;
+            let report = ops
+                .free_blocks(CLI_TENANT_ID, &cidr_block_id, prefix)
+                .await?;
             output_result(writer, output_file, &report);
         }
 
@@ -335,7 +337,7 @@ pub async fn handle_ipam_command(
 
             let (sn_count, alloc_count) = ops.load(CLI_TENANT_ID, &dump).await?;
             eprintln!(
-                "Imported {} supernets and {} allocations",
+                "Imported {} CIDR blocks and {} allocations",
                 sn_count, alloc_count
             );
         }

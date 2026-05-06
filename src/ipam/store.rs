@@ -16,11 +16,15 @@ pub trait IpamStore: Send + Sync {
     async fn initialize(&self) -> Result<()>;
     async fn migrate(&self) -> Result<()>;
 
-    // --- supernets ---
-    async fn create_supernet(&self, tenant_id: &str, input: &CreateSupernet) -> Result<Supernet>;
-    async fn get_supernet(&self, tenant_id: &str, id: &str) -> Result<Supernet>;
-    async fn list_supernets(&self, tenant_id: &str) -> Result<Vec<Supernet>>;
-    async fn delete_supernet(&self, tenant_id: &str, id: &str) -> Result<()>;
+    // --- cidr_blocks ---
+    async fn create_cidr_block(
+        &self,
+        tenant_id: &str,
+        input: &CreateCidrBlock,
+    ) -> Result<CidrBlock>;
+    async fn get_cidr_block(&self, tenant_id: &str, id: &str) -> Result<CidrBlock>;
+    async fn list_cidr_blocks(&self, tenant_id: &str) -> Result<Vec<CidrBlock>>;
+    async fn delete_cidr_block(&self, tenant_id: &str, id: &str) -> Result<()>;
 
     // --- allocations ---
     async fn create_allocation(
@@ -41,10 +45,10 @@ pub trait IpamStore: Send + Sync {
         input: &UpdateAllocation,
     ) -> Result<Allocation>;
     async fn release_allocation(&self, tenant_id: &str, id: &str) -> Result<Allocation>;
-    async fn find_allocations_in_supernet(
+    async fn find_allocations_in_cidr_block(
         &self,
         tenant_id: &str,
-        supernet_id: &str,
+        cidr_block_id: &str,
         statuses: &[AllocationStatus],
     ) -> Result<Vec<Allocation>>;
 

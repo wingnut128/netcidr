@@ -3,7 +3,7 @@ import type { Allocation } from "../../types";
 import { type GridLayout, CELL_FILL } from "./gridUnits";
 
 /**
- * Equal-size cell grid. Each cell covers `1 / cellCount` of the supernet's
+ * Equal-size cell grid. Each cell covers `1 / cellCount` of the CIDR block's
  * address space, indexed in linear order (low → high). Status determines
  * fill; tooltip shows the cell's CIDR and any owning allocation.
  */

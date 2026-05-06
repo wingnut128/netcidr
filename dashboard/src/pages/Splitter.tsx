@@ -116,7 +116,7 @@ export function Splitter() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
             <StatCard
               label="Parent CIDR"
-              value={result.supernet?.input ?? cidr}
+              value={result.cidr_block?.input ?? cidr}
               color="cyan"
               valueSize="18px"
             />

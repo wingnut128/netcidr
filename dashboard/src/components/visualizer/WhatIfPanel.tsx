@@ -8,7 +8,7 @@ import {
 } from "../../lib/cidr";
 
 interface WhatIfPanelProps {
-  supernetCidr: string;
+  cidr_blockCidr: string;
   /** Active + reserved allocations only — released ones are reusable. */
   takenCidrs: Allocation[];
   onResultsChange: (fits: ParsedCidr[], conflicts: ParsedCidr[]) => void;
@@ -35,15 +35,15 @@ const VERDICT_LABEL: Record<FitVerdict["kind"], string> = {
 };
 
 export function WhatIfPanel({
-  supernetCidr,
+  cidr_blockCidr,
   takenCidrs,
   onResultsChange,
 }: WhatIfPanelProps) {
   const [text, setText] = useState("");
 
   const rows = useMemo<Row[]>(() => {
-    const supernet = parseCidr(supernetCidr);
-    if (!supernet) return [];
+    const cidr_block = parseCidr(cidr_blockCidr);
+    if (!cidr_block) return [];
     const taken = takenCidrs
       .filter((a) => a.status !== "released")
       .map((a) => parseCidr(a.cidr))
@@ -53,11 +53,11 @@ export function WhatIfPanel({
       .map((l) => l.trim())
       .filter(Boolean)
       .map((raw) => {
-        const verdict = checkFit(raw, supernet, taken);
+        const verdict = checkFit(raw, cidr_block, taken);
         const parsed = parseCidr(raw);
         return { raw, verdict, parsed };
       });
-  }, [text, supernetCidr, takenCidrs]);
+  }, [text, cidr_blockCidr, takenCidrs]);
 
   // Push the parsed CIDRs up to the parent so the AllocationMap can paint
   // them as overlays. Wrapped in a ref-style memo so we don't churn on each
@@ -91,7 +91,7 @@ export function WhatIfPanel({
     <div>
       <p className="text-sm text-text-muted mb-3">
         Paste candidate CIDRs (one per line) to check whether they would fit
-        within {supernetCidr} without colliding with existing allocations.
+        within {cidr_blockCidr} without colliding with existing allocations.
       </p>
       <textarea
         value={text}

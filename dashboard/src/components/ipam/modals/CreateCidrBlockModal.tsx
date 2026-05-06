@@ -3,7 +3,7 @@ import { Modal } from "./Modal";
 import { getErrorMessage } from "../../../lib/errors";
 import { FORM_LABEL, INPUT, BTN_PRIMARY } from "../../../lib/styles";
 
-interface CreateSupernetModalProps {
+interface CreateCidrBlockModalProps {
   open: boolean;
   onClose: () => void;
   onSubmit: (form: {
@@ -13,11 +13,11 @@ interface CreateSupernetModalProps {
   }) => Promise<void>;
 }
 
-export function CreateSupernetModal({
+export function CreateCidrBlockModal({
   open,
   onClose,
   onSubmit,
-}: CreateSupernetModalProps) {
+}: CreateCidrBlockModalProps) {
   const [cidr, setCidr] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -43,7 +43,7 @@ export function CreateSupernetModal({
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Create supernet">
+    <Modal open={open} onClose={onClose} title="Create CIDR Block">
       <div className="space-y-3">
         {error && (
           <div className="border border-red/40 bg-red/10 text-red rounded-md px-3 py-2 text-xs">

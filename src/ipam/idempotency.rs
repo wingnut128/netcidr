@@ -3,8 +3,8 @@
 //! Clients may send `Idempotency-Key: <opaque-string>` on the three
 //! allocation endpoints to make retries safe:
 //!
-//! - `POST /ipam/supernets/{id}/allocate` (auto-allocate)
-//! - `POST /ipam/supernets/{id}/allocate-specific`
+//! - `POST /ipam/cidr-blocks/{id}/allocate` (auto-allocate)
+//! - `POST /ipam/cidr-blocks/{id}/allocate-specific`
 //! - `POST /ipam/batch/allocate`
 //!
 //! Behavior:
@@ -15,7 +15,7 @@
 //!   is almost always a client bug.
 //! - **No key** → no caching, behavior unchanged.
 //!
-//! Records are scoped per-endpoint (and per-supernet for the
+//! Records are scoped per-endpoint (and per-cidr_block for the
 //! `allocate*` endpoints), so the same key reused on a different
 //! endpoint is a fresh request — not a conflict.
 
