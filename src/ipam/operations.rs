@@ -47,7 +47,6 @@ impl IpamOps {
     pub fn store_arc(&self) -> Arc<dyn IpamStore> {
         Arc::clone(&self.store)
     }
-
     /// Acquire (or create) the per-cidr_block allocation mutex. Held for the
     /// duration of allocate / release / update so the read-then-insert
     /// sequence cannot be interleaved with another mutation.
