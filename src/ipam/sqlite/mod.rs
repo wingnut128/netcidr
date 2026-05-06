@@ -686,7 +686,7 @@ impl IpamStore for SqliteStore {
     async fn append_audit(&self, entry: &AuditEntry) -> Result<()> {
         let conn = self.conn()?;
         conn.execute(
-            "INSERT INTO audit_log (tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO audit_log (tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id, auth_method, pat_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 entry.tenant_id,
                 entry.timestamp,
@@ -698,6 +698,8 @@ impl IpamStore for SqliteStore {
                 entry.caller_email,
                 entry.source_ip,
                 entry.request_id,
+                if entry.auth_method.is_empty() { "oidc".to_string() } else { entry.auth_method.clone() },
+                entry.pat_id,
             ],
         ).map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         Ok(())
@@ -706,7 +708,7 @@ impl IpamStore for SqliteStore {
     async fn query_audit(&self, tenant_id: &str, filter: &AuditFilter) -> Result<Vec<AuditEntry>> {
         let conn = self.conn()?;
         let mut sql = String::from(
-            "SELECT id, tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id FROM audit_log WHERE tenant_id = ?1",
+            "SELECT id, tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id, auth_method, pat_id FROM audit_log WHERE tenant_id = ?1",
         );
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
         param_values.push(Box::new(tenant_id.to_string()));
@@ -758,6 +760,8 @@ impl IpamStore for SqliteStore {
                     caller_email: row.get(8)?,
                     source_ip: row.get(9)?,
                     request_id: row.get(10)?,
+                    auth_method: row.get(11)?,
+                    pat_id: row.get(12)?,
                 })
             })
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
@@ -850,6 +854,185 @@ impl IpamStore for SqliteStore {
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         Ok(n as u64)
     }
+
+    // --- personal access tokens ---
+
+    async fn pat_create(&self, input: &CreatePersonalAccessToken) -> Result<PersonalAccessToken> {
+        let conn = self.conn()?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = Self::now();
+
+        conn.execute(
+            "INSERT INTO personal_access_tokens
+                (id, tenant_id, owner_sub, owner_email, name, prefix, token_hash,
+                 created_at, expires_at, last_used_at, revoked_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, NULL)",
+            params![
+                id,
+                input.tenant_id,
+                input.owner_sub,
+                input.owner_email,
+                input.name,
+                input.prefix,
+                input.token_hash,
+                now,
+                input.expires_at,
+            ],
+        )
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+
+        Ok(PersonalAccessToken {
+            id,
+            tenant_id: input.tenant_id.clone(),
+            owner_sub: input.owner_sub.clone(),
+            owner_email: input.owner_email.clone(),
+            name: input.name.clone(),
+            prefix: input.prefix.clone(),
+            token_hash: input.token_hash.clone(),
+            created_at: now,
+            expires_at: input.expires_at.clone(),
+            last_used_at: None,
+            revoked_at: None,
+        })
+    }
+
+    async fn pat_get_by_hash(
+        &self,
+        token_hash: &[u8],
+        now_rfc3339: &str,
+    ) -> Result<Option<PersonalAccessToken>> {
+        let conn = self.conn()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, tenant_id, owner_sub, owner_email, name, prefix, token_hash, \
+                        created_at, expires_at, last_used_at, revoked_at \
+                 FROM personal_access_tokens \
+                 WHERE token_hash = ?1 AND revoked_at IS NULL AND expires_at > ?2",
+            )
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        let mut rows = stmt
+            .query(params![token_hash, now_rfc3339])
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        if let Some(row) = rows
+            .next()
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
+        {
+            Ok(Some(
+                row_to_pat(row).map_err(|e| NetcidrError::DatabaseError(e.to_string()))?,
+            ))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn pat_list_for_owner(
+        &self,
+        tenant_id: &str,
+        owner_sub: &str,
+    ) -> Result<Vec<PersonalAccessToken>> {
+        let conn = self.conn()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, tenant_id, owner_sub, owner_email, name, prefix, token_hash, \
+                        created_at, expires_at, last_used_at, revoked_at \
+                 FROM personal_access_tokens \
+                 WHERE tenant_id = ?1 AND owner_sub = ?2 \
+                 ORDER BY created_at",
+            )
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![tenant_id, owner_sub], row_to_pat)
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        Ok(rows)
+    }
+
+    async fn pat_revoke(
+        &self,
+        tenant_id: &str,
+        owner_sub: &str,
+        id: &str,
+        now_rfc3339: &str,
+    ) -> Result<PersonalAccessToken> {
+        let conn = self.conn()?;
+
+        // Confirm ownership first so cross-tenant / cross-owner attempts return
+        // PatNotFound (never reveal existence).
+        let existing: Option<PersonalAccessToken> = conn
+            .query_row(
+                "SELECT id, tenant_id, owner_sub, owner_email, name, prefix, token_hash, \
+                        created_at, expires_at, last_used_at, revoked_at \
+                 FROM personal_access_tokens \
+                 WHERE id = ?1 AND tenant_id = ?2 AND owner_sub = ?3",
+                params![id, tenant_id, owner_sub],
+                row_to_pat,
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                other => Err(NetcidrError::DatabaseError(other.to_string())),
+            })?;
+
+        let mut row = match existing {
+            Some(r) => r,
+            None => return Err(NetcidrError::PatNotFound(id.to_string())),
+        };
+
+        // Idempotent: already-revoked rows return as-is.
+        if row.revoked_at.is_some() {
+            return Ok(row);
+        }
+
+        conn.execute(
+            "UPDATE personal_access_tokens SET revoked_at = ?1 \
+             WHERE id = ?2 AND tenant_id = ?3 AND owner_sub = ?4",
+            params![now_rfc3339, id, tenant_id, owner_sub],
+        )
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+
+        row.revoked_at = Some(now_rfc3339.to_string());
+        Ok(row)
+    }
+
+    async fn pat_touch_last_used(&self, id: &str, now_rfc3339: &str) -> Result<()> {
+        let conn = self.conn()?;
+        conn.execute(
+            "UPDATE personal_access_tokens SET last_used_at = ?1 WHERE id = ?2",
+            params![now_rfc3339, id],
+        )
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn pat_reap_expired(&self, before_rfc3339: &str) -> Result<u64> {
+        let conn = self.conn()?;
+        let n = conn
+            .execute(
+                "DELETE FROM personal_access_tokens WHERE expires_at < ?1",
+                params![before_rfc3339],
+            )
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        Ok(n as u64)
+    }
+}
+
+/// Map a `personal_access_tokens` row to the model. Free function (not a
+/// method) so it can be used directly with `query_map`.
+fn row_to_pat(row: &rusqlite::Row<'_>) -> rusqlite::Result<PersonalAccessToken> {
+    Ok(PersonalAccessToken {
+        id: row.get(0)?,
+        tenant_id: row.get(1)?,
+        owner_sub: row.get(2)?,
+        owner_email: row.get(3)?,
+        name: row.get(4)?,
+        prefix: row.get(5)?,
+        token_hash: row.get(6)?,
+        created_at: row.get(7)?,
+        expires_at: row.get(8)?,
+        last_used_at: row.get(9)?,
+        revoked_at: row.get(10)?,
+    })
 }
 
 #[cfg(test)]
@@ -1403,5 +1586,318 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(entries.len(), 3);
+    }
+
+    // ---- personal access tokens ----
+
+    fn pat_input(
+        tenant: &str,
+        owner_sub: &str,
+        name: &str,
+        hash_byte: u8,
+        expires_at: &str,
+    ) -> CreatePersonalAccessToken {
+        CreatePersonalAccessToken {
+            tenant_id: tenant.to_string(),
+            owner_sub: owner_sub.to_string(),
+            owner_email: tenant.to_string(),
+            name: name.to_string(),
+            prefix: format!("ncdr_pat_{name:>3.3}"),
+            token_hash: vec![hash_byte; 32],
+            expires_at: expires_at.to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn pat_create_then_get_by_hash_round_trip() {
+        let store = test_store().await;
+        let input = pat_input(TEST_TENANT, "sub-1", "laptop", 0xAA, "2099-01-01T00:00:00Z");
+        let created = store.pat_create(&input).await.unwrap();
+        assert_eq!(created.tenant_id, TEST_TENANT);
+        assert_eq!(created.token_hash, vec![0xAA; 32]);
+        assert!(created.last_used_at.is_none());
+
+        let found = store
+            .pat_get_by_hash(&created.token_hash, "2026-05-02T00:00:00Z")
+            .await
+            .unwrap()
+            .expect("active token should hit");
+        assert_eq!(found.id, created.id);
+    }
+
+    #[tokio::test]
+    async fn pat_get_by_hash_misses_revoked_expired_and_wrong_hash() {
+        let store = test_store().await;
+
+        // Active.
+        let active = store
+            .pat_create(&pat_input(
+                TEST_TENANT,
+                "sub-1",
+                "active",
+                0x01,
+                "2099-01-01T00:00:00Z",
+            ))
+            .await
+            .unwrap();
+
+        // Already-expired.
+        let expired = store
+            .pat_create(&pat_input(
+                TEST_TENANT,
+                "sub-1",
+                "expired",
+                0x02,
+                "2020-01-01T00:00:00Z",
+            ))
+            .await
+            .unwrap();
+
+        // Revoked.
+        let revoked = store
+            .pat_create(&pat_input(
+                TEST_TENANT,
+                "sub-1",
+                "revoked",
+                0x03,
+                "2099-01-01T00:00:00Z",
+            ))
+            .await
+            .unwrap();
+        store
+            .pat_revoke(TEST_TENANT, "sub-1", &revoked.id, "2026-05-02T00:00:00Z")
+            .await
+            .unwrap();
+
+        let now = "2026-05-02T00:00:00Z";
+
+        // Active hits.
+        assert!(
+            store
+                .pat_get_by_hash(&active.token_hash, now)
+                .await
+                .unwrap()
+                .is_some()
+        );
+
+        // Expired misses.
+        assert!(
+            store
+                .pat_get_by_hash(&expired.token_hash, now)
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        // Revoked misses.
+        assert!(
+            store
+                .pat_get_by_hash(&revoked.token_hash, now)
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        // Wrong hash misses.
+        assert!(
+            store
+                .pat_get_by_hash(&[0xFFu8; 32], now)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn pat_list_for_owner_isolates_across_tenants_and_owners() {
+        let store = test_store().await;
+
+        // tenant a / owner sub-a1
+        let a1 = store
+            .pat_create(&pat_input(
+                "a@x",
+                "sub-a1",
+                "a1",
+                0x10,
+                "2099-01-01T00:00:00Z",
+            ))
+            .await
+            .unwrap();
+        // tenant a / owner sub-a2 (same tenant, different owner)
+        let a2 = store
+            .pat_create(&pat_input(
+                "a@x",
+                "sub-a2",
+                "a2",
+                0x11,
+                "2099-01-01T00:00:00Z",
+            ))
+            .await
+            .unwrap();
+        // tenant b / owner sub-b1
+        let b1 = store
+            .pat_create(&pat_input(
+                "b@x",
+                "sub-b1",
+                "b1",
+                0x12,
+                "2099-01-01T00:00:00Z",
+            ))
+            .await
+            .unwrap();
+
+        let listed = store.pat_list_for_owner("a@x", "sub-a1").await.unwrap();
+        let ids: Vec<&str> = listed.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, vec![a1.id.as_str()]);
+
+        let listed_other = store.pat_list_for_owner("a@x", "sub-a2").await.unwrap();
+        assert_eq!(listed_other.len(), 1);
+        assert_eq!(listed_other[0].id, a2.id);
+
+        let listed_b = store.pat_list_for_owner("b@x", "sub-b1").await.unwrap();
+        assert_eq!(listed_b.len(), 1);
+        assert_eq!(listed_b[0].id, b1.id);
+
+        // Wrong tenant for owner sub-a1 → empty.
+        let cross = store.pat_list_for_owner("b@x", "sub-a1").await.unwrap();
+        assert!(cross.is_empty());
+    }
+
+    #[tokio::test]
+    async fn pat_revoke_is_idempotent_and_returns_existing_row() {
+        let store = test_store().await;
+        let t = store
+            .pat_create(&pat_input(
+                TEST_TENANT,
+                "sub-1",
+                "tok",
+                0x21,
+                "2099-01-01T00:00:00Z",
+            ))
+            .await
+            .unwrap();
+
+        let first = store
+            .pat_revoke(TEST_TENANT, "sub-1", &t.id, "2026-05-02T00:00:00Z")
+            .await
+            .unwrap();
+        assert_eq!(first.revoked_at.as_deref(), Some("2026-05-02T00:00:00Z"));
+
+        // Second revoke must not error and returns the same revoked_at.
+        let second = store
+            .pat_revoke(TEST_TENANT, "sub-1", &t.id, "2026-06-01T00:00:00Z")
+            .await
+            .unwrap();
+        assert_eq!(
+            second.revoked_at.as_deref(),
+            Some("2026-05-02T00:00:00Z"),
+            "second revoke must not overwrite the original timestamp",
+        );
+    }
+
+    #[tokio::test]
+    async fn pat_revoke_returns_not_found_for_other_owner_or_tenant() {
+        let store = test_store().await;
+        let t = store
+            .pat_create(&pat_input(
+                "a@x",
+                "sub-a1",
+                "tok",
+                0x31,
+                "2099-01-01T00:00:00Z",
+            ))
+            .await
+            .unwrap();
+
+        let wrong_tenant = store
+            .pat_revoke("b@x", "sub-a1", &t.id, "2026-05-02T00:00:00Z")
+            .await;
+        assert!(matches!(wrong_tenant, Err(NetcidrError::PatNotFound(_))));
+
+        let wrong_owner = store
+            .pat_revoke("a@x", "sub-a2", &t.id, "2026-05-02T00:00:00Z")
+            .await;
+        assert!(matches!(wrong_owner, Err(NetcidrError::PatNotFound(_))));
+
+        // Original token is still active.
+        let listed = store.pat_list_for_owner("a@x", "sub-a1").await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert!(listed[0].revoked_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn pat_touch_last_used_updates_timestamp() {
+        let store = test_store().await;
+        let t = store
+            .pat_create(&pat_input(
+                TEST_TENANT,
+                "sub-1",
+                "tok",
+                0x41,
+                "2099-01-01T00:00:00Z",
+            ))
+            .await
+            .unwrap();
+        store
+            .pat_touch_last_used(&t.id, "2026-05-02T12:00:00Z")
+            .await
+            .unwrap();
+        let after = store
+            .pat_list_for_owner(TEST_TENANT, "sub-1")
+            .await
+            .unwrap();
+        assert_eq!(
+            after[0].last_used_at.as_deref(),
+            Some("2026-05-02T12:00:00Z")
+        );
+    }
+
+    #[tokio::test]
+    async fn pat_reap_expired_returns_count_and_removes_rows() {
+        let store = test_store().await;
+        // Two expired, one still-valid.
+        let _e1 = store
+            .pat_create(&pat_input(
+                TEST_TENANT,
+                "sub-1",
+                "e1",
+                0x51,
+                "2020-01-01T00:00:00Z",
+            ))
+            .await
+            .unwrap();
+        let _e2 = store
+            .pat_create(&pat_input(
+                TEST_TENANT,
+                "sub-1",
+                "e2",
+                0x52,
+                "2020-02-01T00:00:00Z",
+            ))
+            .await
+            .unwrap();
+        let valid = store
+            .pat_create(&pat_input(
+                TEST_TENANT,
+                "sub-1",
+                "v1",
+                0x53,
+                "2099-01-01T00:00:00Z",
+            ))
+            .await
+            .unwrap();
+
+        let n = store
+            .pat_reap_expired("2025-01-01T00:00:00Z")
+            .await
+            .unwrap();
+        assert_eq!(n, 2);
+
+        let remaining = store
+            .pat_list_for_owner(TEST_TENANT, "sub-1")
+            .await
+            .unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, valid.id);
     }
 }

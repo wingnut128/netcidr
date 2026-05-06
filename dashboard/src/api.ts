@@ -19,6 +19,7 @@ async function request<T>(
   method: string,
   path: string,
   body?: unknown,
+  expectNoContent = false,
 ): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -42,6 +43,7 @@ async function request<T>(
     }
     throw new ApiError(res.status, message);
   }
+  if (expectNoContent) return undefined as T;
   return (await res.json()) as T;
 }
 
@@ -63,4 +65,8 @@ export function put<T>(path: string, body?: unknown): Promise<T> {
 
 export function del<T>(path: string): Promise<T> {
   return request<T>("DELETE", path);
+}
+
+export function delVoid(path: string): Promise<void> {
+  return request<void>("DELETE", path, undefined, true);
 }

@@ -39,6 +39,7 @@ async fn isolation_app() -> axum::Router {
             ..Default::default()
         },
         ipam_ops: Some(ops),
+        pat_pepper: None,
     });
     with_test_tenant(router)
 }
