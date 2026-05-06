@@ -19,6 +19,13 @@ pub struct AuditContext {
     pub caller_email: Option<String>,
     pub source_ip: Option<String>,
     pub request_id: Option<String>,
+    /// Authentication method that produced this principal:
+    /// `"oidc"`, `"pat"`, or `"bearer"`. `None` when running outside a
+    /// request scope (e.g. CLI invocations).
+    pub auth_method: Option<String>,
+    /// Personal access token id, when `auth_method == "pat"`. Always
+    /// `None` for OIDC and bearer-token auth.
+    pub pat_id: Option<String>,
 }
 
 task_local! {

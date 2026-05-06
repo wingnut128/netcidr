@@ -70,7 +70,11 @@ async fn main() -> Result<(), Error> {
         None
     };
 
-    let router = create_router(RouterConfig { server, ipam_ops });
+    let router = create_router(RouterConfig {
+        server,
+        ipam_ops,
+        pat_pepper: None,
+    });
 
     run(router).await
 }

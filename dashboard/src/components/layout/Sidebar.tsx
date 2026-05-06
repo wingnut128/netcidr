@@ -60,9 +60,13 @@ export function Sidebar({
     }
   }, [location.pathname, onClose]);
 
-  const navItems = ipamEnabled
-    ? [...baseNavItems, { to: "/ipam", label: "IPAM" }]
-    : baseNavItems;
+  const navItems = [
+    ...baseNavItems,
+    ...(ipamEnabled ? [{ to: "/ipam", label: "IPAM" }] : []),
+    ...(auth.status === "authenticated"
+      ? [{ to: "/tokens", label: "Tokens" }]
+      : []),
+  ];
   const adminItems = auth.isAdmin
     ? [{ to: "/admin/allowlist", label: "Allowlist" }]
     : [];

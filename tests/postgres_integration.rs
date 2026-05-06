@@ -119,6 +119,9 @@ async fn test_postgres_backend() {
         // --- audit log ---
         audit_log(&store).await;
 
+        // --- personal access tokens smoke ---
+        personal_access_tokens(&store).await;
+
         // --- operations layer (auto-allocate, utilization, free blocks) ---
         operations_layer(store).await;
     })
@@ -403,6 +406,85 @@ async fn audit_log(store: &PostgresStore) {
         .await
         .unwrap();
     assert_eq!(entries.len(), 1);
+}
+
+async fn personal_access_tokens(store: &PostgresStore) {
+    // Round-trip create + get_by_hash.
+    let created = store
+        .pat_create(&CreatePersonalAccessToken {
+            tenant_id: TEST_TENANT.to_string(),
+            owner_sub: "sub-pat-1".to_string(),
+            owner_email: TEST_TENANT.to_string(),
+            name: "smoke".to_string(),
+            prefix: "ncdr_pat_SMK".to_string(),
+            token_hash: vec![0xA1u8; 32],
+            expires_at: "2099-01-01T00:00:00Z".to_string(),
+        })
+        .await
+        .unwrap();
+
+    let hit = store
+        .pat_get_by_hash(&created.token_hash, "2026-05-02T00:00:00Z")
+        .await
+        .unwrap()
+        .expect("active PAT should hit");
+    assert_eq!(hit.id, created.id);
+    assert_eq!(hit.token_hash, vec![0xA1u8; 32]);
+
+    // Listing scoped to (tenant, owner_sub).
+    let listed = store
+        .pat_list_for_owner(TEST_TENANT, "sub-pat-1")
+        .await
+        .unwrap();
+    assert!(listed.iter().any(|t| t.id == created.id));
+
+    // Idempotent revoke.
+    let r1 = store
+        .pat_revoke(
+            TEST_TENANT,
+            "sub-pat-1",
+            &created.id,
+            "2026-05-02T00:00:00Z",
+        )
+        .await
+        .unwrap();
+    assert!(r1.revoked_at.is_some());
+    let r2 = store
+        .pat_revoke(
+            TEST_TENANT,
+            "sub-pat-1",
+            &created.id,
+            "2026-06-01T00:00:00Z",
+        )
+        .await
+        .unwrap();
+    assert_eq!(r1.revoked_at, r2.revoked_at);
+
+    // Revoked tokens miss `pat_get_by_hash`.
+    let miss = store
+        .pat_get_by_hash(&created.token_hash, "2026-05-02T00:00:00Z")
+        .await
+        .unwrap();
+    assert!(miss.is_none());
+
+    // Reap expired removes only the expired row.
+    store
+        .pat_create(&CreatePersonalAccessToken {
+            tenant_id: TEST_TENANT.to_string(),
+            owner_sub: "sub-pat-1".to_string(),
+            owner_email: TEST_TENANT.to_string(),
+            name: "old".to_string(),
+            prefix: "ncdr_pat_OLD".to_string(),
+            token_hash: vec![0xA2u8; 32],
+            expires_at: "2020-01-01T00:00:00Z".to_string(),
+        })
+        .await
+        .unwrap();
+    let n = store
+        .pat_reap_expired("2025-01-01T00:00:00Z")
+        .await
+        .unwrap();
+    assert!(n >= 1);
 }
 
 async fn operations_layer(store: PostgresStore) {

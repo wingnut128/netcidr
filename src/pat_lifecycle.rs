@@ -1,0 +1,185 @@
+//! Personal access token lifecycle policy.
+//!
+//! `crate::pat` owns low-level token primitives: shape, minting, and hashing.
+//! This module owns the higher-level lifecycle policy shared by HTTP handlers
+//! and auth middleware: owner identity, create validation, expiry calculation,
+//! active-token verification, allowlist re-checks, and last-used updates.
+
+use std::sync::Arc;
+
+use tracing::warn;
+
+use crate::error::{NetcidrError, Result};
+use crate::ipam::models::{CreatePersonalAccessToken, PersonalAccessTokenSummary};
+use crate::ipam::store::IpamStore;
+use crate::pat::{self, PatPepper};
+use crate::validation;
+
+pub const DEFAULT_EXPIRES_IN_DAYS: u32 = 90;
+pub const MAX_EXPIRES_IN_DAYS: u32 = 365;
+pub const MAX_NAME_LEN: usize = 64;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PatOwner {
+    pub tenant_id: String,
+    pub subject: String,
+    pub email: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreatePatRequest {
+    pub name: String,
+    pub expires_in_days: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MintedPat {
+    pub summary: PersonalAccessTokenSummary,
+    pub plaintext: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedPat {
+    pub pat_id: String,
+    pub owner: PatOwner,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerifyPatError {
+    Unauthorized,
+}
+
+#[derive(Clone)]
+pub struct PatLifecycle {
+    store: Arc<dyn IpamStore>,
+    pepper: Arc<PatPepper>,
+}
+
+impl PatLifecycle {
+    pub fn new(store: Arc<dyn IpamStore>, pepper: Arc<PatPepper>) -> Self {
+        Self { store, pepper }
+    }
+
+    pub async fn mint_for_owner(
+        &self,
+        owner: &PatOwner,
+        request: CreatePatRequest,
+    ) -> Result<MintedPat> {
+        let name = validate_name(&request.name)?;
+        let days = validate_expires_in_days(request.expires_in_days)?;
+        let minted = pat::mint(self.pepper.as_ref());
+        let now = chrono::Utc::now();
+        let expires_at = (now + chrono::Duration::days(days as i64)).to_rfc3339();
+
+        let row = self
+            .store
+            .pat_create(&CreatePersonalAccessToken {
+                tenant_id: owner.tenant_id.clone(),
+                owner_sub: owner.subject.clone(),
+                owner_email: owner.email.clone(),
+                name,
+                prefix: minted.prefix,
+                token_hash: minted.hash.to_vec(),
+                expires_at,
+            })
+            .await?;
+
+        Ok(MintedPat {
+            summary: row.into(),
+            plaintext: minted.plaintext,
+        })
+    }
+
+    pub async fn list_for_owner(
+        &self,
+        owner: &PatOwner,
+    ) -> Result<Vec<PersonalAccessTokenSummary>> {
+        self.store
+            .pat_list_for_owner(&owner.tenant_id, &owner.subject)
+            .await
+            .map(|rows| rows.into_iter().map(Into::into).collect())
+    }
+
+    pub async fn revoke_for_owner(&self, owner: &PatOwner, id: &str) -> Result<()> {
+        validation::validate_identifier(id)?;
+        let now = chrono::Utc::now().to_rfc3339();
+        self.store
+            .pat_revoke(&owner.tenant_id, &owner.subject, id, &now)
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn verify_bearer_token(
+        &self,
+        token: &str,
+        allowed_emails: &[String],
+    ) -> std::result::Result<VerifiedPat, VerifyPatError> {
+        verify_bearer_token(&self.store, self.pepper.as_ref(), allowed_emails, token).await
+    }
+}
+
+pub async fn verify_bearer_token(
+    store: &Arc<dyn IpamStore>,
+    pepper: &PatPepper,
+    allowed_emails: &[String],
+    token: &str,
+) -> std::result::Result<VerifiedPat, VerifyPatError> {
+    let hash = pat::hash_for_lookup(token, pepper).ok_or(VerifyPatError::Unauthorized)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let row = store
+        .pat_get_by_hash(&hash, &now)
+        .await
+        .map_err(|_| VerifyPatError::Unauthorized)?
+        .ok_or(VerifyPatError::Unauthorized)?;
+
+    if !allowed_emails.is_empty() {
+        let needle = row.owner_email.to_ascii_lowercase();
+        if !allowed_emails.iter().any(|e| e == &needle) {
+            return Err(VerifyPatError::Unauthorized);
+        }
+    }
+
+    let verified = VerifiedPat {
+        pat_id: row.id.clone(),
+        owner: PatOwner {
+            tenant_id: row.tenant_id.clone(),
+            subject: row.owner_sub.clone(),
+            email: row.owner_email.clone(),
+        },
+    };
+
+    let touch_store = Arc::clone(store);
+    let touch_id = row.id;
+    let touch_now = now;
+    tokio::spawn(async move {
+        if let Err(e) = touch_store.pat_touch_last_used(&touch_id, &touch_now).await {
+            warn!(error = %e, pat_id = %touch_id, "failed to update PAT last_used_at");
+        }
+    });
+
+    Ok(verified)
+}
+
+fn validate_name(raw: &str) -> Result<String> {
+    let name = raw.trim();
+    if name.is_empty() {
+        return Err(NetcidrError::InvalidInput(
+            "name must not be empty".to_string(),
+        ));
+    }
+    validation::validate_text_field(name, MAX_NAME_LEN)?;
+    Ok(name.to_string())
+}
+
+fn validate_expires_in_days(expires_in_days: Option<u32>) -> Result<u32> {
+    match expires_in_days {
+        None => Ok(DEFAULT_EXPIRES_IN_DAYS),
+        Some(0) => Err(NetcidrError::InvalidInput(
+            "expires_in_days must be at least 1".to_string(),
+        )),
+        Some(n) if n > MAX_EXPIRES_IN_DAYS => Err(NetcidrError::InvalidInput(format!(
+            "expires_in_days must not exceed {MAX_EXPIRES_IN_DAYS}"
+        ))),
+        Some(n) => Ok(n),
+    }
+}

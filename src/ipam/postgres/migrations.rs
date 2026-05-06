@@ -7,6 +7,7 @@ pub const MIGRATIONS: &[(u32, &str)] = &[
     (4, MIGRATION_004),
     (5, MIGRATION_005),
     (6, MIGRATION_006),
+    (7, MIGRATION_007),
 ];
 
 const MIGRATION_001: &str = r#"
@@ -221,6 +222,32 @@ CREATE TABLE idempotency_keys (
     PRIMARY KEY (tenant_id, key, scope)
 );
 CREATE INDEX idx_idempotency_expires ON idempotency_keys(expires_at);
+"#;
+
+/// Migration 007: personal access tokens. Mirrors the SQLite migration.
+/// Additive only — new `personal_access_tokens` table plus two new columns
+/// on `audit_log`. `token_hash` is `bytea`; time fields stay `TEXT` to match
+/// the rest of the schema's existing convention.
+const MIGRATION_007: &str = r#"
+CREATE TABLE personal_access_tokens (
+    id            TEXT PRIMARY KEY,
+    tenant_id     TEXT NOT NULL,
+    owner_sub     TEXT NOT NULL,
+    owner_email   TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    prefix        TEXT NOT NULL,
+    token_hash    BYTEA NOT NULL,
+    created_at    TEXT NOT NULL,
+    expires_at    TEXT NOT NULL,
+    last_used_at  TEXT,
+    revoked_at    TEXT
+);
+CREATE INDEX idx_pat_tenant ON personal_access_tokens(tenant_id);
+CREATE INDEX idx_pat_prefix ON personal_access_tokens(prefix);
+CREATE UNIQUE INDEX idx_pat_token_hash ON personal_access_tokens(token_hash);
+
+ALTER TABLE audit_log ADD COLUMN auth_method TEXT NOT NULL DEFAULT 'oidc';
+ALTER TABLE audit_log ADD COLUMN pat_id TEXT;
 "#;
 
 #[cfg(all(test, feature = "ipam-postgres"))]

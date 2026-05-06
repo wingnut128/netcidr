@@ -87,6 +87,9 @@ pub enum NetcidrError {
 
     #[error("Invalid input: {0}")]
     InvalidInput(String),
+
+    #[error("Personal access token not found: {0}")]
+    PatNotFound(String),
 }
 
 pub type Result<T> = std::result::Result<T, NetcidrError>;

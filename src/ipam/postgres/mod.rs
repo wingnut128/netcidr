@@ -672,7 +672,7 @@ impl IpamStore for PostgresStore {
 
     async fn append_audit(&self, entry: &AuditEntry) -> Result<()> {
         sqlx::query(
-            "INSERT INTO audit_log (tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+            "INSERT INTO audit_log (tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id, auth_method, pat_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
         )
         .bind(&entry.tenant_id)
         .bind(&entry.timestamp)
@@ -684,6 +684,8 @@ impl IpamStore for PostgresStore {
         .bind(&entry.caller_email)
         .bind(&entry.source_ip)
         .bind(&entry.request_id)
+        .bind(if entry.auth_method.is_empty() { "oidc".to_string() } else { entry.auth_method.clone() })
+        .bind(&entry.pat_id)
         .execute(&self.pool)
         .await
         .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
@@ -692,7 +694,7 @@ impl IpamStore for PostgresStore {
 
     async fn query_audit(&self, tenant_id: &str, filter: &AuditFilter) -> Result<Vec<AuditEntry>> {
         let mut sql = String::from(
-            "SELECT id, tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id FROM audit_log WHERE tenant_id = $1",
+            "SELECT id, tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id, auth_method, pat_id FROM audit_log WHERE tenant_id = $1",
         );
         let mut param_values: Vec<String> = Vec::new();
         param_values.push(tenant_id.to_string());
@@ -752,6 +754,10 @@ impl IpamStore for PostgresStore {
                     caller_email: row.try_get("caller_email").ok(),
                     source_ip: row.try_get("source_ip").ok(),
                     request_id: row.try_get("request_id").ok(),
+                    auth_method: row
+                        .try_get::<String, _>("auth_method")
+                        .unwrap_or_else(|_| "oidc".to_string()),
+                    pat_id: row.try_get("pat_id").ok(),
                 }
             })
             .collect())
@@ -816,6 +822,165 @@ impl IpamStore for PostgresStore {
             .await
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         Ok(result.rows_affected())
+    }
+
+    // --- personal access tokens ---
+
+    async fn pat_create(&self, input: &CreatePersonalAccessToken) -> Result<PersonalAccessToken> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = Self::now();
+
+        sqlx::query(
+            "INSERT INTO personal_access_tokens
+                (id, tenant_id, owner_sub, owner_email, name, prefix, token_hash,
+                 created_at, expires_at, last_used_at, revoked_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL, NULL)",
+        )
+        .bind(&id)
+        .bind(&input.tenant_id)
+        .bind(&input.owner_sub)
+        .bind(&input.owner_email)
+        .bind(&input.name)
+        .bind(&input.prefix)
+        .bind(&input.token_hash)
+        .bind(&now)
+        .bind(&input.expires_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+
+        Ok(PersonalAccessToken {
+            id,
+            tenant_id: input.tenant_id.clone(),
+            owner_sub: input.owner_sub.clone(),
+            owner_email: input.owner_email.clone(),
+            name: input.name.clone(),
+            prefix: input.prefix.clone(),
+            token_hash: input.token_hash.clone(),
+            created_at: now,
+            expires_at: input.expires_at.clone(),
+            last_used_at: None,
+            revoked_at: None,
+        })
+    }
+
+    async fn pat_get_by_hash(
+        &self,
+        token_hash: &[u8],
+        now_rfc3339: &str,
+    ) -> Result<Option<PersonalAccessToken>> {
+        let row = sqlx::query(
+            "SELECT id, tenant_id, owner_sub, owner_email, name, prefix, token_hash, \
+                    created_at, expires_at, last_used_at, revoked_at \
+             FROM personal_access_tokens \
+             WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > $2",
+        )
+        .bind(token_hash)
+        .bind(now_rfc3339)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        Ok(row.map(pg_row_to_pat))
+    }
+
+    async fn pat_list_for_owner(
+        &self,
+        tenant_id: &str,
+        owner_sub: &str,
+    ) -> Result<Vec<PersonalAccessToken>> {
+        let rows = sqlx::query(
+            "SELECT id, tenant_id, owner_sub, owner_email, name, prefix, token_hash, \
+                    created_at, expires_at, last_used_at, revoked_at \
+             FROM personal_access_tokens \
+             WHERE tenant_id = $1 AND owner_sub = $2 \
+             ORDER BY created_at",
+        )
+        .bind(tenant_id)
+        .bind(owner_sub)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        Ok(rows.into_iter().map(pg_row_to_pat).collect())
+    }
+
+    async fn pat_revoke(
+        &self,
+        tenant_id: &str,
+        owner_sub: &str,
+        id: &str,
+        now_rfc3339: &str,
+    ) -> Result<PersonalAccessToken> {
+        let existing = sqlx::query(
+            "SELECT id, tenant_id, owner_sub, owner_email, name, prefix, token_hash, \
+                    created_at, expires_at, last_used_at, revoked_at \
+             FROM personal_access_tokens \
+             WHERE id = $1 AND tenant_id = $2 AND owner_sub = $3",
+        )
+        .bind(id)
+        .bind(tenant_id)
+        .bind(owner_sub)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+
+        let mut row = match existing.map(pg_row_to_pat) {
+            Some(r) => r,
+            None => return Err(NetcidrError::PatNotFound(id.to_string())),
+        };
+
+        if row.revoked_at.is_some() {
+            return Ok(row);
+        }
+
+        sqlx::query(
+            "UPDATE personal_access_tokens SET revoked_at = $1 \
+             WHERE id = $2 AND tenant_id = $3 AND owner_sub = $4",
+        )
+        .bind(now_rfc3339)
+        .bind(id)
+        .bind(tenant_id)
+        .bind(owner_sub)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+
+        row.revoked_at = Some(now_rfc3339.to_string());
+        Ok(row)
+    }
+
+    async fn pat_touch_last_used(&self, id: &str, now_rfc3339: &str) -> Result<()> {
+        sqlx::query("UPDATE personal_access_tokens SET last_used_at = $1 WHERE id = $2")
+            .bind(now_rfc3339)
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn pat_reap_expired(&self, before_rfc3339: &str) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM personal_access_tokens WHERE expires_at < $1")
+            .bind(before_rfc3339)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        Ok(result.rows_affected())
+    }
+}
+
+fn pg_row_to_pat(row: sqlx::postgres::PgRow) -> PersonalAccessToken {
+    PersonalAccessToken {
+        id: row.get("id"),
+        tenant_id: row.get("tenant_id"),
+        owner_sub: row.get("owner_sub"),
+        owner_email: row.get("owner_email"),
+        name: row.get("name"),
+        prefix: row.get("prefix"),
+        token_hash: row.get("token_hash"),
+        created_at: row.get("created_at"),
+        expires_at: row.get("expires_at"),
+        last_used_at: row.get("last_used_at"),
+        revoked_at: row.get("revoked_at"),
     }
 }
 

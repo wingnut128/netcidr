@@ -124,6 +124,16 @@ pub enum Commands {
         api_url: Option<String>,
     },
 
+    /// Manage personal access tokens against a remote netcidr server
+    Token {
+        /// API base URL (overrides NETCIDR_API_URL)
+        #[arg(long)]
+        api_url: Option<String>,
+
+        #[command(subcommand)]
+        command: TokenCommands,
+    },
+
     /// Generate shell completions for the given shell
     Completions {
         /// Shell to generate completions for
@@ -464,6 +474,27 @@ pub enum TagCommands {
         /// Tags in key=value format
         #[arg(required = true, num_args = 1..)]
         tags: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum TokenCommands {
+    /// List your personal access tokens
+    List,
+    /// Create a new personal access token (plaintext is shown ONCE)
+    Create {
+        /// Display name (1-64 chars, no control chars)
+        #[arg(long)]
+        name: String,
+        /// Lifetime as `<N><unit>`: d=days, w=weeks, y=years.
+        /// Examples: 1d, 30d, 12w, 1y. Max 1y, default 90d.
+        #[arg(long)]
+        expires_in: Option<String>,
+    },
+    /// Revoke a personal access token by id
+    Revoke {
+        /// Token id (returned by `token list`)
+        id: String,
     },
 }
 
