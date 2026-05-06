@@ -47,8 +47,8 @@ use crate::summarize::{summarize_ipv4_with_limit, summarize_ipv6_with_limit};
 
 #[cfg(feature = "swagger")]
 use crate::ipam::models::{
-    Allocation, AllocationList, AllocationStatus, AuditEntry, AuditList, CreateSupernet, FreeBlock,
-    FreeBlocksReport, Supernet, SupernetList, Tag, UpdateAllocation, UtilizationReport,
+    Allocation, AllocationList, AllocationStatus, AuditEntry, AuditList, CidrBlock, CidrBlockList,
+    CreateCidrBlock, FreeBlock, FreeBlocksReport, Tag, UpdateAllocation, UtilizationReport,
 };
 #[cfg(feature = "swagger")]
 use crate::ipam_api::{AllocateSpecificRequest, AutoAllocateBody, IpamErrorResponse, TagsBody};
@@ -70,13 +70,13 @@ use crate::ipam_api::{AllocateSpecificRequest, AutoAllocateBody, IpamErrorRespon
         from_range_ipv4_handler,
         from_range_ipv6_handler,
         batch_handler,
-        crate::ipam_api::ipam_create_supernet,
-        crate::ipam_api::ipam_list_supernets,
-        crate::ipam_api::ipam_get_supernet,
-        crate::ipam_api::ipam_delete_supernet,
+        crate::ipam_api::ipam_create_cidr_block,
+        crate::ipam_api::ipam_list_cidr_blocks,
+        crate::ipam_api::ipam_get_cidr_block,
+        crate::ipam_api::ipam_delete_cidr_block,
         crate::ipam_api::ipam_allocate_specific,
         crate::ipam_api::ipam_auto_allocate,
-        crate::ipam_api::ipam_list_supernet_allocations,
+        crate::ipam_api::ipam_list_cidr_block_allocations,
         crate::ipam_api::ipam_free_blocks,
         crate::ipam_api::ipam_utilization,
         crate::ipam_api::ipam_get_allocation,
@@ -93,7 +93,7 @@ use crate::ipam_api::{AllocateSpecificRequest, AutoAllocateBody, IpamErrorRespon
             ContainsResult, Ipv4SummaryResult, Ipv6SummaryResult, Ipv4FromRangeResult,
             Ipv6FromRangeResult, SubnetQuery, SplitQuery, ContainsQuery, SummarizeQuery,
             FromRangeQuery, BatchRequest, BatchResult, ErrorResponse, VersionResponse,
-            Supernet, SupernetList, CreateSupernet, Allocation, AllocationList,
+            CidrBlock, CidrBlockList, CreateCidrBlock, Allocation, AllocationList,
             AllocationStatus, Tag, UpdateAllocation, AllocateSpecificRequest,
             AutoAllocateBody, TagsBody, AuditEntry, AuditList, UtilizationReport,
             FreeBlock, FreeBlocksReport, IpamErrorResponse,
@@ -626,7 +626,7 @@ async fn calculate_ipv6(Query(params): Query<SubnetQuery>) -> impl IntoResponse 
 ))]
 #[instrument(skip_all, fields(cidr = %params.cidr, prefix = params.prefix, count = ?params.count, max = params.max))]
 async fn split_ipv4(Query(params): Query<SplitQuery>) -> impl IntoResponse {
-    info!("Splitting IPv4 supernet");
+    info!("Splitting IPv4 CIDR block");
 
     if params.count_only {
         return match count_subnets(&params.cidr, params.prefix) {
@@ -701,7 +701,7 @@ async fn split_ipv4(Query(params): Query<SplitQuery>) -> impl IntoResponse {
 ))]
 #[instrument(skip_all, fields(cidr = %params.cidr, prefix = params.prefix, count = ?params.count, max = params.max))]
 async fn split_ipv6(Query(params): Query<SplitQuery>) -> impl IntoResponse {
-    info!("Splitting IPv6 supernet");
+    info!("Splitting IPv6 CIDR block");
 
     if params.count_only {
         return match count_subnets(&params.cidr, params.prefix) {

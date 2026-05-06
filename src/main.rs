@@ -374,8 +374,8 @@ async fn async_main(cli: Cli) {
             println!("  GET /version             - Version information");
             println!("  GET /v4?cidr=<cidr>      - Calculate IPv4 subnet");
             println!("  GET /v6?cidr=<cidr>      - Calculate IPv6 subnet");
-            println!("  GET /v4/split?cidr=<cidr>&prefix=<n>&count=<n> - Split IPv4 supernet");
-            println!("  GET /v6/split?cidr=<cidr>&prefix=<n>&count=<n> - Split IPv6 supernet");
+            println!("  GET /v4/split?cidr=<cidr>&prefix=<n>&count=<n> - Split IPv4 cidr_block");
+            println!("  GET /v6/split?cidr=<cidr>&prefix=<n>&count=<n> - Split IPv6 cidr_block");
             println!("  GET /v4/contains?cidr=<cidr>&address=<ip>     - Check IPv4 containment");
             println!("  GET /v6/contains?cidr=<cidr>&address=<ip>     - Check IPv6 containment");
             println!("  GET /v4/summarize?cidrs=<cidr,cidr,...>       - Summarize IPv4 CIDRs");

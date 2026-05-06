@@ -26,16 +26,16 @@ async fn sqlite_store() -> impl IpamStore {
 /// Macro that generates a full contract test suite for a given store factory.
 macro_rules! store_contract_tests {
     ($factory:ident) => {
-        // ---- Supernet CRUD ----
+        // ---- CidrBlock CRUD ----
 
         #[tokio::test]
-        async fn contract_supernet_create_and_get() {
+        async fn contract_cidr_block_create_and_get() {
             let store = $factory().await;
 
             let sn = store
-                .create_supernet(
+                .create_cidr_block(
                     TEST_TENANT,
-                    &CreateSupernet {
+                    &CreateCidrBlock {
                         cidr: "10.0.0.0/8".to_string(),
                         name: Some("Corp".to_string()),
                         description: Some("Corporate network".to_string()),
@@ -55,19 +55,19 @@ macro_rules! store_contract_tests {
             assert!(!sn.id.is_empty());
             assert!(!sn.created_at.is_empty());
 
-            let fetched = store.get_supernet(TEST_TENANT, &sn.id).await.unwrap();
+            let fetched = store.get_cidr_block(TEST_TENANT, &sn.id).await.unwrap();
             assert_eq!(fetched.cidr, sn.cidr);
             assert_eq!(fetched.name, sn.name);
         }
 
         #[tokio::test]
-        async fn contract_supernet_list() {
+        async fn contract_cidr_block_list() {
             let store = $factory().await;
 
             store
-                .create_supernet(
+                .create_cidr_block(
                     TEST_TENANT,
-                    &CreateSupernet {
+                    &CreateCidrBlock {
                         cidr: "10.0.0.0/8".to_string(),
                         name: None,
                         description: None,
@@ -76,9 +76,9 @@ macro_rules! store_contract_tests {
                 .await
                 .unwrap();
             store
-                .create_supernet(
+                .create_cidr_block(
                     TEST_TENANT,
-                    &CreateSupernet {
+                    &CreateCidrBlock {
                         cidr: "172.16.0.0/12".to_string(),
                         name: None,
                         description: None,
@@ -87,18 +87,18 @@ macro_rules! store_contract_tests {
                 .await
                 .unwrap();
 
-            let all = store.list_supernets(TEST_TENANT).await.unwrap();
+            let all = store.list_cidr_blocks(TEST_TENANT).await.unwrap();
             assert_eq!(all.len(), 2);
         }
 
         #[tokio::test]
-        async fn contract_supernet_delete() {
+        async fn contract_cidr_block_delete() {
             let store = $factory().await;
 
             let sn = store
-                .create_supernet(
+                .create_cidr_block(
                     TEST_TENANT,
-                    &CreateSupernet {
+                    &CreateCidrBlock {
                         cidr: "10.0.0.0/8".to_string(),
                         name: None,
                         description: None,
@@ -107,19 +107,19 @@ macro_rules! store_contract_tests {
                 .await
                 .unwrap();
 
-            store.delete_supernet(TEST_TENANT, &sn.id).await.unwrap();
-            let all = store.list_supernets(TEST_TENANT).await.unwrap();
+            store.delete_cidr_block(TEST_TENANT, &sn.id).await.unwrap();
+            let all = store.list_cidr_blocks(TEST_TENANT).await.unwrap();
             assert!(all.is_empty());
         }
 
         #[tokio::test]
-        async fn contract_supernet_delete_with_active_allocations_fails() {
+        async fn contract_cidr_block_delete_with_active_allocations_fails() {
             let store = $factory().await;
 
             let sn = store
-                .create_supernet(
+                .create_cidr_block(
                     TEST_TENANT,
-                    &CreateSupernet {
+                    &CreateCidrBlock {
                         cidr: "10.0.0.0/8".to_string(),
                         name: None,
                         description: None,
@@ -132,7 +132,7 @@ macro_rules! store_contract_tests {
                 .create_allocation(
                     TEST_TENANT,
                     &CreateAllocation {
-                        supernet_id: sn.id.clone(),
+                        cidr_block_id: sn.id.clone(),
                         cidr: "10.0.0.0/24".to_string(),
                         status: None,
                         resource_id: None,
@@ -150,38 +150,38 @@ macro_rules! store_contract_tests {
                 .unwrap();
 
             let err = store
-                .delete_supernet(TEST_TENANT, &sn.id)
+                .delete_cidr_block(TEST_TENANT, &sn.id)
                 .await
                 .unwrap_err();
             assert!(
-                matches!(err, NetcidrError::SupernetHasActiveAllocations(_)),
-                "expected SupernetHasActiveAllocations, got: {:?}",
+                matches!(err, NetcidrError::CidrBlockHasActiveAllocations(_)),
+                "expected CidrBlockHasActiveAllocations, got: {:?}",
                 err
             );
         }
 
         #[tokio::test]
-        async fn contract_supernet_get_not_found() {
+        async fn contract_cidr_block_get_not_found() {
             let store = $factory().await;
             let err = store
-                .get_supernet(TEST_TENANT, "nonexistent-id")
+                .get_cidr_block(TEST_TENANT, "nonexistent-id")
                 .await
                 .unwrap_err();
             assert!(
-                matches!(err, NetcidrError::SupernetNotFound(_)),
-                "expected SupernetNotFound, got: {:?}",
+                matches!(err, NetcidrError::CidrBlockNotFound(_)),
+                "expected CidrBlockNotFound, got: {:?}",
                 err
             );
         }
 
         #[tokio::test]
-        async fn contract_supernet_duplicate_cidr_fails() {
+        async fn contract_cidr_block_duplicate_cidr_fails() {
             let store = $factory().await;
 
             store
-                .create_supernet(
+                .create_cidr_block(
                     TEST_TENANT,
-                    &CreateSupernet {
+                    &CreateCidrBlock {
                         cidr: "10.0.0.0/8".to_string(),
                         name: None,
                         description: None,
@@ -191,9 +191,9 @@ macro_rules! store_contract_tests {
                 .unwrap();
 
             let err = store
-                .create_supernet(
+                .create_cidr_block(
                     TEST_TENANT,
-                    &CreateSupernet {
+                    &CreateCidrBlock {
                         cidr: "10.0.0.0/8".to_string(),
                         name: None,
                         description: None,
@@ -217,9 +217,9 @@ macro_rules! store_contract_tests {
             let store = $factory().await;
 
             let sn = store
-                .create_supernet(
+                .create_cidr_block(
                     TEST_TENANT,
-                    &CreateSupernet {
+                    &CreateCidrBlock {
                         cidr: "10.0.0.0/8".to_string(),
                         name: None,
                         description: None,
@@ -232,7 +232,7 @@ macro_rules! store_contract_tests {
                 .create_allocation(
                     TEST_TENANT,
                     &CreateAllocation {
-                        supernet_id: sn.id.clone(),
+                        cidr_block_id: sn.id.clone(),
                         cidr: "10.0.0.0/24".to_string(),
                         status: None,
                         resource_id: None,
@@ -255,7 +255,7 @@ macro_rules! store_contract_tests {
             assert_eq!(alloc.prefix_length, 24);
             assert_eq!(alloc.total_hosts, 256);
             assert_eq!(alloc.status, AllocationStatus::Active);
-            assert_eq!(alloc.supernet_id, sn.id);
+            assert_eq!(alloc.cidr_block_id, sn.id);
             assert!(alloc.released_at.is_none());
             assert!(alloc.tags.is_empty());
         }
@@ -265,9 +265,9 @@ macro_rules! store_contract_tests {
             let store = $factory().await;
 
             let sn = store
-                .create_supernet(
+                .create_cidr_block(
                     TEST_TENANT,
-                    &CreateSupernet {
+                    &CreateCidrBlock {
                         cidr: "10.0.0.0/8".to_string(),
                         name: None,
                         description: None,
@@ -280,7 +280,7 @@ macro_rules! store_contract_tests {
                 .create_allocation(
                     TEST_TENANT,
                     &CreateAllocation {
-                        supernet_id: sn.id.clone(),
+                        cidr_block_id: sn.id.clone(),
                         cidr: "10.0.0.0/24".to_string(),
                         status: Some(AllocationStatus::Reserved),
                         resource_id: Some("vpc-123".to_string()),
@@ -326,9 +326,9 @@ macro_rules! store_contract_tests {
             let store = $factory().await;
 
             let sn = store
-                .create_supernet(
+                .create_cidr_block(
                     TEST_TENANT,
-                    &CreateSupernet {
+                    &CreateCidrBlock {
                         cidr: "10.0.0.0/8".to_string(),
                         name: None,
                         description: None,
@@ -341,7 +341,7 @@ macro_rules! store_contract_tests {
                 .create_allocation(
                     TEST_TENANT,
                     &CreateAllocation {
-                        supernet_id: sn.id.clone(),
+                        cidr_block_id: sn.id.clone(),
                         cidr: "10.0.0.0/24".to_string(),
                         status: None,
                         resource_id: Some("vpc-123".to_string()),
@@ -386,9 +386,9 @@ macro_rules! store_contract_tests {
             let store = $factory().await;
 
             let sn = store
-                .create_supernet(
+                .create_cidr_block(
                     TEST_TENANT,
-                    &CreateSupernet {
+                    &CreateCidrBlock {
                         cidr: "10.0.0.0/8".to_string(),
                         name: None,
                         description: None,
@@ -401,7 +401,7 @@ macro_rules! store_contract_tests {
                 .create_allocation(
                     TEST_TENANT,
                     &CreateAllocation {
-                        supernet_id: sn.id.clone(),
+                        cidr_block_id: sn.id.clone(),
                         cidr: "10.0.0.0/24".to_string(),
                         status: None,
                         resource_id: None,
@@ -447,9 +447,9 @@ macro_rules! store_contract_tests {
             let store = $factory().await;
 
             let sn = store
-                .create_supernet(
+                .create_cidr_block(
                     TEST_TENANT,
-                    &CreateSupernet {
+                    &CreateCidrBlock {
                         cidr: "10.0.0.0/8".to_string(),
                         name: None,
                         description: None,
@@ -462,7 +462,7 @@ macro_rules! store_contract_tests {
                 .create_allocation(
                     TEST_TENANT,
                     &CreateAllocation {
-                        supernet_id: sn.id.clone(),
+                        cidr_block_id: sn.id.clone(),
                         cidr: "10.0.0.0/24".to_string(),
                         status: None,
                         resource_id: Some("vpc-1".to_string()),
@@ -483,7 +483,7 @@ macro_rules! store_contract_tests {
                 .create_allocation(
                     TEST_TENANT,
                     &CreateAllocation {
-                        supernet_id: sn.id.clone(),
+                        cidr_block_id: sn.id.clone(),
                         cidr: "10.0.1.0/24".to_string(),
                         status: Some(AllocationStatus::Reserved),
                         resource_id: Some("vpc-2".to_string()),
@@ -500,12 +500,12 @@ macro_rules! store_contract_tests {
                 .await
                 .unwrap();
 
-            // Filter by supernet
+            // Filter by cidr_block
             let by_sn = store
                 .list_allocations(
                     TEST_TENANT,
                     &AllocationFilter {
-                        supernet_id: Some(sn.id.clone()),
+                        cidr_block_id: Some(sn.id.clone()),
                         ..Default::default()
                     },
                 )
@@ -569,13 +569,13 @@ macro_rules! store_contract_tests {
         }
 
         #[tokio::test]
-        async fn contract_find_allocations_in_supernet_by_status() {
+        async fn contract_find_allocations_in_cidr_block_by_status() {
             let store = $factory().await;
 
             let sn = store
-                .create_supernet(
+                .create_cidr_block(
                     TEST_TENANT,
-                    &CreateSupernet {
+                    &CreateCidrBlock {
                         cidr: "10.0.0.0/8".to_string(),
                         name: None,
                         description: None,
@@ -588,7 +588,7 @@ macro_rules! store_contract_tests {
                 .create_allocation(
                     TEST_TENANT,
                     &CreateAllocation {
-                        supernet_id: sn.id.clone(),
+                        cidr_block_id: sn.id.clone(),
                         cidr: "10.0.0.0/24".to_string(),
                         status: None,
                         resource_id: None,
@@ -609,7 +609,7 @@ macro_rules! store_contract_tests {
                 .create_allocation(
                     TEST_TENANT,
                     &CreateAllocation {
-                        supernet_id: sn.id.clone(),
+                        cidr_block_id: sn.id.clone(),
                         cidr: "10.0.1.0/24".to_string(),
                         status: Some(AllocationStatus::Reserved),
                         resource_id: None,
@@ -630,7 +630,7 @@ macro_rules! store_contract_tests {
 
             // Only reserved should remain in active+reserved query
             let active = store
-                .find_allocations_in_supernet(
+                .find_allocations_in_cidr_block(
                     TEST_TENANT,
                     &sn.id,
                     &[AllocationStatus::Active, AllocationStatus::Reserved],
@@ -642,7 +642,7 @@ macro_rules! store_contract_tests {
 
             // Released query
             let released = store
-                .find_allocations_in_supernet(TEST_TENANT, &sn.id, &[AllocationStatus::Released])
+                .find_allocations_in_cidr_block(TEST_TENANT, &sn.id, &[AllocationStatus::Released])
                 .await
                 .unwrap();
             assert_eq!(released.len(), 1);
@@ -656,9 +656,9 @@ macro_rules! store_contract_tests {
             let store = $factory().await;
 
             let sn = store
-                .create_supernet(
+                .create_cidr_block(
                     TEST_TENANT,
-                    &CreateSupernet {
+                    &CreateCidrBlock {
                         cidr: "10.0.0.0/8".to_string(),
                         name: None,
                         description: None,
@@ -671,7 +671,7 @@ macro_rules! store_contract_tests {
                 .create_allocation(
                     TEST_TENANT,
                     &CreateAllocation {
-                        supernet_id: sn.id.clone(),
+                        cidr_block_id: sn.id.clone(),
                         cidr: "10.0.0.0/24".to_string(),
                         status: None,
                         resource_id: None,
@@ -734,9 +734,9 @@ macro_rules! store_contract_tests {
             let store = $factory().await;
 
             let sn = store
-                .create_supernet(
+                .create_cidr_block(
                     TEST_TENANT,
-                    &CreateSupernet {
+                    &CreateCidrBlock {
                         cidr: "10.0.0.0/8".to_string(),
                         name: None,
                         description: None,
@@ -749,7 +749,7 @@ macro_rules! store_contract_tests {
                 .create_allocation(
                     TEST_TENANT,
                     &CreateAllocation {
-                        supernet_id: sn.id.clone(),
+                        cidr_block_id: sn.id.clone(),
                         cidr: "10.0.0.0/24".to_string(),
                         status: None,
                         resource_id: None,
@@ -785,9 +785,9 @@ macro_rules! store_contract_tests {
                 .append_audit(&AuditEntry {
                     id: String::new(),
                     tenant_id: TEST_TENANT.to_string(),
-                    entity_type: "supernet".to_string(),
+                    entity_type: "cidr_block".to_string(),
                     entity_id: "sn-1".to_string(),
-                    action: "create_supernet".to_string(),
+                    action: "create_cidr_block".to_string(),
                     details: Some("10.0.0.0/8".to_string()),
                     timestamp: "2026-03-16T00:00:00Z".to_string(),
                     ..Default::default()
@@ -817,18 +817,18 @@ macro_rules! store_contract_tests {
             assert_eq!(all.len(), 2);
 
             // Filter by entity_type
-            let supernets = store
+            let cidr_blocks = store
                 .query_audit(
                     TEST_TENANT,
                     &AuditFilter {
-                        entity_type: Some("supernet".to_string()),
+                        entity_type: Some("cidr_block".to_string()),
                         ..Default::default()
                     },
                 )
                 .await
                 .unwrap();
-            assert_eq!(supernets.len(), 1);
-            assert_eq!(supernets[0].action, "create_supernet");
+            assert_eq!(cidr_blocks.len(), 1);
+            assert_eq!(cidr_blocks[0].action, "create_cidr_block");
 
             // Filter by entity_id
             let by_id = store
@@ -877,9 +877,9 @@ macro_rules! store_contract_tests {
             let store = $factory().await;
 
             let sn = store
-                .create_supernet(
+                .create_cidr_block(
                     TEST_TENANT,
-                    &CreateSupernet {
+                    &CreateCidrBlock {
                         cidr: "10.0.0.0/8".to_string(),
                         name: None,
                         description: None,
@@ -892,7 +892,7 @@ macro_rules! store_contract_tests {
                 .create_allocation(
                     TEST_TENANT,
                     &CreateAllocation {
-                        supernet_id: sn.id.clone(),
+                        cidr_block_id: sn.id.clone(),
                         cidr: "10.0.0.0/16".to_string(),
                         status: None,
                         resource_id: None,
@@ -913,7 +913,7 @@ macro_rules! store_contract_tests {
                 .create_allocation(
                     TEST_TENANT,
                     &CreateAllocation {
-                        supernet_id: sn.id.clone(),
+                        cidr_block_id: sn.id.clone(),
                         cidr: "10.0.1.0/24".to_string(),
                         status: None,
                         resource_id: None,
@@ -944,9 +944,9 @@ macro_rules! store_contract_tests {
 
             // Store should still work
             let sn = store
-                .create_supernet(
+                .create_cidr_block(
                     TEST_TENANT,
-                    &CreateSupernet {
+                    &CreateCidrBlock {
                         cidr: "10.0.0.0/8".to_string(),
                         name: None,
                         description: None,
@@ -1169,9 +1169,9 @@ mod migration_upgrade {
 
         // Insert data at current schema version
         let sn = store
-            .create_supernet(
+            .create_cidr_block(
                 TEST_TENANT,
-                &CreateSupernet {
+                &CreateCidrBlock {
                     cidr: "10.0.0.0/8".to_string(),
                     name: Some("Corp".to_string()),
                     description: None,
@@ -1184,7 +1184,7 @@ mod migration_upgrade {
             .create_allocation(
                 TEST_TENANT,
                 &CreateAllocation {
-                    supernet_id: sn.id.clone(),
+                    cidr_block_id: sn.id.clone(),
                     cidr: "10.0.0.0/24".to_string(),
                     status: None,
                     resource_id: Some("vpc-1".to_string()),
@@ -1222,7 +1222,7 @@ mod migration_upgrade {
         store.migrate().await.unwrap();
 
         // Verify all data intact
-        let fetched_sn = store.get_supernet(TEST_TENANT, &sn.id).await.unwrap();
+        let fetched_sn = store.get_cidr_block(TEST_TENANT, &sn.id).await.unwrap();
         assert_eq!(fetched_sn.cidr, "10.0.0.0/8");
         assert_eq!(fetched_sn.name, Some("Corp".to_string()));
 
@@ -1245,17 +1245,17 @@ mod migration_upgrade {
         assert_eq!(audit.len(), 1);
     }
 
-    /// Verify that a complex state (multiple supernets, allocations, releases,
+    /// Verify that a complex state (multiple cidr_blocks, allocations, releases,
     /// tags, audit entries) survives re-migration without corruption.
     #[tokio::test]
     async fn complex_state_survives_remigration() {
         let store = sqlite_store().await;
 
-        // Create two supernets
+        // Create two cidr_blocks
         let sn1 = store
-            .create_supernet(
+            .create_cidr_block(
                 TEST_TENANT,
-                &CreateSupernet {
+                &CreateCidrBlock {
                     cidr: "10.0.0.0/8".to_string(),
                     name: Some("Corp".to_string()),
                     description: None,
@@ -1265,9 +1265,9 @@ mod migration_upgrade {
             .unwrap();
 
         let sn2 = store
-            .create_supernet(
+            .create_cidr_block(
                 TEST_TENANT,
-                &CreateSupernet {
+                &CreateCidrBlock {
                     cidr: "172.16.0.0/12".to_string(),
                     name: Some("Cloud".to_string()),
                     description: None,
@@ -1281,7 +1281,7 @@ mod migration_upgrade {
             .create_allocation(
                 TEST_TENANT,
                 &CreateAllocation {
-                    supernet_id: sn1.id.clone(),
+                    cidr_block_id: sn1.id.clone(),
                     cidr: "10.0.0.0/24".to_string(),
                     status: None,
                     resource_id: None,
@@ -1302,7 +1302,7 @@ mod migration_upgrade {
             .create_allocation(
                 TEST_TENANT,
                 &CreateAllocation {
-                    supernet_id: sn1.id.clone(),
+                    cidr_block_id: sn1.id.clone(),
                     cidr: "10.0.1.0/24".to_string(),
                     status: Some(AllocationStatus::Reserved),
                     resource_id: None,
@@ -1323,7 +1323,7 @@ mod migration_upgrade {
             .create_allocation(
                 TEST_TENANT,
                 &CreateAllocation {
-                    supernet_id: sn2.id.clone(),
+                    cidr_block_id: sn2.id.clone(),
                     cidr: "172.16.0.0/24".to_string(),
                     status: None,
                     resource_id: None,
@@ -1360,8 +1360,8 @@ mod migration_upgrade {
         store.migrate().await.unwrap();
 
         // Verify counts
-        let supernets = store.list_supernets(TEST_TENANT).await.unwrap();
-        assert_eq!(supernets.len(), 2);
+        let cidr_blocks = store.list_cidr_blocks(TEST_TENANT).await.unwrap();
+        assert_eq!(cidr_blocks.len(), 2);
 
         let all_allocs = store
             .list_allocations(TEST_TENANT, &AllocationFilter::default())
@@ -1388,12 +1388,12 @@ mod migration_upgrade {
         store.migrate().await.unwrap();
 
         // The store should work after migration
-        let supernets = store.list_supernets(TEST_TENANT).await.unwrap();
-        assert!(supernets.is_empty());
+        let cidr_blocks = store.list_cidr_blocks(TEST_TENANT).await.unwrap();
+        assert!(cidr_blocks.is_empty());
 
         // Re-migrate should be safe
         store.migrate().await.unwrap();
-        let supernets = store.list_supernets(TEST_TENANT).await.unwrap();
-        assert!(supernets.is_empty());
+        let cidr_blocks = store.list_cidr_blocks(TEST_TENANT).await.unwrap();
+        assert!(cidr_blocks.is_empty());
     }
 }

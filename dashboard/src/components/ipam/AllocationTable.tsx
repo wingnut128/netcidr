@@ -1,11 +1,11 @@
 import { Panel } from "../ui/Panel";
 import { StatusBadge } from "./StatusBadge";
-import type { Allocation, Supernet } from "../../types";
+import type { Allocation, CidrBlock } from "../../types";
 import { fmtDate } from "../../lib/format";
 import { TABLE_HEADER } from "../../lib/styles";
 
 export interface AllocationFilters {
-  supernetId: string;
+  cidr_blockId: string;
   status: string;
   owner: string;
   environment: string;
@@ -13,7 +13,7 @@ export interface AllocationFilters {
 
 interface AllocationTableProps {
   allocations: Allocation[];
-  supernets: Supernet[];
+  cidr_blocks: CidrBlock[];
   snMap: Record<string, string>;
   filters: AllocationFilters;
   onFiltersChange: (f: AllocationFilters) => void;
@@ -26,7 +26,7 @@ interface AllocationTableProps {
 
 export function AllocationTable({
   allocations,
-  supernets,
+  cidr_blocks,
   snMap,
   filters,
   onFiltersChange,
@@ -64,11 +64,11 @@ export function AllocationTable({
       <div className="flex flex-col sm:flex-row gap-3 mb-4 sm:flex-wrap">
         <select
           className="w-full sm:flex-1 sm:min-w-[180px] font-mono text-base md:text-sm px-3 py-2 bg-bg border border-border text-text outline-none focus:border-cyan"
-          value={filters.supernetId}
-          onChange={(e) => set({ supernetId: e.target.value })}
+          value={filters.cidr_blockId}
+          onChange={(e) => set({ cidr_blockId: e.target.value })}
         >
-          <option value="">All Supernets</option>
-          {supernets.map((sn) => (
+          <option value="">All CIDR blocks</option>
+          {cidr_blocks.map((sn) => (
             <option key={sn.id} value={sn.id}>
               {sn.cidr} {sn.name ? `– ${sn.name}` : ""}
             </option>
@@ -101,7 +101,7 @@ export function AllocationTable({
       </div>
 
       {/* Table (desktop) / Card list (mobile) */}
-      {!filters.supernetId ? (
+      {!filters.cidr_blockId ? (
         <p className="text-center text-text-muted py-6">
           SELECT A SUPERNET TO VIEW ALLOCATIONS
         </p>
@@ -124,9 +124,9 @@ export function AllocationTable({
                   <div className="text-sm text-text">{a.name}</div>
                 )}
                 <dl className="grid grid-cols-2 gap-y-1 gap-x-3 text-xs">
-                  <dt className="text-text-muted">Supernet</dt>
+                  <dt className="text-text-muted">CIDR Block</dt>
                   <dd className="text-text font-mono break-all">
-                    {snMap[a.supernet_id] ?? "-"}
+                    {snMap[a.cidr_block_id] ?? "-"}
                   </dd>
                   <dt className="text-text-muted">Owner</dt>
                   <dd className="text-text">{a.owner ?? "-"}</dd>
@@ -187,7 +187,7 @@ export function AllocationTable({
               <tr>
                 {[
                   "CIDR",
-                  "Supernet",
+                  "CIDR Block",
                   "Status",
                   "Name",
                   "Owner",
@@ -209,7 +209,7 @@ export function AllocationTable({
                     {a.cidr}
                   </td>
                   <td className="px-3 py-2 border-b border-border text-text-muted">
-                    {snMap[a.supernet_id] ?? "-"}
+                    {snMap[a.cidr_block_id] ?? "-"}
                   </td>
                   <td className="px-3 py-2 border-b border-border">
                     <StatusBadge status={a.status} />

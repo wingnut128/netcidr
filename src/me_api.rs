@@ -65,8 +65,8 @@ pub struct CreateTokenResponse {
     pub created_at: String,
 }
 
-/// `GET /me/tokens` envelope. Mirrors the `SupernetList` shape used by
-/// `/ipam/supernets` — `{ tokens: [...], count: N }`.
+/// `GET /me/tokens` envelope. Mirrors the `CidrBlockList` shape used by
+/// `/ipam/cidr-blocks` — `{ tokens: [...], count: N }`.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TokenListResponse {
     pub tokens: Vec<PersonalAccessTokenSummary>,

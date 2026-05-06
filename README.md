@@ -9,7 +9,7 @@ A fast IPv4 and IPv6 subnet calculator written in Rust. Available as a CLI tool,
 
 - **IPv4 subnet calculations**: network address, broadcast, subnet mask, wildcard mask, host ranges, network class detection
 - **IPv6 prefix calculations**: network address, address ranges, hextet breakdown, address type detection (global unicast, link-local, ULA, etc.)
-- **Subnet splitting**: generate N subnets of a given prefix from a supernet, or count available subnets
+- **Subnet splitting**: generate N subnets of a given prefix from a CIDR block, or count available subnets
 - **Subnet summarization**: aggregate multiple CIDRs into the minimal covering set
 - **Range to CIDR**: convert an arbitrary IP range (start–end) into the minimal set of CIDR blocks
 - **Address containment**: check if an IP address belongs to a CIDR range
@@ -109,7 +109,7 @@ Example JSON output:
 
 ### Subnet Splitting
 
-Generate smaller subnets from a larger supernet:
+Generate smaller subnets from a larger cidr_block:
 
 ```bash
 # Generate 10 /27 subnets from a /22
@@ -299,7 +299,7 @@ launchctl load ~/Library/LaunchAgents/com.netcidr.mcp.plist
 | Tool | Description |
 |------|-------------|
 | `subnet_calc` | Calculate IPv4/IPv6 subnet details from CIDR notation |
-| `subnet_split` | Split a supernet into smaller subnets |
+| `subnet_split` | Split a CIDR block into smaller subnets |
 | `contains_check` | Check if an IP address is within a CIDR range |
 | `from_range` | Convert an IP address range to minimal CIDR blocks |
 | `summarize` | Aggregate CIDRs into the minimal covering set |
@@ -308,18 +308,18 @@ launchctl load ~/Library/LaunchAgents/com.netcidr.mcp.plist
 
 | Tool | Description |
 |------|-------------|
-| `ipam_create_supernet` | Create a new supernet (top-level address space) |
-| `ipam_list_supernets` | List all supernets |
+| `ipam_create_cidr_block` | Create a new cidr_block (top-level address space) |
+| `ipam_list_cidr_blocks` | List all CIDR blocks |
 | `ipam_allocate` | Auto-allocate next-available CIDR block(s) |
 | `ipam_allocate_specific` | Allocate a specific CIDR block |
 | `ipam_release` | Release an allocation |
 | `ipam_list_allocations` | List allocations (filterable by status/env/owner) |
-| `ipam_free_blocks` | Find free blocks in a supernet |
+| `ipam_free_blocks` | Find free blocks in a cidr_block |
 | `ipam_utilization` | Get utilization statistics |
 | `ipam_find_ip` | Find allocations containing an IP |
 | `ipam_find_resource` | Find allocations by resource ID |
-| `ipam_batch_allocate` | Batch allocate across supernets in one call (compact output) |
-| `ipam_batch_release` | Batch release by IDs, resource_id, or supernet_id |
+| `ipam_batch_allocate` | Batch allocate across CIDR blocks in one call (compact output) |
+| `ipam_batch_release` | Batch release by IDs, resource_id, or cidr_block_id |
 | `ipam_allocation_summary` | Grouped allocation overview by resource with utilization |
 
 #### Streamable HTTP (remote clients)
@@ -442,8 +442,8 @@ enable_swagger = false        # Swagger UI at /swagger-ui (default: false)
 | `GET /version` | Version information | `/version` |
 | `GET /v4?cidr=<cidr>` | IPv4 calculation | `/v4?cidr=192.168.1.0/24` |
 | `GET /v6?cidr=<cidr>` | IPv6 calculation | `/v6?cidr=2001:db8::/32` |
-| `GET /v4/split?cidr=<cidr>&prefix=<n>&count=<n>` | Split IPv4 supernet | `/v4/split?cidr=10.0.0.0/8&prefix=16&count=5` |
-| `GET /v6/split?cidr=<cidr>&prefix=<n>&count=<n>` | Split IPv6 supernet | `/v6/split?cidr=2001:db8::/32&prefix=48&count=10` |
+| `GET /v4/split?cidr=<cidr>&prefix=<n>&count=<n>` | Split IPv4 cidr_block | `/v4/split?cidr=10.0.0.0/8&prefix=16&count=5` |
+| `GET /v6/split?cidr=<cidr>&prefix=<n>&count=<n>` | Split IPv6 cidr_block | `/v6/split?cidr=2001:db8::/32&prefix=48&count=10` |
 | `GET /v4/split?cidr=<cidr>&prefix=<n>&count_only=true` | Count available IPv4 subnets | `/v4/split?cidr=10.0.0.0/8&prefix=16&count_only=true` |
 | `GET /v6/split?cidr=<cidr>&prefix=<n>&count_only=true` | Count available IPv6 subnets | `/v6/split?cidr=2001:db8::/32&prefix=48&count_only=true` |
 | `GET /v4/contains?cidr=<cidr>&address=<ip>` | Check IPv4 containment | `/v4/contains?cidr=192.168.1.0/24&address=192.168.1.100` |
@@ -547,11 +547,11 @@ Arguments:
   [CIDR]...  IP address(es) in CIDR notation (e.g., 192.168.1.0/24 or 2001:db8::/48)
 
 Commands:
-  split       Generate subnets from a supernet
+  split       Generate subnets from a CIDR block
   from-range  Convert an IP range (start–end) into minimal CIDR blocks
   contains    Check if an IP address is contained in a subnet
   summarize   Summarize/aggregate CIDRs into the minimal covering set
-  ipam        IP Address Management — track allocations, supernets, and free space
+  ipam        IP Address Management — track allocations, cidr_blocks, and free space
   completions Generate shell completions for the given shell
   serve       Start the HTTP API server
   help        Print help for a command
@@ -712,9 +712,9 @@ The IPAM module provides library-level IP address allocation tracking with a plu
 
 **Current capabilities:**
 
-- **Supernet management** — define top-level address spaces (e.g. `10.0.0.0/8`) with overlap detection
+- **CidrBlock management** — define top-level address spaces (e.g. `10.0.0.0/8`) with overlap detection
 - **Allocation lifecycle** — allocate specific CIDRs or auto-allocate next-available blocks, update metadata, release
-- **Conflict detection** — prevents overlapping allocations within a supernet
+- **Conflict detection** — prevents overlapping allocations within a CIDR block
 - **Free space discovery** — find available blocks by prefix length, with utilization reporting
 - **Reverse lookup** — find allocations by IP address or resource ID
 - **Audit trail** — immutable log of all mutations (create, update, release)
@@ -729,23 +729,23 @@ The IPAM module provides library-level IP address allocation tracking with a plu
 **CLI usage:**
 
 ```bash
-# Create a supernet
-netcidr ipam supernet create 10.0.0.0/8 --name "Corporate Network"
+# Create a cidr_block
+netcidr ipam cidr_block create 10.0.0.0/8 --name "Corporate Network"
 
-# List supernets
-netcidr ipam supernet list --format text
+# List cidr_blocks
+netcidr ipam cidr_block list --format text
 
 # Allocate a specific block
-netcidr ipam allocate <supernet-id> 10.0.1.0/24 --name "Web Tier" --environment production
+netcidr ipam allocate <cidr_block-id> 10.0.1.0/24 --name "Web Tier" --environment production
 
 # Auto-allocate next available /24s
-netcidr ipam auto-allocate <supernet-id> -p 24 -n 3 --name "App Tier"
+netcidr ipam auto-allocate <cidr_block-id> -p 24 -n 3 --name "App Tier"
 
 # Check utilization
-netcidr ipam utilization <supernet-id> --format text
+netcidr ipam utilization <cidr_block-id> --format text
 
 # Find free blocks
-netcidr ipam free-blocks <supernet-id> -p 24
+netcidr ipam free-blocks <cidr_block-id> -p 24
 
 # Look up which allocation contains an IP
 netcidr ipam find-ip 10.0.1.50
@@ -754,13 +754,13 @@ netcidr ipam find-ip 10.0.1.50
 netcidr ipam audit --limit 10
 
 # IPv6 IPAM — same commands, IPv6 CIDRs
-netcidr ipam supernet create 2001:db8::/32 --name "IPv6 Space"
-netcidr ipam allocate <supernet-id> 2001:db8:1::/48 --name "Site A"
-netcidr ipam auto-allocate <supernet-id> -p 48 -n 5
+netcidr ipam cidr_block create 2001:db8::/32 --name "IPv6 Space"
+netcidr ipam allocate <cidr_block-id> 2001:db8:1::/48 --name "Site A"
+netcidr ipam auto-allocate <cidr_block-id> -p 48 -n 5
 netcidr ipam find-ip 2001:db8:1::50
 
 # Use a specific database file
-netcidr ipam --db /path/to/my.db supernet list
+netcidr ipam --db /path/to/my.db cidr_block list
 ```
 
 **Database location** (precedence order): `--db` flag > `NETCIDR_DB` env var > `db_path` in config file > `~/.local/share/netcidr/netcidr.db`
@@ -779,15 +779,15 @@ netcidr serve --ipam-enabled --ipam-db /path/to/ipam.db
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/ipam/supernets` | `POST` | Create a supernet |
-| `/ipam/supernets` | `GET` | List all supernets |
-| `/ipam/supernets/{id}` | `GET` | Get supernet details |
-| `/ipam/supernets/{id}` | `DELETE` | Delete supernet (must have no active allocations) |
-| `/ipam/supernets/{id}/allocate` | `POST` | Auto-allocate next-available block(s) |
-| `/ipam/supernets/{id}/allocate-specific` | `POST` | Allocate a specific CIDR |
-| `/ipam/supernets/{id}/allocations` | `GET` | List allocations (filterable by status, owner, etc.) |
-| `/ipam/supernets/{id}/free` | `GET` | Find free blocks (optional `?prefix=N` filter) |
-| `/ipam/supernets/{id}/utilization` | `GET` | Utilization report |
+| `/ipam/cidr-blocks` | `POST` | Create a cidr_block |
+| `/ipam/cidr-blocks` | `GET` | List all CIDR blocks |
+| `/ipam/cidr-blocks/{id}` | `GET` | Get cidr_block details |
+| `/ipam/cidr-blocks/{id}` | `DELETE` | Delete cidr_block (must have no active allocations) |
+| `/ipam/cidr-blocks/{id}/allocate` | `POST` | Auto-allocate next-available block(s) |
+| `/ipam/cidr-blocks/{id}/allocate-specific` | `POST` | Allocate a specific CIDR |
+| `/ipam/cidr-blocks/{id}/allocations` | `GET` | List allocations (filterable by status, owner, etc.) |
+| `/ipam/cidr-blocks/{id}/free` | `GET` | Find free blocks (optional `?prefix=N` filter) |
+| `/ipam/cidr-blocks/{id}/utilization` | `GET` | Utilization report |
 | `/ipam/allocations/{id}` | `GET` | Get allocation details |
 | `/ipam/allocations/{id}` | `PATCH` | Update allocation metadata |
 | `/ipam/allocations/{id}/release` | `POST` | Release an allocation |
@@ -800,7 +800,7 @@ netcidr serve --ipam-enabled --ipam-db /path/to/ipam.db
 
 #### Idempotency keys
 
-The three allocation endpoints (`POST /ipam/supernets/{id}/allocate`, `/allocate-specific`, and `/ipam/batch/allocate`) accept an `Idempotency-Key: <opaque>` request header. Replays with the same key + same body return the original response (with `Idempotent-Replay: true`); replays with the same key + a different body return `409`. Cached records are scoped per-endpoint + per-supernet and expire after 24 hours.
+The three allocation endpoints (`POST /ipam/cidr-blocks/{id}/allocate`, `/allocate-specific`, and `/ipam/batch/allocate`) accept an `Idempotency-Key: <opaque>` request header. Replays with the same key + same body return the original response (with `Idempotent-Replay: true`); replays with the same key + a different body return `409`. Cached records are scoped per-endpoint + per-cidr_block and expire after 24 hours.
 
 ## License
 

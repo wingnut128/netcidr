@@ -1,6 +1,6 @@
 //! Concurrency tests for IPAM allocations.
 //!
-//! Per-supernet locking in `IpamOps` serializes the
+//! Per-cidr_block locking in `IpamOps` serializes the
 //! "check overlap → insert" sequence so concurrent requests for an
 //! overlapping CIDR cannot both succeed. These tests prove the invariant.
 
@@ -14,15 +14,15 @@ use netcidr::ipam::store::IpamStore;
 
 const TEST_TENANT: &str = "test@example.com";
 
-async fn ops_with_supernet(cidr: &str) -> (Arc<IpamOps>, String) {
+async fn ops_with_cidr_block(cidr: &str) -> (Arc<IpamOps>, String) {
     let store = SqliteStore::in_memory().unwrap();
     store.initialize().await.unwrap();
     store.migrate().await.unwrap();
     let ops = Arc::new(IpamOps::new(Arc::new(store)));
     let sn = ops
-        .create_supernet(
+        .create_cidr_block(
             TEST_TENANT,
-            &CreateSupernet {
+            &CreateCidrBlock {
                 cidr: cidr.to_string(),
                 name: None,
                 description: None,
@@ -34,11 +34,11 @@ async fn ops_with_supernet(cidr: &str) -> (Arc<IpamOps>, String) {
 }
 
 /// 8 tasks race to allocate the *same* CIDR. Exactly one must succeed; the
-/// other 7 must fail with `AllocationConflict`. Without per-supernet
+/// other 7 must fail with `AllocationConflict`. Without per-cidr_block
 /// locking the check-then-insert window allows duplicates to slip through.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_allocate_specific_same_cidr_yields_exactly_one_winner() {
-    let (ops, sn_id) = ops_with_supernet("10.0.0.0/8").await;
+    let (ops, sn_id) = ops_with_cidr_block("10.0.0.0/8").await;
 
     let mut handles = Vec::new();
     for _ in 0..8 {
@@ -48,7 +48,7 @@ async fn concurrent_allocate_specific_same_cidr_yields_exactly_one_winner() {
             ops.allocate_specific(
                 TEST_TENANT,
                 &CreateAllocation {
-                    supernet_id: sn_id,
+                    cidr_block_id: sn_id,
                     cidr: "10.0.1.0/24".to_string(),
                     status: None,
                     resource_id: None,
@@ -79,12 +79,12 @@ async fn concurrent_allocate_specific_same_cidr_yields_exactly_one_winner() {
     assert_eq!(conflicts, 7, "the other seven must see AllocationConflict");
 }
 
-/// 16 tasks race to auto-allocate /24 blocks from a small /22 supernet
+/// 16 tasks race to auto-allocate /24 blocks from a small /22 cidr_block
 /// (4 blocks total). All 4 winners must hold *non-overlapping* CIDRs and
 /// the remaining 12 tasks must see `NoFreeSpace`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_auto_allocate_produces_no_overlaps() {
-    let (ops, sn_id) = ops_with_supernet("10.0.0.0/22").await;
+    let (ops, sn_id) = ops_with_cidr_block("10.0.0.0/22").await;
 
     let mut handles = Vec::new();
     for _ in 0..16 {
@@ -94,7 +94,7 @@ async fn concurrent_auto_allocate_produces_no_overlaps() {
             ops.allocate_auto(
                 TEST_TENANT,
                 &AutoAllocateRequest {
-                    supernet_id: sn_id,
+                    cidr_block_id: sn_id,
                     prefix_length: 24,
                     count: Some(1),
                     status: None,

@@ -117,14 +117,14 @@ async fn valid_pat_authenticates_and_reaches_handler() {
     let h = build_harness(Vec::new()).await;
     let (token, _id) = mint_pat(&h.store, &h.pepper, &future_rfc3339(), OWNER_EMAIL).await;
 
-    // Listing the (initially empty) supernets for OWNER_EMAIL is enough
+    // Listing the (initially empty) CIDR blocks for OWNER_EMAIL is enough
     // to prove the request reached the handler with the right tenant.
-    let (status, body) = req(&h.router, "/ipam/supernets", &token).await;
+    let (status, body) = req(&h.router, "/ipam/cidr-blocks", &token).await;
     assert_eq!(status, StatusCode::OK, "body: {body}");
-    // Tenant-scoped response: an empty supernets list for a fresh tenant.
+    // Tenant-scoped response: an empty CIDR blocks list for a fresh tenant.
     assert!(
-        body.contains("\"supernets\""),
-        "expected supernets envelope, got {body}"
+        body.contains("\"cidr_blocks\""),
+        "expected CIDR blocks envelope, got {body}"
     );
 }
 
@@ -132,7 +132,7 @@ async fn valid_pat_authenticates_and_reaches_handler() {
 async fn expired_pat_is_unauthorized() {
     let h = build_harness(Vec::new()).await;
     let (token, _id) = mint_pat(&h.store, &h.pepper, &past_rfc3339(), OWNER_EMAIL).await;
-    let (status, _) = req(&h.router, "/ipam/supernets", &token).await;
+    let (status, _) = req(&h.router, "/ipam/cidr-blocks", &token).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
@@ -147,7 +147,7 @@ async fn revoked_pat_is_unauthorized() {
         .await
         .unwrap();
 
-    let (status, _) = req(&h.router, "/ipam/supernets", &token).await;
+    let (status, _) = req(&h.router, "/ipam/cidr-blocks", &token).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
@@ -160,14 +160,14 @@ async fn shape_invalid_pat_is_unauthorized() {
     // the request 401s, and rely on `pat::hash_for_lookup`'s unit tests
     // to prove the no-DB-query property.
     let h = build_harness(Vec::new()).await;
-    let (status, _) = req(&h.router, "/ipam/supernets", "ncdr_pat_short").await;
+    let (status, _) = req(&h.router, "/ipam/cidr-blocks", "ncdr_pat_short").await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
 async fn static_bearer_token_still_works_alongside_pats() {
     let h = build_harness(Vec::new()).await;
-    let (status, _) = req(&h.router, "/ipam/supernets", "static-bearer-token").await;
+    let (status, _) = req(&h.router, "/ipam/cidr-blocks", "static-bearer-token").await;
     assert_eq!(status, StatusCode::OK);
 }
 
@@ -177,7 +177,7 @@ async fn pat_owner_outside_allowlist_is_unauthorized() {
     // even though the hash matches and the row is unrevoked / unexpired.
     let h = build_harness(vec!["someone-else@example.com".to_string()]).await;
     let (token, _id) = mint_pat(&h.store, &h.pepper, &future_rfc3339(), OWNER_EMAIL).await;
-    let (status, _) = req(&h.router, "/ipam/supernets", &token).await;
+    let (status, _) = req(&h.router, "/ipam/cidr-blocks", &token).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
@@ -190,7 +190,7 @@ async fn missing_authorization_header_is_unauthorized() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/ipam/supernets")
+                .uri("/ipam/cidr-blocks")
                 .body(Body::empty())
                 .unwrap(),
         )

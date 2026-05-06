@@ -11,7 +11,7 @@ pub const MIGRATIONS: &[(u32, &str)] = &[
 ];
 
 const MIGRATION_001: &str = r#"
-CREATE TABLE IF NOT EXISTS supernets (
+CREATE TABLE IF NOT EXISTS cidr_blocks (
     id                TEXT PRIMARY KEY,
     cidr              TEXT NOT NULL UNIQUE,
     network_address   TEXT NOT NULL,
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS supernets (
 
 CREATE TABLE IF NOT EXISTS allocations (
     id                    TEXT PRIMARY KEY,
-    supernet_id           TEXT NOT NULL REFERENCES supernets(id),
+    cidr_block_id           TEXT NOT NULL REFERENCES cidr_blocks(id),
     cidr                  TEXT NOT NULL,
     network_address       TEXT NOT NULL,
     broadcast_address     TEXT NOT NULL,
@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS allocations (
     released_at           TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_allocations_supernet ON allocations(supernet_id, status);
+CREATE INDEX IF NOT EXISTS idx_allocations_cidr_block ON allocations(cidr_block_id, status);
 CREATE INDEX IF NOT EXISTS idx_allocations_resource ON allocations(resource_id);
 CREATE INDEX IF NOT EXISTS idx_allocations_parent   ON allocations(parent_allocation_id);
 CREATE INDEX IF NOT EXISTS idx_allocations_cidr     ON allocations(cidr);
@@ -81,8 +81,8 @@ ALTER TABLE allocations ADD COLUMN expires_at TEXT;
 "#;
 
 const MIGRATION_003: &str = r#"
-ALTER TABLE supernets ADD COLUMN total_hosts_text TEXT;
-UPDATE supernets SET total_hosts_text = CAST(total_hosts AS TEXT);
+ALTER TABLE cidr_blocks ADD COLUMN total_hosts_text TEXT;
+UPDATE cidr_blocks SET total_hosts_text = CAST(total_hosts AS TEXT);
 
 ALTER TABLE allocations ADD COLUMN total_hosts_text TEXT;
 UPDATE allocations SET total_hosts_text = CAST(total_hosts AS TEXT);
@@ -114,20 +114,20 @@ CREATE INDEX IF NOT EXISTS idx_idempotency_expires ON idempotency_keys(expires_a
 "#;
 
 /// Migration 006: multi-tenant isolation. Destructively drops and recreates
-/// `supernets`, `allocations`, `audit_log`, `idempotency_keys`, and
+/// `cidr_blocks`, `allocations`, `audit_log`, `idempotency_keys`, and
 /// `allocation_tags` (last one because it FKs allocations) so we can add
 /// `tenant_id` columns, replace `UNIQUE(cidr)` with `UNIQUE(tenant_id, cidr)`
-/// on supernets, add composite tenant indexes, and install triggers
+/// on cidr_blocks, add composite tenant indexes, and install triggers
 /// enforcing the cross-table invariant
-/// `allocations.tenant_id == supernets.tenant_id`.
+/// `allocations.tenant_id == cidr_blocks.tenant_id`.
 const MIGRATION_006: &str = r#"
 DROP TABLE IF EXISTS allocation_tags;
 DROP TABLE IF EXISTS allocations;
-DROP TABLE IF EXISTS supernets;
+DROP TABLE IF EXISTS cidr_blocks;
 DROP TABLE IF EXISTS audit_log;
 DROP TABLE IF EXISTS idempotency_keys;
 
-CREATE TABLE supernets (
+CREATE TABLE cidr_blocks (
     id                TEXT PRIMARY KEY,
     tenant_id         TEXT NOT NULL,
     cidr              TEXT NOT NULL,
@@ -142,12 +142,12 @@ CREATE TABLE supernets (
     updated_at        TEXT NOT NULL,
     UNIQUE (tenant_id, cidr)
 );
-CREATE INDEX idx_supernets_tenant ON supernets(tenant_id);
+CREATE INDEX idx_cidr_blocks_tenant ON cidr_blocks(tenant_id);
 
 CREATE TABLE allocations (
     id                    TEXT PRIMARY KEY,
     tenant_id             TEXT NOT NULL,
-    supernet_id           TEXT NOT NULL REFERENCES supernets(id),
+    cidr_block_id           TEXT NOT NULL REFERENCES cidr_blocks(id),
     cidr                  TEXT NOT NULL,
     network_address       TEXT NOT NULL,
     broadcast_address     TEXT NOT NULL,
@@ -167,25 +167,25 @@ CREATE TABLE allocations (
     expires_at            TEXT
 );
 CREATE INDEX idx_allocations_tenant     ON allocations(tenant_id);
-CREATE INDEX idx_allocations_tenant_sn  ON allocations(tenant_id, supernet_id);
-CREATE INDEX idx_allocations_supernet   ON allocations(supernet_id);
+CREATE INDEX idx_allocations_tenant_sn  ON allocations(tenant_id, cidr_block_id);
+CREATE INDEX idx_allocations_cidr_block   ON allocations(cidr_block_id);
 CREATE INDEX idx_allocations_status     ON allocations(status);
 CREATE INDEX idx_allocations_cidr       ON allocations(cidr);
 
--- Cross-table invariant: allocations.tenant_id must match the parent supernet's.
+-- Cross-table invariant: allocations.tenant_id must match the parent cidr_block's.
 CREATE TRIGGER trg_allocations_tenant_match_insert
     BEFORE INSERT ON allocations
     FOR EACH ROW
-    WHEN NEW.tenant_id != (SELECT tenant_id FROM supernets WHERE id = NEW.supernet_id)
+    WHEN NEW.tenant_id != (SELECT tenant_id FROM cidr_blocks WHERE id = NEW.cidr_block_id)
     BEGIN
-        SELECT RAISE(ABORT, 'allocation tenant_id must match parent supernet tenant_id');
+        SELECT RAISE(ABORT, 'allocation tenant_id must match parent cidr_block tenant_id');
     END;
 CREATE TRIGGER trg_allocations_tenant_match_update
-    BEFORE UPDATE OF tenant_id, supernet_id ON allocations
+    BEFORE UPDATE OF tenant_id, cidr_block_id ON allocations
     FOR EACH ROW
-    WHEN NEW.tenant_id != (SELECT tenant_id FROM supernets WHERE id = NEW.supernet_id)
+    WHEN NEW.tenant_id != (SELECT tenant_id FROM cidr_blocks WHERE id = NEW.cidr_block_id)
     BEGIN
-        SELECT RAISE(ABORT, 'allocation tenant_id must match parent supernet tenant_id');
+        SELECT RAISE(ABORT, 'allocation tenant_id must match parent cidr_block tenant_id');
     END;
 
 CREATE TABLE allocation_tags (
@@ -266,21 +266,21 @@ mod tests {
 
         let conn = store.pool().get().expect("pool checkout");
 
-        // Insert a supernet for tenant "a@x".
+        // Insert a cidr_block for tenant "a@x".
         conn.execute(
-            r#"INSERT INTO supernets
+            r#"INSERT INTO cidr_blocks
                (id, tenant_id, cidr, network_address, broadcast_address,
                 prefix_length, total_hosts, ip_version, created_at, updated_at)
                VALUES ('s1','a@x','10.0.0.0/8','10.0.0.0','10.255.255.255',
                        8,'16777216',4,'2026-05-02T00:00:00Z','2026-05-02T00:00:00Z')"#,
             [],
         )
-        .expect("insert supernet");
+        .expect("insert cidr_block");
 
         // Attempt to insert allocation with mismatched tenant_id.
         let result = conn.execute(
             r#"INSERT INTO allocations
-               (id, tenant_id, supernet_id, cidr, network_address, broadcast_address,
+               (id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address,
                 prefix_length, total_hosts, status, created_at, updated_at)
                VALUES ('a1','b@x','s1','10.1.0.0/16','10.1.0.0','10.1.255.255',
                        16,'65536','active','2026-05-02T00:00:00Z','2026-05-02T00:00:00Z')"#,
@@ -289,7 +289,7 @@ mod tests {
 
         assert!(
             result.is_err(),
-            "trigger should reject allocation whose tenant_id != supernet's tenant_id"
+            "trigger should reject allocation whose tenant_id != cidr_block's tenant_id"
         );
         let err = result.unwrap_err().to_string();
         assert!(
@@ -301,7 +301,7 @@ mod tests {
         // Matching tenant_id should succeed.
         conn.execute(
             r#"INSERT INTO allocations
-               (id, tenant_id, supernet_id, cidr, network_address, broadcast_address,
+               (id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address,
                 prefix_length, total_hosts, status, created_at, updated_at)
                VALUES ('a2','a@x','s1','10.1.0.0/16','10.1.0.0','10.1.255.255',
                        16,'65536','active','2026-05-02T00:00:00Z','2026-05-02T00:00:00Z')"#,
@@ -364,7 +364,7 @@ mod tests {
         conn.execute(
             r#"INSERT INTO audit_log
                (tenant_id, entity_type, entity_id, action, timestamp)
-               VALUES ('a@x','supernet','s1','create_supernet','2026-05-02T00:00:00Z')"#,
+               VALUES ('a@x','create_cidr_block','s1','create_create_cidr_block','2026-05-02T00:00:00Z')"#,
             [],
         )
         .unwrap();

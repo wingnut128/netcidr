@@ -11,7 +11,7 @@ pub const MIGRATIONS: &[(u32, &str)] = &[
 ];
 
 const MIGRATION_001: &str = r#"
-CREATE TABLE IF NOT EXISTS supernets (
+CREATE TABLE IF NOT EXISTS cidr_blocks (
     id                TEXT PRIMARY KEY,
     cidr              TEXT NOT NULL UNIQUE,
     network_address   TEXT NOT NULL,
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS supernets (
 
 CREATE TABLE IF NOT EXISTS allocations (
     id                    TEXT PRIMARY KEY,
-    supernet_id           TEXT NOT NULL REFERENCES supernets(id),
+    cidr_block_id           TEXT NOT NULL REFERENCES cidr_blocks(id),
     cidr                  TEXT NOT NULL,
     network_address       TEXT NOT NULL,
     broadcast_address     TEXT NOT NULL,
@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS allocations (
     released_at           TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_allocations_supernet ON allocations(supernet_id, status);
+CREATE INDEX IF NOT EXISTS idx_allocations_cidr_block ON allocations(cidr_block_id, status);
 CREATE INDEX IF NOT EXISTS idx_allocations_resource ON allocations(resource_id);
 CREATE INDEX IF NOT EXISTS idx_allocations_parent   ON allocations(parent_allocation_id);
 CREATE INDEX IF NOT EXISTS idx_allocations_cidr     ON allocations(cidr);
@@ -76,8 +76,8 @@ ALTER TABLE allocations ADD COLUMN expires_at TEXT;
 "#;
 
 const MIGRATION_003: &str = r#"
-ALTER TABLE supernets ADD COLUMN total_hosts_text TEXT;
-UPDATE supernets SET total_hosts_text = CAST(total_hosts AS TEXT);
+ALTER TABLE cidr_blocks ADD COLUMN total_hosts_text TEXT;
+UPDATE cidr_blocks SET total_hosts_text = CAST(total_hosts AS TEXT);
 
 ALTER TABLE allocations ADD COLUMN total_hosts_text TEXT;
 UPDATE allocations SET total_hosts_text = CAST(total_hosts AS TEXT);
@@ -111,17 +111,17 @@ CREATE INDEX IF NOT EXISTS idx_idempotency_expires ON idempotency_keys(expires_a
 /// Migration 006: multi-tenant isolation. Mirrors the SQLite migration in
 /// Postgres dialect — destructively drops and recreates the IPAM tables
 /// with `tenant_id` columns, replaces `UNIQUE(cidr)` with
-/// `UNIQUE(tenant_id, cidr)` on supernets, adds composite tenant indexes,
+/// `UNIQUE(tenant_id, cidr)` on cidr_blocks, adds composite tenant indexes,
 /// and installs a plpgsql trigger function enforcing the cross-table
-/// invariant `allocations.tenant_id == supernets.tenant_id`.
+/// invariant `allocations.tenant_id == cidr_blocks.tenant_id`.
 const MIGRATION_006: &str = r#"
 DROP TABLE IF EXISTS allocation_tags CASCADE;
 DROP TABLE IF EXISTS allocations CASCADE;
-DROP TABLE IF EXISTS supernets CASCADE;
+DROP TABLE IF EXISTS cidr_blocks CASCADE;
 DROP TABLE IF EXISTS audit_log CASCADE;
 DROP TABLE IF EXISTS idempotency_keys CASCADE;
 
-CREATE TABLE supernets (
+CREATE TABLE cidr_blocks (
     id                TEXT PRIMARY KEY,
     tenant_id         TEXT NOT NULL,
     cidr              TEXT NOT NULL,
@@ -136,12 +136,12 @@ CREATE TABLE supernets (
     updated_at        TEXT NOT NULL,
     UNIQUE (tenant_id, cidr)
 );
-CREATE INDEX idx_supernets_tenant ON supernets(tenant_id);
+CREATE INDEX idx_cidr_blocks_tenant ON cidr_blocks(tenant_id);
 
 CREATE TABLE allocations (
     id                    TEXT PRIMARY KEY,
     tenant_id             TEXT NOT NULL,
-    supernet_id           TEXT NOT NULL REFERENCES supernets(id),
+    cidr_block_id           TEXT NOT NULL REFERENCES cidr_blocks(id),
     cidr                  TEXT NOT NULL,
     network_address       TEXT NOT NULL,
     broadcast_address     TEXT NOT NULL,
@@ -161,8 +161,8 @@ CREATE TABLE allocations (
     expires_at            TEXT
 );
 CREATE INDEX idx_allocations_tenant    ON allocations(tenant_id);
-CREATE INDEX idx_allocations_tenant_sn ON allocations(tenant_id, supernet_id);
-CREATE INDEX idx_allocations_supernet  ON allocations(supernet_id);
+CREATE INDEX idx_allocations_tenant_sn ON allocations(tenant_id, cidr_block_id);
+CREATE INDEX idx_allocations_cidr_block  ON allocations(cidr_block_id);
 CREATE INDEX idx_allocations_status    ON allocations(status);
 CREATE INDEX idx_allocations_cidr      ON allocations(cidr);
 
@@ -170,9 +170,9 @@ CREATE OR REPLACE FUNCTION assert_alloc_tenant_match() RETURNS trigger AS $$
 DECLARE
     sn_tenant TEXT;
 BEGIN
-    SELECT tenant_id INTO sn_tenant FROM supernets WHERE id = NEW.supernet_id;
+    SELECT tenant_id INTO sn_tenant FROM cidr_blocks WHERE id = NEW.cidr_block_id;
     IF sn_tenant IS NULL OR sn_tenant != NEW.tenant_id THEN
-        RAISE EXCEPTION 'allocation tenant_id must match parent supernet tenant_id';
+        RAISE EXCEPTION 'allocation tenant_id must match parent cidr_block tenant_id';
     END IF;
     RETURN NEW;
 END;
@@ -182,7 +182,7 @@ CREATE TRIGGER trg_allocations_tenant_match_insert
     BEFORE INSERT ON allocations
     FOR EACH ROW EXECUTE FUNCTION assert_alloc_tenant_match();
 CREATE TRIGGER trg_allocations_tenant_match_update
-    BEFORE UPDATE OF tenant_id, supernet_id ON allocations
+    BEFORE UPDATE OF tenant_id, cidr_block_id ON allocations
     FOR EACH ROW EXECUTE FUNCTION assert_alloc_tenant_match();
 
 CREATE TABLE allocation_tags (
@@ -272,7 +272,7 @@ mod tests {
         store.migrate().await.unwrap();
 
         sqlx::query(
-            r#"INSERT INTO supernets
+            r#"INSERT INTO cidr_blocks
                (id, tenant_id, cidr, network_address, broadcast_address,
                 prefix_length, total_hosts, ip_version, created_at, updated_at)
                VALUES ('s1','a@x','10.0.0.0/8','10.0.0.0','10.255.255.255',
@@ -284,7 +284,7 @@ mod tests {
 
         let result = sqlx::query(
             r#"INSERT INTO allocations
-               (id, tenant_id, supernet_id, cidr, network_address, broadcast_address,
+               (id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address,
                 prefix_length, total_hosts, status, created_at, updated_at)
                VALUES ('a1','b@x','s1','10.1.0.0/16','10.1.0.0','10.1.255.255',
                        16,'65536','active','2026-05-02T00:00:00Z','2026-05-02T00:00:00Z')"#,

@@ -7,10 +7,10 @@ use std::fmt::Write;
 // TextOutput implementations
 // ---------------------------------------------------------------------------
 
-impl TextOutput for Supernet {
+impl TextOutput for CidrBlock {
     fn to_text(&self) -> String {
         let mut out = String::new();
-        writeln!(out, "Supernet").unwrap();
+        writeln!(out, "CidrBlock").unwrap();
         writeln!(out, "========").unwrap();
         writeln!(out, "ID:                {}", self.id).unwrap();
         writeln!(out, "CIDR:              {}", self.cidr).unwrap();
@@ -30,12 +30,12 @@ impl TextOutput for Supernet {
     }
 }
 
-impl TextOutput for SupernetList {
+impl TextOutput for CidrBlockList {
     fn to_text(&self) -> String {
         let mut out = String::new();
-        writeln!(out, "Supernets ({} total)", self.count).unwrap();
+        writeln!(out, "CIDR Blocks ({} total)", self.count).unwrap();
         writeln!(out, "===================").unwrap();
-        for (i, sn) in self.supernets.iter().enumerate() {
+        for (i, sn) in self.cidr_blocks.iter().enumerate() {
             let name = sn.name.as_deref().unwrap_or("-");
             writeln!(
                 out,
@@ -58,7 +58,7 @@ impl TextOutput for Allocation {
         writeln!(out, "Allocation").unwrap();
         writeln!(out, "==========").unwrap();
         writeln!(out, "ID:                {}", self.id).unwrap();
-        writeln!(out, "Supernet ID:       {}", self.supernet_id).unwrap();
+        writeln!(out, "CIDR block ID:       {}", self.cidr_block_id).unwrap();
         writeln!(out, "CIDR:              {}", self.cidr).unwrap();
         writeln!(out, "Network Address:   {}", self.network_address).unwrap();
         writeln!(out, "Broadcast Address: {}", self.broadcast_address).unwrap();
@@ -128,7 +128,7 @@ impl TextOutput for UtilizationReport {
         let mut out = String::new();
         writeln!(out, "Utilization Report").unwrap();
         writeln!(out, "==================").unwrap();
-        writeln!(out, "Supernet:          {}", self.supernet_cidr).unwrap();
+        writeln!(out, "CidrBlock:          {}", self.cidr_block_cidr).unwrap();
         writeln!(out, "Total Addresses:   {}", self.total_addresses).unwrap();
         writeln!(out, "Allocated:         {}", self.allocated_addresses).unwrap();
         writeln!(out, "Free:              {}", self.free_addresses).unwrap();
@@ -164,7 +164,7 @@ impl TextOutput for FreeBlocksReport {
         let mut out = String::new();
         writeln!(out, "Free Blocks").unwrap();
         writeln!(out, "===========").unwrap();
-        writeln!(out, "Supernet:    {}", self.supernet_cidr).unwrap();
+        writeln!(out, "CidrBlock:    {}", self.cidr_block_cidr).unwrap();
         writeln!(out, "Total Free:  {} addresses", self.total_free).unwrap();
         writeln!(out).unwrap();
         for (i, block) in self.blocks.iter().enumerate() {
@@ -215,7 +215,7 @@ fn finish_csv(wtr: csv::Writer<Vec<u8>>) -> Result<String> {
     String::from_utf8(bytes).map_err(csv_err)
 }
 
-impl CsvOutput for Supernet {
+impl CsvOutput for CidrBlock {
     fn to_csv(&self) -> Result<String> {
         let mut wtr = csv::Writer::from_writer(Vec::new());
         wtr.write_record([
@@ -248,7 +248,7 @@ impl CsvOutput for Supernet {
     }
 }
 
-impl CsvOutput for SupernetList {
+impl CsvOutput for CidrBlockList {
     fn to_csv(&self) -> Result<String> {
         let mut wtr = csv::Writer::from_writer(Vec::new());
         wtr.write_record([
@@ -264,7 +264,7 @@ impl CsvOutput for SupernetList {
             "created_at",
         ])
         .map_err(csv_err)?;
-        for sn in &self.supernets {
+        for sn in &self.cidr_blocks {
             wtr.write_record([
                 &sn.id,
                 &sn.cidr,
@@ -307,8 +307,8 @@ impl CsvOutput for UtilizationReport {
     fn to_csv(&self) -> Result<String> {
         let mut wtr = csv::Writer::from_writer(Vec::new());
         wtr.write_record([
-            "supernet_id",
-            "supernet_cidr",
+            "cidr_block_id",
+            "cidr_block_cidr",
             "total_addresses",
             "allocated_addresses",
             "free_addresses",
@@ -323,8 +323,8 @@ impl CsvOutput for UtilizationReport {
         ])
         .map_err(csv_err)?;
         wtr.write_record([
-            &self.supernet_id,
-            &self.supernet_cidr,
+            &self.cidr_block_id,
+            &self.cidr_block_cidr,
             &self.total_addresses.to_string(),
             &self.allocated_addresses.to_string(),
             &self.free_addresses.to_string(),
@@ -384,7 +384,7 @@ impl CsvOutput for AuditList {
 fn allocation_csv_header() -> &'static [&'static str] {
     &[
         "id",
-        "supernet_id",
+        "cidr_block_id",
         "cidr",
         "network_address",
         "broadcast_address",
@@ -407,7 +407,7 @@ fn allocation_csv_header() -> &'static [&'static str] {
 fn write_allocation_csv_row(wtr: &mut csv::Writer<Vec<u8>>, a: &Allocation) -> Result<()> {
     wtr.write_record([
         &a.id,
-        &a.supernet_id,
+        &a.cidr_block_id,
         &a.cidr,
         &a.network_address,
         &a.broadcast_address,

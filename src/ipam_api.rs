@@ -41,20 +41,19 @@ fn error_to_parts(err: &NetcidrError) -> (StatusCode, String) {
         | NetcidrError::InvalidIpv4Address(_)
         | NetcidrError::InvalidIpv6Address(_) => (StatusCode::BAD_REQUEST, err.to_string()),
 
-        NetcidrError::SupernetNotFound(_) | NetcidrError::AllocationNotFound(_) => {
+        NetcidrError::CidrBlockNotFound(_) | NetcidrError::AllocationNotFound(_) => {
             (StatusCode::NOT_FOUND, err.to_string())
         }
 
-        NetcidrError::AllocationConflict { .. } | NetcidrError::SupernetHasActiveAllocations(_) => {
-            (StatusCode::CONFLICT, err.to_string())
-        }
+        NetcidrError::AllocationConflict { .. }
+        | NetcidrError::CidrBlockHasActiveAllocations(_) => (StatusCode::CONFLICT, err.to_string()),
 
         NetcidrError::NoFreeSpace { .. } => (StatusCode::UNPROCESSABLE_ENTITY, err.to_string()),
 
         // DatabaseError: classify by content for status code, but never expose
         // raw DB messages (table names, file paths, constraint names) to clients.
         NetcidrError::DatabaseError(msg)
-            if msg.contains("not found") || msg.contains("No supernet") =>
+            if msg.contains("not found") || msg.contains("No cidr_block") =>
         {
             tracing::error!(error = %err, "database error");
             (StatusCode::NOT_FOUND, "not found".to_string())
@@ -270,11 +269,11 @@ pub struct FreeBlocksQuery {
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "swagger", derive(IntoParams))]
 pub struct AuditQuery {
-    /// Filter by entity type (supernet, allocation)
+    /// Filter by entity type (cidr_block, allocation)
     pub entity_type: Option<String>,
     /// Filter by entity ID
     pub entity_id: Option<String>,
-    /// Filter by action (e.g., create_supernet, allocate)
+    /// Filter by action (e.g., create_cidr_block, allocate)
     pub action: Option<String>,
     /// Maximum number of entries to return
     pub limit: Option<u32>,
@@ -283,8 +282,8 @@ pub struct AuditQuery {
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "swagger", derive(IntoParams))]
 pub struct SummaryQuery {
-    /// Optional supernet ID to scope the summary
-    pub supernet_id: Option<String>,
+    /// Optional CIDR block ID to scope the summary
+    pub cidr_block_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -301,24 +300,24 @@ pub struct TagsBody {
 pub fn create_ipam_router() -> Router {
     Router::new()
         .route(
-            "/supernets",
-            post(ipam_create_supernet).get(ipam_list_supernets),
+            "/cidr-blocks",
+            post(ipam_create_cidr_block).get(ipam_list_cidr_blocks),
         )
         .route(
-            "/supernets/{id}",
-            get(ipam_get_supernet).delete(ipam_delete_supernet),
+            "/cidr-blocks/{id}",
+            get(ipam_get_cidr_block).delete(ipam_delete_cidr_block),
         )
-        .route("/supernets/{id}/allocate", post(ipam_auto_allocate))
+        .route("/cidr-blocks/{id}/allocate", post(ipam_auto_allocate))
         .route(
-            "/supernets/{id}/allocate-specific",
+            "/cidr-blocks/{id}/allocate-specific",
             post(ipam_allocate_specific),
         )
         .route(
-            "/supernets/{id}/allocations",
-            get(ipam_list_supernet_allocations),
+            "/cidr-blocks/{id}/allocations",
+            get(ipam_list_cidr_block_allocations),
         )
-        .route("/supernets/{id}/free", get(ipam_free_blocks))
-        .route("/supernets/{id}/utilization", get(ipam_utilization))
+        .route("/cidr-blocks/{id}/free", get(ipam_free_blocks))
+        .route("/cidr-blocks/{id}/utilization", get(ipam_utilization))
         .route(
             "/allocations/{id}",
             get(ipam_get_allocation).patch(ipam_update_allocation),
@@ -339,43 +338,43 @@ pub fn create_ipam_router() -> Router {
 
 #[cfg_attr(feature = "swagger", utoipa::path(
     post,
-    path = "/ipam/supernets",
-    request_body = CreateSupernet,
+    path = "/ipam/cidr-blocks",
+    request_body = CreateCidrBlock,
     responses(
-        (status = 201, description = "Supernet created", body = Supernet),
+        (status = 201, description = "CIDR block created", body = CidrBlock),
         (status = 400, description = "Invalid CIDR", body = IpamErrorResponse),
-        (status = 409, description = "Overlapping supernet", body = IpamErrorResponse),
+        (status = 409, description = "Overlapping cidr_block", body = IpamErrorResponse),
     ),
     tag = "ipam"
 ))]
-async fn ipam_create_supernet(
+async fn ipam_create_cidr_block(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
-    Json(body): Json<CreateSupernet>,
+    Json(body): Json<CreateCidrBlock>,
 ) -> impl IntoResponse {
-    match ops.create_supernet(tenant.as_str(), &body).await {
-        Ok(supernet) => (StatusCode::CREATED, Json(supernet)).into_response(),
+    match ops.create_cidr_block(tenant.as_str(), &body).await {
+        Ok(cidr_block) => (StatusCode::CREATED, Json(cidr_block)).into_response(),
         Err(e) => ipam_error_response(e),
     }
 }
 
 #[cfg_attr(feature = "swagger", utoipa::path(
     get,
-    path = "/ipam/supernets",
+    path = "/ipam/cidr-blocks",
     responses(
-        (status = 200, description = "List of supernets", body = SupernetList),
+        (status = 200, description = "List of cidr_blocks", body = CidrBlockList),
     ),
     tag = "ipam"
 ))]
-async fn ipam_list_supernets(
+async fn ipam_list_cidr_blocks(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
 ) -> impl IntoResponse {
-    match ops.list_supernets(tenant.as_str()).await {
-        Ok(supernets) => {
-            let list = SupernetList {
-                count: supernets.len(),
-                supernets,
+    match ops.list_cidr_blocks(tenant.as_str()).await {
+        Ok(cidr_blocks) => {
+            let list = CidrBlockList {
+                count: cidr_blocks.len(),
+                cidr_blocks,
             };
             Json(list).into_response()
         }
@@ -385,46 +384,46 @@ async fn ipam_list_supernets(
 
 #[cfg_attr(feature = "swagger", utoipa::path(
     get,
-    path = "/ipam/supernets/{id}",
+    path = "/ipam/cidr-blocks/{id}",
     params(
-        ("id" = String, Path, description = "Supernet ID")
+        ("id" = String, Path, description = "CIDR block ID")
     ),
     responses(
-        (status = 200, description = "Supernet details", body = Supernet),
-        (status = 404, description = "Supernet not found", body = IpamErrorResponse),
+        (status = 200, description = "CIDR block details", body = CidrBlock),
+        (status = 404, description = "CIDR block not found", body = IpamErrorResponse),
     ),
     tag = "ipam"
 ))]
-async fn ipam_get_supernet(
+async fn ipam_get_cidr_block(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match ops.get_supernet(tenant.as_str(), &id).await {
-        Ok(supernet) => Json(supernet).into_response(),
+    match ops.get_cidr_block(tenant.as_str(), &id).await {
+        Ok(cidr_block) => Json(cidr_block).into_response(),
         Err(e) => ipam_error_response(e),
     }
 }
 
 #[cfg_attr(feature = "swagger", utoipa::path(
     delete,
-    path = "/ipam/supernets/{id}",
+    path = "/ipam/cidr-blocks/{id}",
     params(
-        ("id" = String, Path, description = "Supernet ID")
+        ("id" = String, Path, description = "CIDR block ID")
     ),
     responses(
-        (status = 204, description = "Supernet deleted"),
-        (status = 404, description = "Supernet not found", body = IpamErrorResponse),
-        (status = 409, description = "Supernet has active allocations", body = IpamErrorResponse),
+        (status = 204, description = "CIDR block deleted"),
+        (status = 404, description = "CIDR block not found", body = IpamErrorResponse),
+        (status = 409, description = "CIDR block has active allocations", body = IpamErrorResponse),
     ),
     tag = "ipam"
 ))]
-async fn ipam_delete_supernet(
+async fn ipam_delete_cidr_block(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match ops.delete_supernet(tenant.as_str(), &id).await {
+    match ops.delete_cidr_block(tenant.as_str(), &id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => ipam_error_response(e),
     }
@@ -432,15 +431,15 @@ async fn ipam_delete_supernet(
 
 #[cfg_attr(feature = "swagger", utoipa::path(
     post,
-    path = "/ipam/supernets/{id}/allocate-specific",
+    path = "/ipam/cidr-blocks/{id}/allocate-specific",
     params(
-        ("id" = String, Path, description = "Supernet ID")
+        ("id" = String, Path, description = "CIDR block ID")
     ),
     request_body = AllocateSpecificRequest,
     responses(
         (status = 201, description = "Allocation created", body = Allocation),
         (status = 400, description = "Invalid CIDR", body = IpamErrorResponse),
-        (status = 404, description = "Supernet not found", body = IpamErrorResponse),
+        (status = 404, description = "CIDR block not found", body = IpamErrorResponse),
         (status = 409, description = "Overlapping allocation", body = IpamErrorResponse),
     ),
     tag = "ipam"
@@ -448,11 +447,11 @@ async fn ipam_delete_supernet(
 async fn ipam_allocate_specific(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
-    Path(supernet_id): Path<String>,
+    Path(cidr_block_id): Path<String>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let scope = format!("allocate-specific:{supernet_id}");
+    let scope = format!("allocate-specific:{cidr_block_id}");
     idempotent_post::<AllocateSpecificRequest, _, _>(
         ops,
         tenant.0,
@@ -460,10 +459,10 @@ async fn ipam_allocate_specific(
         body,
         scope,
         move |ops, tenant_id, parsed: AllocateSpecificRequest| {
-            let supernet_id = supernet_id.clone();
+            let cidr_block_id = cidr_block_id.clone();
             async move {
                 let input = CreateAllocation {
-                    supernet_id,
+                    cidr_block_id,
                     cidr: parsed.cidr,
                     status: parsed.status,
                     resource_id: parsed.resource_id,
@@ -489,14 +488,14 @@ async fn ipam_allocate_specific(
 
 #[cfg_attr(feature = "swagger", utoipa::path(
     post,
-    path = "/ipam/supernets/{id}/allocate",
+    path = "/ipam/cidr-blocks/{id}/allocate",
     params(
-        ("id" = String, Path, description = "Supernet ID")
+        ("id" = String, Path, description = "CIDR block ID")
     ),
     request_body = AutoAllocateBody,
     responses(
         (status = 201, description = "Allocations created", body = AllocationList),
-        (status = 404, description = "Supernet not found", body = IpamErrorResponse),
+        (status = 404, description = "CIDR block not found", body = IpamErrorResponse),
         (status = 422, description = "No free space available", body = IpamErrorResponse),
     ),
     tag = "ipam"
@@ -504,11 +503,11 @@ async fn ipam_allocate_specific(
 async fn ipam_auto_allocate(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
-    Path(supernet_id): Path<String>,
+    Path(cidr_block_id): Path<String>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let scope = format!("auto-allocate:{supernet_id}");
+    let scope = format!("auto-allocate:{cidr_block_id}");
     idempotent_post::<AutoAllocateBody, _, _>(
         ops,
         tenant.0,
@@ -516,10 +515,10 @@ async fn ipam_auto_allocate(
         body,
         scope,
         move |ops, tenant_id, parsed: AutoAllocateBody| {
-            let supernet_id = supernet_id.clone();
+            let cidr_block_id = cidr_block_id.clone();
             async move {
                 let request = AutoAllocateRequest {
-                    supernet_id,
+                    cidr_block_id,
                     prefix_length: parsed.prefix_length,
                     count: parsed.count,
                     status: parsed.status,
@@ -550,26 +549,26 @@ async fn ipam_auto_allocate(
 
 #[cfg_attr(feature = "swagger", utoipa::path(
     get,
-    path = "/ipam/supernets/{id}/allocations",
+    path = "/ipam/cidr-blocks/{id}/allocations",
     params(
-        ("id" = String, Path, description = "Supernet ID"),
+        ("id" = String, Path, description = "CIDR block ID"),
         AllocationFilterQuery,
     ),
     responses(
         (status = 200, description = "List of allocations", body = AllocationList),
-        (status = 404, description = "Supernet not found", body = IpamErrorResponse),
+        (status = 404, description = "CIDR block not found", body = IpamErrorResponse),
     ),
     tag = "ipam"
 ))]
-async fn ipam_list_supernet_allocations(
+async fn ipam_list_cidr_block_allocations(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
-    Path(supernet_id): Path<String>,
+    Path(cidr_block_id): Path<String>,
     Query(query): Query<AllocationFilterQuery>,
 ) -> impl IntoResponse {
     let status = query.status.and_then(|s| s.parse().ok());
     let filter = AllocationFilter {
-        supernet_id: Some(supernet_id),
+        cidr_block_id: Some(cidr_block_id),
         status,
         resource_id: query.resource_id,
         resource_type: query.resource_type,
@@ -590,25 +589,25 @@ async fn ipam_list_supernet_allocations(
 
 #[cfg_attr(feature = "swagger", utoipa::path(
     get,
-    path = "/ipam/supernets/{id}/free",
+    path = "/ipam/cidr-blocks/{id}/free",
     params(
-        ("id" = String, Path, description = "Supernet ID"),
+        ("id" = String, Path, description = "CIDR block ID"),
         FreeBlocksQuery,
     ),
     responses(
         (status = 200, description = "Free blocks report", body = FreeBlocksReport),
-        (status = 404, description = "Supernet not found", body = IpamErrorResponse),
+        (status = 404, description = "CIDR block not found", body = IpamErrorResponse),
     ),
     tag = "ipam"
 ))]
 async fn ipam_free_blocks(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
-    Path(supernet_id): Path<String>,
+    Path(cidr_block_id): Path<String>,
     Query(query): Query<FreeBlocksQuery>,
 ) -> impl IntoResponse {
     match ops
-        .free_blocks(tenant.as_str(), &supernet_id, query.prefix)
+        .free_blocks(tenant.as_str(), &cidr_block_id, query.prefix)
         .await
     {
         Ok(report) => Json(report).into_response(),
@@ -618,22 +617,22 @@ async fn ipam_free_blocks(
 
 #[cfg_attr(feature = "swagger", utoipa::path(
     get,
-    path = "/ipam/supernets/{id}/utilization",
+    path = "/ipam/cidr-blocks/{id}/utilization",
     params(
-        ("id" = String, Path, description = "Supernet ID")
+        ("id" = String, Path, description = "CIDR block ID")
     ),
     responses(
         (status = 200, description = "Utilization report", body = UtilizationReport),
-        (status = 404, description = "Supernet not found", body = IpamErrorResponse),
+        (status = 404, description = "CIDR block not found", body = IpamErrorResponse),
     ),
     tag = "ipam"
 ))]
 async fn ipam_utilization(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
-    Path(supernet_id): Path<String>,
+    Path(cidr_block_id): Path<String>,
 ) -> impl IntoResponse {
-    match ops.utilization(tenant.as_str(), &supernet_id).await {
+    match ops.utilization(tenant.as_str(), &cidr_block_id).await {
         Ok(report) => Json(report).into_response(),
         Err(e) => ipam_error_response(e),
     }
@@ -871,7 +870,7 @@ async fn ipam_batch_summary(
     Query(query): Query<SummaryQuery>,
 ) -> impl IntoResponse {
     match ops
-        .allocation_summary(tenant.as_str(), query.supernet_id.as_deref())
+        .allocation_summary(tenant.as_str(), query.cidr_block_id.as_deref())
         .await
     {
         Ok(summary) => Json(summary).into_response(),

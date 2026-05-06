@@ -51,7 +51,7 @@ Print help information.
 Print version information.
 .SH COMMANDS
 .SS split
-Generate subnets from a supernet.
+Generate subnets from a CIDR block.
 .PP
 .B netcidr split
 .I CIDR
@@ -218,31 +218,31 @@ An optional
 .B \-\-db
 flag overrides the database path for all IPAM subcommands.
 .PP
-.B "ipam supernet create"
+.B "ipam cidr_block create"
 .I CIDR
 .RB [ \-\-name
 .IR NAME ]
 .RB [ \-\-description
 .IR DESC ]
 .RS
-Create a new supernet (top-level address space).
+Create a new cidr_block (top-level address space).
 .RE
 .PP
-.B "ipam supernet list"
+.B "ipam cidr_block list"
 .RS
-List all supernets.
+List all CIDR blocks.
 .RE
 .PP
-.B "ipam supernet get"
+.B "ipam cidr_block get"
 .I ID
 .RS
-Get details of a supernet.
+Get details of a cidr_block.
 .RE
 .PP
-.B "ipam supernet delete"
+.B "ipam cidr_block delete"
 .I ID
 .RS
-Delete a supernet (must have no active allocations).
+Delete a cidr_block (must have no active allocations).
 .RE
 .PP
 .B "ipam allocate"
@@ -266,7 +266,7 @@ Delete a supernet (must have no active allocations).
 .RB [ \-\-ttl
 .IR SECONDS ]
 .RS
-Allocate a specific CIDR block within a supernet.
+Allocate a specific CIDR block within a CIDR block.
 .RE
 .PP
 .B "ipam auto\-allocate"
@@ -291,7 +291,7 @@ Get details of an allocation.
 .RE
 .PP
 .B "ipam allocation list"
-.RB [ \-\-supernet\-id
+.RB [ \-\-cidr_block\-id
 .IR ID ]
 .RB [ \-\-status
 .IR STATUS ]
@@ -327,7 +327,7 @@ Release an allocation (mark as released).
 .B "ipam utilization"
 .I SUPERNET_ID
 .RS
-Show utilization report for a supernet.
+Show utilization report for a CIDR block.
 .RE
 .PP
 .B "ipam free\-blocks"
@@ -335,7 +335,7 @@ Show utilization report for a supernet.
 .RB [ \-p
 .IR PREFIX ]
 .RS
-List free (unallocated) blocks in a supernet. Optionally filter by target prefix length.
+List free (unallocated) blocks in a cidr_block. Optionally filter by target prefix length.
 .RE
 .PP
 .B "ipam find\-ip"
@@ -449,12 +449,12 @@ Start the API server on port 9090 with IPAM:
 .B netcidr serve \-p 9090 \-\-ipam\-enabled
 .RE
 .PP
-Create a supernet and allocate a block:
+Create a cidr_block and allocate a block:
 .RS
 .nf
-netcidr ipam supernet create 10.0.0.0/8 \-\-name "Corporate"
-netcidr ipam allocate <supernet\-id> 10.0.1.0/24 \-\-name "Web"
-netcidr ipam utilization <supernet\-id>
+netcidr ipam cidr_block create 10.0.0.0/8 \-\-name "Corporate"
+netcidr ipam allocate <cidr_block\-id> 10.0.1.0/24 \-\-name "Web"
+netcidr ipam utilization <cidr_block\-id>
 .fi
 .RE
 .SH EXIT STATUS

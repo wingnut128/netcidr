@@ -163,10 +163,10 @@ async fn cli_create_use_list_revoke_lifecycle() {
         "minted token has expected prefix: {pat_plaintext}"
     );
 
-    // ----- USE the new PAT against /ipam/supernets to prove it works. -----
+    // ----- USE the new PAT against /ipam/cidr-blocks to prove it works. -----
     let http = reqwest::Client::new();
     let probe_resp = http
-        .get(format!("{api_url}/ipam/supernets"))
+        .get(format!("{api_url}/ipam/cidr-blocks"))
         .bearer_auth(&pat_plaintext)
         .send()
         .await
@@ -216,7 +216,7 @@ async fn cli_create_use_list_revoke_lifecycle() {
 
     // ----- The revoked PAT must no longer authenticate. -----
     let probe2 = http
-        .get(format!("{api_url}/ipam/supernets"))
+        .get(format!("{api_url}/ipam/cidr-blocks"))
         .bearer_auth(&pat_plaintext)
         .send()
         .await

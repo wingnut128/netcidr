@@ -45,7 +45,7 @@ impl HttpIpamClient {
         match status {
             404 => {
                 if body.contains("upernet") {
-                    NetcidrError::SupernetNotFound(body)
+                    NetcidrError::CidrBlockNotFound(body)
                 } else {
                     NetcidrError::AllocationNotFound(body)
                 }
@@ -57,13 +57,13 @@ impl HttpIpamClient {
     }
 
     // -----------------------------------------------------------------------
-    // Supernet operations
+    // CidrBlock operations
     // -----------------------------------------------------------------------
 
-    pub async fn create_supernet(&self, input: &CreateSupernet) -> Result<Supernet> {
+    pub async fn create_cidr_block(&self, input: &CreateCidrBlock) -> Result<CidrBlock> {
         let resp = self
             .client
-            .post(self.url("/supernets"))
+            .post(self.url("/cidr-blocks"))
             .json(input)
             .send()
             .await
@@ -77,19 +77,19 @@ impl HttpIpamClient {
         }
     }
 
-    pub async fn list_supernets(&self) -> Result<Vec<Supernet>> {
+    pub async fn list_cidr_blocks(&self) -> Result<Vec<CidrBlock>> {
         let resp = self
             .client
-            .get(self.url("/supernets"))
+            .get(self.url("/cidr-blocks"))
             .send()
             .await
             .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
         if resp.status().is_success() {
-            let list: SupernetList = resp
+            let list: CidrBlockList = resp
                 .json()
                 .await
                 .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-            Ok(list.supernets)
+            Ok(list.cidr_blocks)
         } else {
             Err(Self::map_error(resp).await)
         }
@@ -116,7 +116,7 @@ impl HttpIpamClient {
         });
         let resp = self
             .client
-            .post(self.url(&format!("/supernets/{}/allocate", request.supernet_id)))
+            .post(self.url(&format!("/cidr-blocks/{}/allocate", request.cidr_block_id)))
             .json(&body)
             .send()
             .await
@@ -149,8 +149,8 @@ impl HttpIpamClient {
         let resp = self
             .client
             .post(self.url(&format!(
-                "/supernets/{}/allocate-specific",
-                input.supernet_id
+                "/cidr-blocks/{}/allocate-specific",
+                input.cidr_block_id
             )))
             .json(&body)
             .send()
@@ -182,7 +182,7 @@ impl HttpIpamClient {
     }
 
     pub async fn list_allocations(&self, filter: &AllocationFilter) -> Result<Vec<Allocation>> {
-        let supernet_id = filter.supernet_id.as_deref().unwrap_or("");
+        let cidr_block_id = filter.cidr_block_id.as_deref().unwrap_or("");
         let mut query_params = Vec::new();
         if let Some(ref s) = filter.status {
             query_params.push(("status", s.to_string()));
@@ -201,7 +201,7 @@ impl HttpIpamClient {
         }
         let resp = self
             .client
-            .get(self.url(&format!("/supernets/{supernet_id}/allocations")))
+            .get(self.url(&format!("/cidr-blocks/{cidr_block_id}/allocations")))
             .query(&query_params)
             .send()
             .await
@@ -223,7 +223,7 @@ impl HttpIpamClient {
 
     pub async fn free_blocks(
         &self,
-        supernet_id: &str,
+        cidr_block_id: &str,
         prefix: Option<u8>,
     ) -> Result<FreeBlocksReport> {
         let mut query_params = Vec::new();
@@ -232,7 +232,7 @@ impl HttpIpamClient {
         }
         let resp = self
             .client
-            .get(self.url(&format!("/supernets/{supernet_id}/free")))
+            .get(self.url(&format!("/cidr-blocks/{cidr_block_id}/free")))
             .query(&query_params)
             .send()
             .await
@@ -246,10 +246,10 @@ impl HttpIpamClient {
         }
     }
 
-    pub async fn utilization(&self, supernet_id: &str) -> Result<UtilizationReport> {
+    pub async fn utilization(&self, cidr_block_id: &str) -> Result<UtilizationReport> {
         let resp = self
             .client
-            .get(self.url(&format!("/supernets/{supernet_id}/utilization")))
+            .get(self.url(&format!("/cidr-blocks/{cidr_block_id}/utilization")))
             .send()
             .await
             .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
@@ -318,10 +318,13 @@ impl HttpIpamClient {
         }
     }
 
-    pub async fn allocation_summary(&self, supernet_id: Option<&str>) -> Result<AllocationSummary> {
+    pub async fn allocation_summary(
+        &self,
+        cidr_block_id: Option<&str>,
+    ) -> Result<AllocationSummary> {
         let mut url = self.url("/batch/summary");
-        if let Some(id) = supernet_id {
-            url = format!("{url}?supernet_id={id}");
+        if let Some(id) = cidr_block_id {
+            url = format!("{url}?cidr_block_id={id}");
         }
         let resp = self
             .client

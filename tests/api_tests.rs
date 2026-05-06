@@ -159,7 +159,7 @@ async fn test_bearer_auth_leaves_public_paths_open() {
 #[tokio::test]
 async fn test_bearer_auth_blocks_ipam_without_token() {
     let (status, body, headers) =
-        get_with_config_and_auth("/ipam/supernets", bearer_ipam_test_config().await, None).await;
+        get_with_config_and_auth("/ipam/cidr-blocks", bearer_ipam_test_config().await, None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(body, "Unauthorized");
     assert_eq!(headers.get(header::WWW_AUTHENTICATE).unwrap(), "Bearer");
@@ -168,7 +168,7 @@ async fn test_bearer_auth_blocks_ipam_without_token() {
 #[tokio::test]
 async fn test_bearer_auth_blocks_ipam_with_invalid_token() {
     let (status, body, _) = get_with_config_and_auth(
-        "/ipam/supernets",
+        "/ipam/cidr-blocks",
         bearer_ipam_test_config().await,
         Some("wrong-token"),
     )
@@ -180,7 +180,7 @@ async fn test_bearer_auth_blocks_ipam_with_invalid_token() {
 #[tokio::test]
 async fn test_bearer_auth_allows_ipam_with_valid_token() {
     let (status, _body, _) = get_with_config_and_auth(
-        "/ipam/supernets",
+        "/ipam/cidr-blocks",
         bearer_ipam_test_config().await,
         Some("test-token"),
     )

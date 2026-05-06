@@ -1,6 +1,6 @@
 // TypeScript types mirroring Rust models in src/ipam/models.rs
 
-export interface Supernet {
+export interface CidrBlock {
   id: string;
   cidr: string;
   network_address: string;
@@ -14,8 +14,8 @@ export interface Supernet {
   updated_at: string;
 }
 
-export interface SupernetList {
-  supernets: Supernet[];
+export interface CidrBlockList {
+  cidr_blocks: CidrBlock[];
   count: number;
 }
 
@@ -23,7 +23,7 @@ export type AllocationStatus = "active" | "reserved" | "released";
 
 export interface Allocation {
   id: string;
-  supernet_id: string;
+  cidr_block_id: string;
   cidr: string;
   network_address: string;
   broadcast_address: string;
@@ -78,8 +78,8 @@ export interface StatusBreakdown {
 }
 
 export interface UtilizationReport {
-  supernet_id: string;
-  supernet_cidr: string;
+  cidr_block_id: string;
+  cidr_block_cidr: string;
   total_addresses: number;
   allocated_addresses: number;
   free_addresses: number;
@@ -94,8 +94,8 @@ export interface FreeBlock {
 }
 
 export interface FreeBlocksReport {
-  supernet_id: string;
-  supernet_cidr: string;
+  cidr_block_id: string;
+  cidr_block_cidr: string;
   blocks: FreeBlock[];
   total_free: number;
 }
@@ -137,7 +137,7 @@ export type CalcResult = Ipv4Subnet | Ipv6Subnet;
 // Split result types
 
 export interface SplitResult {
-  supernet: Ipv4Subnet | Ipv6Subnet;
+  cidr_block: Ipv4Subnet | Ipv6Subnet;
   subnets: (Ipv4Subnet | Ipv6Subnet)[];
   new_prefix: number;
 }

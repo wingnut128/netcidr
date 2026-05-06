@@ -33,7 +33,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Generate subnets from a supernet
+    /// Generate subnets from a CIDR block
     Split {
         /// Network in CIDR notation (or prefix notation for IPv6)
         cidr: String,
@@ -78,7 +78,7 @@ pub enum Commands {
         cidrs: Vec<String>,
     },
 
-    /// IP Address Management — track allocations, supernets, and free space
+    /// IP Address Management — track allocations, CIDR blocks, and free space
     Ipam {
         /// Path to SQLite database (overrides NETCIDR_DB env and config file)
         #[arg(long)]
@@ -226,16 +226,16 @@ pub enum Commands {
 
 #[derive(Subcommand)]
 pub enum IpamCommands {
-    /// Manage supernets (top-level address spaces)
-    Supernet {
+    /// Manage CIDR blocks (top-level address spaces)
+    CidrBlock {
         #[command(subcommand)]
-        command: SupernetCommands,
+        command: CidrBlockCommands,
     },
 
-    /// Allocate a specific CIDR block within a supernet
+    /// Allocate a specific CIDR block within a CIDR block
     Allocate {
-        /// Supernet ID
-        supernet_id: String,
+        /// CIDR block ID
+        cidr_block_id: String,
         /// CIDR to allocate (e.g., 10.0.1.0/24 or 2001:db8:1::/48)
         cidr: String,
         /// Allocation name
@@ -269,8 +269,8 @@ pub enum IpamCommands {
 
     /// Auto-allocate the next available block(s) of a given prefix length
     AutoAllocate {
-        /// Supernet ID
-        supernet_id: String,
+        /// CIDR block ID
+        cidr_block_id: String,
         /// Desired prefix length (e.g., 24 for /24)
         #[arg(short = 'p', long)]
         prefix: u8,
@@ -318,16 +318,16 @@ pub enum IpamCommands {
         id: String,
     },
 
-    /// Show utilization report for a supernet
+    /// Show utilization report for a CIDR block
     Utilization {
-        /// Supernet ID
-        supernet_id: String,
+        /// CIDR block ID
+        cidr_block_id: String,
     },
 
-    /// List free blocks in a supernet
+    /// List free blocks in a CIDR block
     FreeBlocks {
-        /// Supernet ID
-        supernet_id: String,
+        /// CIDR block ID
+        cidr_block_id: String,
         /// Filter by target prefix length
         #[arg(short = 'p', long)]
         prefix: Option<u8>,
@@ -347,7 +347,7 @@ pub enum IpamCommands {
 
     /// Query the audit log
     Audit {
-        /// Filter by entity type (supernet, allocation)
+        /// Filter by entity type (cidr_block, allocation)
         #[arg(long)]
         entity_type: Option<String>,
         /// Filter by entity ID
@@ -378,28 +378,28 @@ pub enum IpamCommands {
 }
 
 #[derive(Subcommand)]
-pub enum SupernetCommands {
-    /// Create a new supernet
+pub enum CidrBlockCommands {
+    /// Create a new CIDR block
     Create {
         /// CIDR notation (e.g., 10.0.0.0/8 or 2001:db8::/32)
         cidr: String,
-        /// Supernet name
+        /// CIDR block name
         #[arg(long)]
         name: Option<String>,
         /// Description
         #[arg(long)]
         description: Option<String>,
     },
-    /// List all supernets
+    /// List all CIDR blocks
     List,
-    /// Get details of a supernet
+    /// Get details of a CIDR block
     Get {
-        /// Supernet ID
+        /// CIDR block ID
         id: String,
     },
-    /// Delete a supernet (must have no active allocations)
+    /// Delete a CIDR block (must have no active allocations)
     Delete {
-        /// Supernet ID
+        /// CIDR block ID
         id: String,
     },
 }
@@ -413,9 +413,9 @@ pub enum AllocationCommands {
     },
     /// List allocations with optional filters
     List {
-        /// Filter by supernet ID
+        /// Filter by CIDR block ID
         #[arg(long)]
-        supernet_id: Option<String>,
+        cidr_block_id: Option<String>,
         /// Filter by status (active, reserved, released)
         #[arg(long)]
         status: Option<String>,

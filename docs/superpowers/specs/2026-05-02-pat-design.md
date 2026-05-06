@@ -176,7 +176,7 @@ New page `/me/tokens` (linked from existing user menu). Lists existing tokens, "
 `tests/pat_integration.rs`:
 1. Mint OIDC session for `a@x`.
 2. `POST /me/tokens` → capture plaintext.
-3. New client with only the PAT → `POST /ipam/supernets` succeeds, row owned by tenant `a@x`.
+3. New client with only the PAT → `POST /ipam/cidr-blocks` succeeds, row owned by tenant `a@x`.
 4. `DELETE /me/tokens/<id>` → next call with that PAT returns 401.
 5. Mint PAT, then remove `a@x` from `NETCIDR_OIDC_ALLOWED_EMAILS` (restart test server) → PAT now 401.
 
