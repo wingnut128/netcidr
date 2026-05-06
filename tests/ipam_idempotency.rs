@@ -68,10 +68,10 @@ async fn post_with_key(app: &axum::Router, uri: &str, body: &str, key: Option<&s
     }
 }
 
-async fn create_supernet(app: &axum::Router, cidr: &str) -> String {
+async fn create_cidr_block(app: &axum::Router, cidr: &str) -> String {
     let r = post_with_key(
         app,
-        "/ipam/supernets",
+        "/ipam/cidr-blocks",
         &format!(r#"{{"cidr":"{cidr}"}}"#),
         None,
     )
@@ -83,12 +83,12 @@ async fn create_supernet(app: &axum::Router, cidr: &str) -> String {
 #[tokio::test]
 async fn allocate_specific_replays_on_same_key_and_body() {
     let app = ipam_app().await;
-    let sn = create_supernet(&app, "10.0.0.0/16").await;
+    let sn = create_cidr_block(&app, "10.0.0.0/16").await;
 
     let body = r#"{"cidr":"10.0.1.0/24","name":"web"}"#;
     let first = post_with_key(
         &app,
-        &format!("/ipam/supernets/{sn}/allocate-specific"),
+        &format!("/ipam/cidr-blocks/{sn}/allocate-specific"),
         body,
         Some("retry-key-1"),
     )
@@ -100,7 +100,7 @@ async fn allocate_specific_replays_on_same_key_and_body() {
     // Same key + same body → cached replay; no new allocation row.
     let second = post_with_key(
         &app,
-        &format!("/ipam/supernets/{sn}/allocate-specific"),
+        &format!("/ipam/cidr-blocks/{sn}/allocate-specific"),
         body,
         Some("retry-key-1"),
     )
@@ -113,11 +113,11 @@ async fn allocate_specific_replays_on_same_key_and_body() {
 #[tokio::test]
 async fn allocate_specific_conflicts_on_same_key_different_body() {
     let app = ipam_app().await;
-    let sn = create_supernet(&app, "10.0.0.0/16").await;
+    let sn = create_cidr_block(&app, "10.0.0.0/16").await;
 
     let first = post_with_key(
         &app,
-        &format!("/ipam/supernets/{sn}/allocate-specific"),
+        &format!("/ipam/cidr-blocks/{sn}/allocate-specific"),
         r#"{"cidr":"10.0.1.0/24"}"#,
         Some("dup-key"),
     )
@@ -126,7 +126,7 @@ async fn allocate_specific_conflicts_on_same_key_different_body() {
 
     let second = post_with_key(
         &app,
-        &format!("/ipam/supernets/{sn}/allocate-specific"),
+        &format!("/ipam/cidr-blocks/{sn}/allocate-specific"),
         r#"{"cidr":"10.0.2.0/24"}"#,
         Some("dup-key"),
     )
@@ -143,12 +143,12 @@ async fn allocate_specific_conflicts_on_same_key_different_body() {
 #[tokio::test]
 async fn auto_allocate_replays_on_same_key() {
     let app = ipam_app().await;
-    let sn = create_supernet(&app, "10.10.0.0/16").await;
+    let sn = create_cidr_block(&app, "10.10.0.0/16").await;
 
     let body = r#"{"prefix_length":24,"count":1}"#;
     let first = post_with_key(
         &app,
-        &format!("/ipam/supernets/{sn}/allocate"),
+        &format!("/ipam/cidr-blocks/{sn}/allocate"),
         body,
         Some("auto-1"),
     )
@@ -159,7 +159,7 @@ async fn auto_allocate_replays_on_same_key() {
 
     let second = post_with_key(
         &app,
-        &format!("/ipam/supernets/{sn}/allocate"),
+        &format!("/ipam/cidr-blocks/{sn}/allocate"),
         body,
         Some("auto-1"),
     )
@@ -169,10 +169,10 @@ async fn auto_allocate_replays_on_same_key() {
     // Replayed body must equal the first one byte-for-byte.
     assert_eq!(second.body, first.body);
 
-    // Verify the supernet still has only one allocation.
+    // Verify the cidr_block still has only one allocation.
     let list_req = Request::builder()
         .method("GET")
-        .uri(format!("/ipam/supernets/{sn}/allocations"))
+        .uri(format!("/ipam/cidr-blocks/{sn}/allocations"))
         .header(TENANT_HEADER, TEST_TENANT)
         .body(Body::empty())
         .unwrap();
@@ -185,9 +185,9 @@ async fn auto_allocate_replays_on_same_key() {
 #[tokio::test]
 async fn batch_allocate_replays_on_same_key() {
     let app = ipam_app().await;
-    let sn = create_supernet(&app, "10.20.0.0/16").await;
+    let sn = create_cidr_block(&app, "10.20.0.0/16").await;
 
-    let body = format!(r#"[{{"supernet_id":"{sn}","prefix_length":24,"count":1,"name":"a"}}]"#,);
+    let body = format!(r#"[{{"cidr_block_id":"{sn}","prefix_length":24,"count":1,"name":"a"}}]"#,);
     let first = post_with_key(&app, "/ipam/batch/allocate", &body, Some("batch-1")).await;
     assert_eq!(first.status, StatusCode::OK);
     assert_eq!(first.body["total_allocated"], 1);
@@ -201,12 +201,12 @@ async fn batch_allocate_replays_on_same_key() {
 #[tokio::test]
 async fn no_key_means_no_caching() {
     let app = ipam_app().await;
-    let sn = create_supernet(&app, "10.30.0.0/16").await;
+    let sn = create_cidr_block(&app, "10.30.0.0/16").await;
 
     let body = r#"{"cidr":"10.30.1.0/24"}"#;
     let first = post_with_key(
         &app,
-        &format!("/ipam/supernets/{sn}/allocate-specific"),
+        &format!("/ipam/cidr-blocks/{sn}/allocate-specific"),
         body,
         None,
     )
@@ -218,7 +218,7 @@ async fn no_key_means_no_caching() {
     // overlap detection (NOT a cached replay).
     let second = post_with_key(
         &app,
-        &format!("/ipam/supernets/{sn}/allocate-specific"),
+        &format!("/ipam/cidr-blocks/{sn}/allocate-specific"),
         body,
         None,
     )
@@ -228,15 +228,15 @@ async fn no_key_means_no_caching() {
 }
 
 #[tokio::test]
-async fn key_scope_is_per_endpoint_and_supernet() {
+async fn key_scope_is_per_endpoint_and_cidr_block() {
     let app = ipam_app().await;
-    let sn1 = create_supernet(&app, "10.40.0.0/16").await;
-    let sn2 = create_supernet(&app, "10.41.0.0/16").await;
+    let sn1 = create_cidr_block(&app, "10.40.0.0/16").await;
+    let sn2 = create_cidr_block(&app, "10.41.0.0/16").await;
 
-    // Same key, different supernet path → fresh execution, not a conflict.
+    // Same key, different cidr_block path → fresh execution, not a conflict.
     let r1 = post_with_key(
         &app,
-        &format!("/ipam/supernets/{sn1}/allocate-specific"),
+        &format!("/ipam/cidr-blocks/{sn1}/allocate-specific"),
         r#"{"cidr":"10.40.1.0/24"}"#,
         Some("shared-key"),
     )
@@ -245,7 +245,7 @@ async fn key_scope_is_per_endpoint_and_supernet() {
 
     let r2 = post_with_key(
         &app,
-        &format!("/ipam/supernets/{sn2}/allocate-specific"),
+        &format!("/ipam/cidr-blocks/{sn2}/allocate-specific"),
         r#"{"cidr":"10.41.1.0/24"}"#,
         Some("shared-key"),
     )

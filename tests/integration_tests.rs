@@ -636,33 +636,35 @@ fn run_ipam(db: &str, args: &[&str]) -> (String, String, bool) {
 }
 
 #[test]
-fn test_ipam_supernet_lifecycle() {
+fn test_ipam_cidr_block_lifecycle() {
     let db = "/tmp/netcidr-test-lifecycle.db";
     let _ = std::fs::remove_file(db);
 
-    // Create supernet
-    let (stdout, _, success) =
-        run_ipam(db, &["supernet", "create", "10.0.0.0/16", "--name", "Test"]);
+    // Create CIDR block
+    let (stdout, _, success) = run_ipam(
+        db,
+        &["cidr-block", "create", "10.0.0.0/16", "--name", "Test"],
+    );
     assert!(success);
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
     assert_eq!(json["cidr"], "10.0.0.0/16");
     assert_eq!(json["name"], "Test");
     let sn_id = json["id"].as_str().unwrap().to_string();
 
-    // List supernets
-    let (stdout, _, success) = run_ipam(db, &["supernet", "list"]);
+    // List CIDR blocks
+    let (stdout, _, success) = run_ipam(db, &["cidr-block", "list"]);
     assert!(success);
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
     assert_eq!(json["count"], 1);
 
-    // Get supernet
-    let (stdout, _, success) = run_ipam(db, &["supernet", "get", &sn_id]);
+    // Get CIDR block
+    let (stdout, _, success) = run_ipam(db, &["cidr-block", "get", &sn_id]);
     assert!(success);
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
     assert_eq!(json["cidr"], "10.0.0.0/16");
 
-    // Delete supernet
-    let (_, stderr, success) = run_ipam(db, &["supernet", "delete", &sn_id]);
+    // Delete CIDR block
+    let (_, stderr, success) = run_ipam(db, &["cidr-block", "delete", &sn_id]);
     assert!(success);
     assert!(stderr.contains("deleted"));
 
@@ -674,8 +676,8 @@ fn test_ipam_allocation_workflow() {
     let db = "/tmp/netcidr-test-alloc.db";
     let _ = std::fs::remove_file(db);
 
-    // Create supernet
-    let (stdout, _, _) = run_ipam(db, &["supernet", "create", "10.0.0.0/16"]);
+    // Create CIDR block
+    let (stdout, _, _) = run_ipam(db, &["cidr-block", "create", "10.0.0.0/16"]);
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let sn_id = json["id"].as_str().unwrap().to_string();
 
@@ -736,7 +738,7 @@ fn test_ipam_utilization_and_free_blocks() {
     let db = "/tmp/netcidr-test-util.db";
     let _ = std::fs::remove_file(db);
 
-    let (stdout, _, _) = run_ipam(db, &["supernet", "create", "10.0.0.0/24"]);
+    let (stdout, _, _) = run_ipam(db, &["cidr-block", "create", "10.0.0.0/24"]);
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let sn_id = json["id"].as_str().unwrap().to_string();
 
@@ -761,7 +763,7 @@ fn test_ipam_find_ip() {
     let db = "/tmp/netcidr-test-findip.db";
     let _ = std::fs::remove_file(db);
 
-    let (stdout, _, _) = run_ipam(db, &["supernet", "create", "10.0.0.0/8"]);
+    let (stdout, _, _) = run_ipam(db, &["cidr-block", "create", "10.0.0.0/8"]);
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let sn_id = json["id"].as_str().unwrap().to_string();
 
@@ -787,7 +789,7 @@ fn test_ipam_audit_log() {
     let db = "/tmp/netcidr-test-audit.db";
     let _ = std::fs::remove_file(db);
 
-    let (stdout, _, _) = run_ipam(db, &["supernet", "create", "10.0.0.0/8"]);
+    let (stdout, _, _) = run_ipam(db, &["cidr-block", "create", "10.0.0.0/8"]);
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let sn_id = json["id"].as_str().unwrap().to_string();
 
@@ -796,7 +798,7 @@ fn test_ipam_audit_log() {
     let (stdout, _, success) = run_ipam(db, &["audit", "--limit", "10"]);
     assert!(success);
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    assert!(json["count"].as_u64().unwrap() >= 2); // at least create_supernet + allocate
+    assert!(json["count"].as_u64().unwrap() >= 2); // at least create_cidr_block + allocate
 
     let _ = std::fs::remove_file(db);
 }
@@ -806,7 +808,7 @@ fn test_ipam_tags() {
     let db = "/tmp/netcidr-test-tags.db";
     let _ = std::fs::remove_file(db);
 
-    let (stdout, _, _) = run_ipam(db, &["supernet", "create", "10.0.0.0/8"]);
+    let (stdout, _, _) = run_ipam(db, &["cidr-block", "create", "10.0.0.0/8"]);
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let sn_id = json["id"].as_str().unwrap().to_string();
 
@@ -837,7 +839,7 @@ fn test_ipam_overlap_rejected() {
     let db = "/tmp/netcidr-test-overlap.db";
     let _ = std::fs::remove_file(db);
 
-    let (stdout, _, _) = run_ipam(db, &["supernet", "create", "10.0.0.0/16"]);
+    let (stdout, _, _) = run_ipam(db, &["cidr-block", "create", "10.0.0.0/16"]);
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let sn_id = json["id"].as_str().unwrap().to_string();
 
@@ -858,7 +860,7 @@ fn test_ipam_csv_output() {
     let db = "/tmp/netcidr-test-csv.db";
     let _ = std::fs::remove_file(db);
 
-    let (stdout, _, _) = run_ipam(db, &["supernet", "create", "10.0.0.0/16"]);
+    let (stdout, _, _) = run_ipam(db, &["cidr-block", "create", "10.0.0.0/16"]);
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let sn_id = json["id"].as_str().unwrap().to_string();
 
@@ -870,7 +872,7 @@ fn test_ipam_csv_output() {
         &[
             "allocation",
             "list",
-            "--supernet-id",
+            "--cidr-block-id",
             &sn_id,
             "--format",
             "csv",
@@ -888,14 +890,20 @@ fn test_ipam_csv_output() {
 // ── IPv6 IPAM CLI Integration ─────────────────────────────────────────
 
 #[test]
-fn test_ipam_ipv6_supernet_lifecycle() {
+fn test_ipam_ipv6_cidr_block_lifecycle() {
     let db = "/tmp/netcidr-test-v6-lifecycle.db";
     let _ = std::fs::remove_file(db);
 
-    // Create IPv6 supernet
+    // Create IPv6 CIDR block
     let (stdout, _, success) = run_ipam(
         db,
-        &["supernet", "create", "2001:db8::/32", "--name", "IPv6Corp"],
+        &[
+            "cidr-block",
+            "create",
+            "2001:db8::/32",
+            "--name",
+            "IPv6Corp",
+        ],
     );
     assert!(success, "create failed");
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
@@ -946,7 +954,7 @@ fn test_ipam_ipv6_supernet_lifecycle() {
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(json["status"], "released");
 
-    // Delete supernet (need to release remaining allocations first)
+    // Delete CIDR block (need to release remaining allocations first)
     // Just verify the data is consistent
     let (stdout, _, success) = run_ipam(db, &["utilization", &sn_id]);
     assert!(success);
@@ -963,8 +971,8 @@ fn test_ipam_release_and_reactivate_via_update() {
     let db = "/tmp/netcidr-test-reactivate.db";
     let _ = std::fs::remove_file(db);
 
-    // Create supernet and allocate
-    let (stdout, _, _) = run_ipam(db, &["supernet", "create", "10.0.0.0/16"]);
+    // Create CIDR block and allocate
+    let (stdout, _, _) = run_ipam(db, &["cidr-block", "create", "10.0.0.0/16"]);
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let sn_id = json["id"].as_str().unwrap().to_string();
 
@@ -1001,8 +1009,8 @@ fn test_ipam_reallocate_released_cidr_reuses_record() {
     let db = "/tmp/netcidr-test-realloc-dedup.db";
     let _ = std::fs::remove_file(db);
 
-    // Create supernet and allocate
-    let (stdout, _, _) = run_ipam(db, &["supernet", "create", "10.0.0.0/16"]);
+    // Create CIDR block and allocate
+    let (stdout, _, _) = run_ipam(db, &["cidr-block", "create", "10.0.0.0/16"]);
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let sn_id = json["id"].as_str().unwrap().to_string();
 
@@ -1026,7 +1034,7 @@ fn test_ipam_reallocate_released_cidr_reuses_record() {
     assert_eq!(json["id"].as_str().unwrap(), original_id);
 
     // Verify no duplicate — listing should show only 1 allocation
-    let (stdout, _, success) = run_ipam(db, &["allocation", "list", "--supernet-id", &sn_id]);
+    let (stdout, _, success) = run_ipam(db, &["allocation", "list", "--cidr-block-id", &sn_id]);
     assert!(success);
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(

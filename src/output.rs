@@ -174,7 +174,7 @@ impl TextOutput for Ipv4SubnetList {
         let mut out = String::new();
         writeln!(out, "IPv4 Subnet Generator").unwrap();
         writeln!(out, "=====================").unwrap();
-        writeln!(out, "Supernet: {}", self.supernet.input).unwrap();
+        writeln!(out, "CidrBlock: {}", self.cidr_block.input).unwrap();
         writeln!(out, "New Prefix: /{}", self.new_prefix).unwrap();
         writeln!(out, "Generated {} subnets:\n", self.requested_count).unwrap();
 
@@ -199,7 +199,7 @@ impl TextOutput for Ipv6SubnetList {
         let mut out = String::new();
         writeln!(out, "IPv6 Subnet Generator").unwrap();
         writeln!(out, "=====================").unwrap();
-        writeln!(out, "Supernet: {}", self.supernet.input).unwrap();
+        writeln!(out, "CidrBlock: {}", self.cidr_block.input).unwrap();
         writeln!(out, "New Prefix: /{}", self.new_prefix).unwrap();
         writeln!(out, "Generated {} subnets:\n", self.requested_count).unwrap();
 
@@ -222,7 +222,7 @@ impl TextOutput for SplitSummary {
         let mut out = String::new();
         writeln!(out, "Subnet Split Summary").unwrap();
         writeln!(out, "====================").unwrap();
-        writeln!(out, "Supernet:           {}", self.supernet).unwrap();
+        writeln!(out, "CidrBlock:           {}", self.cidr_block).unwrap();
         writeln!(out, "New Prefix:         /{}", self.new_prefix).unwrap();
         writeln!(out, "Available Subnets:  {}", self.available_subnets).unwrap();
         out
@@ -429,12 +429,12 @@ impl CsvOutput for ContainsResult {
 impl CsvOutput for SplitSummary {
     fn to_csv(&self) -> Result<String> {
         let mut wtr = csv::Writer::from_writer(Vec::new());
-        wtr.write_record(["supernet", "new_prefix", "available_subnets"])
+        wtr.write_record(["cidr_block", "new_prefix", "available_subnets"])
             .map_err(csv_err)?;
         write_safe_record(
             &mut wtr,
             [
-                self.supernet.as_str(),
+                self.cidr_block.as_str(),
                 &self.new_prefix.to_string(),
                 &self.available_subnets,
             ],
@@ -446,7 +446,7 @@ impl CsvOutput for SplitSummary {
 impl CsvOutput for Ipv4SubnetList {
     fn to_csv(&self) -> Result<String> {
         let mut out = String::new();
-        writeln!(out, "# supernet: {}", self.supernet.input).unwrap();
+        writeln!(out, "# cidr_block: {}", self.cidr_block.input).unwrap();
         writeln!(out, "# new_prefix: {}", self.new_prefix).unwrap();
         writeln!(out, "# count: {}", self.requested_count).unwrap();
 
@@ -463,7 +463,7 @@ impl CsvOutput for Ipv4SubnetList {
 impl CsvOutput for Ipv6SubnetList {
     fn to_csv(&self) -> Result<String> {
         let mut out = String::new();
-        writeln!(out, "# supernet: {}", self.supernet.input).unwrap();
+        writeln!(out, "# cidr_block: {}", self.cidr_block.input).unwrap();
         writeln!(out, "# new_prefix: {}", self.new_prefix).unwrap();
         writeln!(out, "# count: {}", self.requested_count).unwrap();
 

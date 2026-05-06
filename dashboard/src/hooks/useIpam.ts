@@ -1,8 +1,8 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { get, post, patch, put, del } from "../api";
 import type {
-  Supernet,
-  SupernetList,
+  CidrBlock,
+  CidrBlockList,
   Allocation,
   AllocationList,
   FreeBlock,
@@ -15,14 +15,14 @@ import type { AllocationFilters } from "../components/ipam/AllocationTable";
 import { getErrorMessage } from "../lib/errors";
 
 type ModalType =
-  | "create-supernet"
+  | "create-cidr-block"
   | "allocate-specific"
   | "auto-allocate"
   | "alloc-detail"
   | null;
 
 export function useIpam() {
-  const [supernets, setSupernets] = useState<Supernet[]>([]);
+  const [cidr_blocks, setCidrBlocks] = useState<CidrBlock[]>([]);
   const [allocations, setAllocations] = useState<Allocation[]>([]);
   const [freeBlocks, setFreeBlocks] = useState<FreeBlock[]>([]);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
@@ -31,7 +31,7 @@ export function useIpam() {
     Record<string, { pct: number; count: number }>
   >({});
   const [filters, setFiltersState] = useState<AllocationFilters>({
-    supernetId: "",
+    cidr_blockId: "",
     status: "",
     owner: "",
     environment: "",
@@ -45,30 +45,30 @@ export function useIpam() {
   // Derived (memoized to preserve referential identity)
   const snMap = useMemo(() => {
     const map: Record<string, string> = {};
-    for (const sn of supernets) {
+    for (const sn of cidr_blocks) {
       map[sn.id] = sn.cidr;
     }
     return map;
-  }, [supernets]);
+  }, [cidr_blocks]);
 
   // --- Data loading ---
 
-  const loadSupernets = useCallback(async () => {
+  const loadCidrBlocks = useCallback(async () => {
     try {
-      const data = await get<SupernetList>("/ipam/supernets");
-      setSupernets(data.supernets);
-      return data.supernets;
+      const data = await get<CidrBlockList>("/ipam/cidr-blocks");
+      setCidrBlocks(data.cidr_blocks);
+      return data.cidr_blocks;
     } catch (e) {
-      setError(getErrorMessage(e, "Failed to load supernets"));
+      setError(getErrorMessage(e, "Failed to load CIDR blocks"));
       return [];
     }
   }, []);
 
-  const loadUtilization = useCallback(async (sns: Supernet[]) => {
+  const loadUtilization = useCallback(async (sns: CidrBlock[]) => {
     try {
       const results = await Promise.all(
         sns.map((sn) =>
-          get<UtilizationReport>(`/ipam/supernets/${sn.id}/utilization`).then(
+          get<UtilizationReport>(`/ipam/cidr-blocks/${sn.id}/utilization`).then(
             (u) => ({ id: sn.id, pct: u.utilization_percent, count: u.allocation_count }),
           ),
         ),
@@ -84,7 +84,7 @@ export function useIpam() {
   }, []);
 
   const loadAllocations = useCallback(async () => {
-    if (!filters.supernetId) {
+    if (!filters.cidr_blockId) {
       setAllocations([]);
       setFreeBlocks([]);
       return;
@@ -98,10 +98,10 @@ export function useIpam() {
 
       const [allocs, free] = await Promise.all([
         get<AllocationList>(
-          `/ipam/supernets/${filters.supernetId}/allocations?${qs}`,
+          `/ipam/cidr-blocks/${filters.cidr_blockId}/allocations?${qs}`,
         ),
         get<FreeBlocksReport>(
-          `/ipam/supernets/${filters.supernetId}/free`,
+          `/ipam/cidr-blocks/${filters.cidr_blockId}/free`,
         ),
       ]);
       setAllocations(allocs.allocations);
@@ -121,9 +121,9 @@ export function useIpam() {
   }, []);
 
   const loadAll = useCallback(async () => {
-    const sns = await loadSupernets();
+    const sns = await loadCidrBlocks();
     await Promise.all([loadUtilization(sns), loadAudit()]);
-  }, [loadSupernets, loadUtilization, loadAudit]);
+  }, [loadCidrBlocks, loadUtilization, loadAudit]);
 
   // Load on mount
   useEffect(() => {
@@ -137,10 +137,10 @@ export function useIpam() {
 
   // --- Mutations ---
 
-  const createSupernet = useCallback(
+  const createCidrBlock = useCallback(
     async (form: { cidr: string; name: string; description: string }) => {
       try {
-        await post("/ipam/supernets", {
+        await post("/ipam/cidr-blocks", {
           cidr: form.cidr,
           name: form.name || undefined,
           description: form.description || undefined,
@@ -155,25 +155,25 @@ export function useIpam() {
     [loadAll],
   );
 
-  const deleteSupernet = useCallback(
+  const deleteCidrBlock = useCallback(
     async (id: string) => {
-      if (!confirm("Delete this supernet?")) return;
+      if (!confirm("Delete this CIDR block?")) return;
       try {
-        await del(`/ipam/supernets/${id}`);
+        await del(`/ipam/cidr-blocks/${id}`);
         await loadAll();
-        if (filters.supernetId === id) {
-          setFiltersState((f) => ({ ...f, supernetId: "" }));
+        if (filters.cidr_blockId === id) {
+          setFiltersState((f) => ({ ...f, cidr_blockId: "" }));
         }
       } catch (e) {
         setError(getErrorMessage(e, "Delete failed"));
       }
     },
-    [loadAll, filters.supernetId],
+    [loadAll, filters.cidr_blockId],
   );
 
   const allocateSpecific = useCallback(
     async (form: {
-      supernetId: string;
+      cidr_blockId: string;
       cidr: string;
       name: string;
       environment: string;
@@ -181,7 +181,7 @@ export function useIpam() {
       resourceId: string;
     }) => {
       try {
-        await post(`/ipam/supernets/${form.supernetId}/allocate-specific`, {
+        await post(`/ipam/cidr-blocks/${form.cidr_blockId}/allocate-specific`, {
           cidr: form.cidr,
           name: form.name || undefined,
           environment: form.environment || undefined,
@@ -200,7 +200,7 @@ export function useIpam() {
 
   const autoAllocate = useCallback(
     async (form: {
-      supernetId: string;
+      cidr_blockId: string;
       prefix: number;
       count: number;
       name: string;
@@ -208,7 +208,7 @@ export function useIpam() {
       owner: string;
     }) => {
       try {
-        await post(`/ipam/supernets/${form.supernetId}/allocate`, {
+        await post(`/ipam/cidr-blocks/${form.cidr_blockId}/allocate`, {
           prefix_length: form.prefix,
           count: form.count,
           name: form.name || undefined,
@@ -305,24 +305,24 @@ export function useIpam() {
       0,
     );
     const avgUtil =
-      supernets.length > 0
+      cidr_blocks.length > 0
         ? (
             Object.values(utilization).reduce((a, u) => a + u.pct, 0) /
-            supernets.length
+            cidr_blocks.length
           ).toFixed(1) + "%"
         : "0%";
     return {
-      supernets: supernets.length,
+      cidr_blocks: cidr_blocks.length,
       allocations: totalAllocations,
       utilization: avgUtil,
       freeBlocks: freeBlocks.length,
     };
-  }, [utilization, supernets, freeBlocks.length]);
+  }, [utilization, cidr_blocks, freeBlocks.length]);
 
   // --- Actions ---
 
-  const selectSupernet = useCallback((id: string) => {
-    setFiltersState((f) => ({ ...f, supernetId: id }));
+  const selectCidrBlock = useCallback((id: string) => {
+    setFiltersState((f) => ({ ...f, cidr_blockId: id }));
   }, []);
 
   const setFilters = useCallback((patch: Partial<AllocationFilters>) => {
@@ -335,7 +335,7 @@ export function useIpam() {
   }, []);
 
   return {
-    supernets,
+    cidr_blocks,
     allocations,
     freeBlocks,
     audit,
@@ -349,8 +349,8 @@ export function useIpam() {
     stats,
     // Actions
     loadAll,
-    createSupernet,
-    deleteSupernet,
+    createCidrBlock,
+    deleteCidrBlock,
     allocateSpecific,
     autoAllocate,
     releaseAllocation,
@@ -358,7 +358,7 @@ export function useIpam() {
     addTag,
     findIp,
     findResource,
-    selectSupernet,
+    selectCidrBlock,
     setFilters,
     viewAllocation,
     openModal: setActiveModal,

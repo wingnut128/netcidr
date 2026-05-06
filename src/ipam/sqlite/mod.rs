@@ -99,7 +99,7 @@ impl SqliteStore {
         Ok(Allocation {
             id: row.get("id")?,
             tenant_id: row.get("tenant_id")?,
-            supernet_id: row.get("supernet_id")?,
+            cidr_block_id: row.get("cidr_block_id")?,
             cidr: row.get("cidr")?,
             network_address: row.get("network_address")?,
             broadcast_address: row.get("broadcast_address")?,
@@ -186,9 +186,13 @@ impl IpamStore for SqliteStore {
         Ok(())
     }
 
-    // --- supernets ---
+    // --- cidr_blocks ---
 
-    async fn create_supernet(&self, tenant_id: &str, input: &CreateSupernet) -> Result<Supernet> {
+    async fn create_cidr_block(
+        &self,
+        tenant_id: &str,
+        input: &CreateCidrBlock,
+    ) -> Result<CidrBlock> {
         let conn = self.conn()?;
         let id = uuid::Uuid::new_v4().to_string();
         let now = Self::now();
@@ -197,12 +201,12 @@ impl IpamStore for SqliteStore {
         let (network, broadcast, prefix, total, ip_version) = parse_cidr_metadata(&input.cidr)?;
 
         conn.execute(
-            "INSERT INTO supernets (id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at)
+            "INSERT INTO cidr_blocks (id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![id, tenant_id, input.cidr, network, broadcast, prefix, total.to_string(), input.name, input.description, ip_version, now, now],
         ).map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
-        Ok(Supernet {
+        Ok(CidrBlock {
             id,
             tenant_id: tenant_id.to_string(),
             cidr: input.cidr.clone(),
@@ -218,14 +222,14 @@ impl IpamStore for SqliteStore {
         })
     }
 
-    async fn get_supernet(&self, tenant_id: &str, id: &str) -> Result<Supernet> {
+    async fn get_cidr_block(&self, tenant_id: &str, id: &str) -> Result<CidrBlock> {
         let conn = self.conn()?;
         conn.query_row(
-            "SELECT id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM supernets WHERE id = ?1 AND tenant_id = ?2",
+            "SELECT id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM cidr_blocks WHERE id = ?1 AND tenant_id = ?2",
             params![id, tenant_id],
             |row| {
                 let total_hosts_text: String = row.get(6)?;
-                Ok(Supernet {
+                Ok(CidrBlock {
                     id: row.get(0)?,
                     tenant_id: row.get(1)?,
                     cidr: row.get(2)?,
@@ -241,20 +245,20 @@ impl IpamStore for SqliteStore {
                 })
             },
         ).map_err(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => NetcidrError::SupernetNotFound(id.to_string()),
+            rusqlite::Error::QueryReturnedNoRows => NetcidrError::CidrBlockNotFound(id.to_string()),
             _ => NetcidrError::DatabaseError(e.to_string()),
         })
     }
 
-    async fn list_supernets(&self, tenant_id: &str) -> Result<Vec<Supernet>> {
+    async fn list_cidr_blocks(&self, tenant_id: &str) -> Result<Vec<CidrBlock>> {
         let conn = self.conn()?;
         let mut stmt = conn
-            .prepare("SELECT id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM supernets WHERE tenant_id = ?1 ORDER BY created_at")
+            .prepare("SELECT id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM cidr_blocks WHERE tenant_id = ?1 ORDER BY created_at")
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         let rows = stmt
             .query_map(params![tenant_id], |row| {
                 let total_hosts_text: String = row.get(6)?;
-                Ok(Supernet {
+                Ok(CidrBlock {
                     id: row.get(0)?,
                     tenant_id: row.get(1)?,
                     cidr: row.get(2)?,
@@ -275,55 +279,55 @@ impl IpamStore for SqliteStore {
         Ok(rows)
     }
 
-    async fn delete_supernet(&self, tenant_id: &str, id: &str) -> Result<()> {
+    async fn delete_cidr_block(&self, tenant_id: &str, id: &str) -> Result<()> {
         let conn = self.conn()?;
 
-        // Verify supernet exists in this tenant first; cross-tenant ⇒ NotFound.
+        // Verify cidr_block exists in this tenant first; cross-tenant ⇒ NotFound.
         let exists: bool = conn
             .query_row(
-                "SELECT COUNT(*) > 0 FROM supernets WHERE id = ?1 AND tenant_id = ?2",
+                "SELECT COUNT(*) > 0 FROM cidr_blocks WHERE id = ?1 AND tenant_id = ?2",
                 params![id, tenant_id],
                 |row| row.get(0),
             )
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         if !exists {
-            return Err(NetcidrError::SupernetNotFound(id.to_string()));
+            return Err(NetcidrError::CidrBlockNotFound(id.to_string()));
         }
 
         // Check for active allocations
         let active_count: u32 = conn
             .query_row(
-                "SELECT COUNT(*) FROM allocations WHERE supernet_id = ?1 AND tenant_id = ?2 AND status != 'released'",
+                "SELECT COUNT(*) FROM allocations WHERE cidr_block_id = ?1 AND tenant_id = ?2 AND status != 'released'",
                 params![id, tenant_id],
                 |row| row.get(0),
             )
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         if active_count > 0 {
-            return Err(NetcidrError::SupernetHasActiveAllocations(id.to_string()));
+            return Err(NetcidrError::CidrBlockHasActiveAllocations(id.to_string()));
         }
 
-        // Delete released allocations' tags, then allocations, then supernet
+        // Delete released allocations' tags, then allocations, then cidr_block
         conn.execute(
-            "DELETE FROM allocation_tags WHERE allocation_id IN (SELECT id FROM allocations WHERE supernet_id = ?1 AND tenant_id = ?2)",
+            "DELETE FROM allocation_tags WHERE allocation_id IN (SELECT id FROM allocations WHERE cidr_block_id = ?1 AND tenant_id = ?2)",
             params![id, tenant_id],
         ).map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         conn.execute(
-            "DELETE FROM allocations WHERE supernet_id = ?1 AND tenant_id = ?2",
+            "DELETE FROM allocations WHERE cidr_block_id = ?1 AND tenant_id = ?2",
             params![id, tenant_id],
         )
         .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         let deleted = conn
             .execute(
-                "DELETE FROM supernets WHERE id = ?1 AND tenant_id = ?2",
+                "DELETE FROM cidr_blocks WHERE id = ?1 AND tenant_id = ?2",
                 params![id, tenant_id],
             )
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         if deleted == 0 {
-            return Err(NetcidrError::SupernetNotFound(id.to_string()));
+            return Err(NetcidrError::CidrBlockNotFound(id.to_string()));
         }
         Ok(())
     }
@@ -351,25 +355,25 @@ impl IpamStore for SqliteStore {
             .map(|ttl| (Utc::now() + chrono::Duration::seconds(ttl as i64)).to_rfc3339());
 
         // Application-level cross-tenant invariant: confirm the parent
-        // supernet belongs to this tenant. Returning NotFound (not Forbidden)
+        // cidr_block belongs to this tenant. Returning NotFound (not Forbidden)
         // disguises cross-tenant references as missing rows. The DB trigger
         // is belt-and-suspenders.
-        let supernet_in_tenant: bool = conn
+        let cidr_block_in_tenant: bool = conn
             .query_row(
-                "SELECT COUNT(*) > 0 FROM supernets WHERE id = ?1 AND tenant_id = ?2",
-                params![input.supernet_id, tenant_id],
+                "SELECT COUNT(*) > 0 FROM cidr_blocks WHERE id = ?1 AND tenant_id = ?2",
+                params![input.cidr_block_id, tenant_id],
                 |row| row.get(0),
             )
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        if !supernet_in_tenant {
-            return Err(NetcidrError::SupernetNotFound(input.supernet_id.clone()));
+        if !cidr_block_in_tenant {
+            return Err(NetcidrError::CidrBlockNotFound(input.cidr_block_id.clone()));
         }
 
         conn.execute(
-            "INSERT INTO allocations (id, tenant_id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, expires_at)
+            "INSERT INTO allocations (id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, expires_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
-                id, tenant_id, input.supernet_id, input.cidr, network, broadcast, prefix,
+                id, tenant_id, input.cidr_block_id, input.cidr, network, broadcast, prefix,
                 total.to_string(),
                 input.resource_id, input.resource_type, input.name, input.description,
                 input.environment, input.owner, status, input.parent_allocation_id, now, now,
@@ -392,7 +396,7 @@ impl IpamStore for SqliteStore {
         Ok(Allocation {
             id,
             tenant_id: tenant_id.to_string(),
-            supernet_id: input.supernet_id.clone(),
+            cidr_block_id: input.cidr_block_id.clone(),
             cidr: input.cidr.clone(),
             network_address: network,
             broadcast_address: broadcast,
@@ -418,7 +422,7 @@ impl IpamStore for SqliteStore {
         let conn = self.conn()?;
         let mut alloc = conn
             .query_row(
-                "SELECT id, tenant_id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = ?1 AND tenant_id = ?2",
+                "SELECT id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = ?1 AND tenant_id = ?2",
                 params![id, tenant_id],
                 Self::row_to_allocation,
             )
@@ -437,14 +441,14 @@ impl IpamStore for SqliteStore {
     ) -> Result<Vec<Allocation>> {
         let conn = self.conn()?;
         let mut sql = String::from(
-            "SELECT id, tenant_id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE tenant_id = ?1",
+            "SELECT id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE tenant_id = ?1",
         );
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
         param_values.push(Box::new(tenant_id.to_string()));
         let mut idx = 2;
 
-        if let Some(ref sid) = filter.supernet_id {
-            sql.push_str(&format!(" AND supernet_id = ?{}", idx));
+        if let Some(ref sid) = filter.cidr_block_id {
+            sql.push_str(&format!(" AND cidr_block_id = ?{}", idx));
             param_values.push(Box::new(sid.clone()));
             idx += 1;
         }
@@ -560,7 +564,7 @@ impl IpamStore for SqliteStore {
         // Fetch updated allocation using same connection
         let mut alloc = conn
             .query_row(
-                "SELECT id, tenant_id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = ?1 AND tenant_id = ?2",
+                "SELECT id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = ?1 AND tenant_id = ?2",
                 params![id, tenant_id],
                 Self::row_to_allocation,
             )
@@ -597,7 +601,7 @@ impl IpamStore for SqliteStore {
         // Fetch using same connection to avoid pool exhaustion
         let mut alloc = conn
             .query_row(
-                "SELECT id, tenant_id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = ?1 AND tenant_id = ?2",
+                "SELECT id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = ?1 AND tenant_id = ?2",
                 params![id, tenant_id],
                 Self::row_to_allocation,
             )
@@ -606,26 +610,26 @@ impl IpamStore for SqliteStore {
         Ok(alloc)
     }
 
-    async fn find_allocations_in_supernet(
+    async fn find_allocations_in_cidr_block(
         &self,
         tenant_id: &str,
-        supernet_id: &str,
+        cidr_block_id: &str,
         statuses: &[AllocationStatus],
     ) -> Result<Vec<Allocation>> {
         if statuses.is_empty() {
             return Ok(Vec::new());
         }
         let conn = self.conn()?;
-        // ?1 = supernet_id, ?2 = tenant_id, statuses start at ?3.
+        // ?1 = cidr_block_id, ?2 = tenant_id, statuses start at ?3.
         let placeholders: Vec<String> =
             (0..statuses.len()).map(|i| format!("?{}", i + 3)).collect();
         let sql = format!(
-            "SELECT id, tenant_id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE supernet_id = ?1 AND tenant_id = ?2 AND status IN ({}) ORDER BY network_address",
+            "SELECT id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE cidr_block_id = ?1 AND tenant_id = ?2 AND status IN ({}) ORDER BY network_address",
             placeholders.join(", ")
         );
 
         let mut params_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-        params_values.push(Box::new(supernet_id.to_string()));
+        params_values.push(Box::new(cidr_block_id.to_string()));
         params_values.push(Box::new(tenant_id.to_string()));
         for s in statuses {
             params_values.push(Box::new(s.to_string()));
@@ -863,13 +867,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_supernet_crud() {
+    async fn test_cidr_block_crud() {
         let store = test_store().await;
 
         let sn = store
-            .create_supernet(
+            .create_cidr_block(
                 TEST_TENANT,
-                &CreateSupernet {
+                &CreateCidrBlock {
                     cidr: "10.0.0.0/8".to_string(),
                     name: Some("RFC1918 Class A".to_string()),
                     description: None,
@@ -885,14 +889,14 @@ mod tests {
         assert_eq!(sn.ip_version, 4);
         assert_eq!(sn.tenant_id, TEST_TENANT);
 
-        let fetched = store.get_supernet(TEST_TENANT, &sn.id).await.unwrap();
+        let fetched = store.get_cidr_block(TEST_TENANT, &sn.id).await.unwrap();
         assert_eq!(fetched.cidr, "10.0.0.0/8");
 
-        let all = store.list_supernets(TEST_TENANT).await.unwrap();
+        let all = store.list_cidr_blocks(TEST_TENANT).await.unwrap();
         assert_eq!(all.len(), 1);
 
-        store.delete_supernet(TEST_TENANT, &sn.id).await.unwrap();
-        let all = store.list_supernets(TEST_TENANT).await.unwrap();
+        store.delete_cidr_block(TEST_TENANT, &sn.id).await.unwrap();
+        let all = store.list_cidr_blocks(TEST_TENANT).await.unwrap();
         assert!(all.is_empty());
     }
 
@@ -901,9 +905,9 @@ mod tests {
         let store = test_store().await;
 
         let sn = store
-            .create_supernet(
+            .create_cidr_block(
                 TEST_TENANT,
-                &CreateSupernet {
+                &CreateCidrBlock {
                     cidr: "10.0.0.0/8".to_string(),
                     name: None,
                     description: None,
@@ -916,7 +920,7 @@ mod tests {
             .create_allocation(
                 TEST_TENANT,
                 &CreateAllocation {
-                    supernet_id: sn.id.clone(),
+                    cidr_block_id: sn.id.clone(),
                     cidr: "10.0.0.0/24".to_string(),
                     status: None,
                     resource_id: Some("vpc-123".to_string()),
@@ -973,13 +977,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_delete_supernet_with_active_allocations_fails() {
+    async fn test_delete_cidr_block_with_active_allocations_fails() {
         let store = test_store().await;
 
         let sn = store
-            .create_supernet(
+            .create_cidr_block(
                 TEST_TENANT,
-                &CreateSupernet {
+                &CreateCidrBlock {
                     cidr: "10.0.0.0/8".to_string(),
                     name: None,
                     description: None,
@@ -992,7 +996,7 @@ mod tests {
             .create_allocation(
                 TEST_TENANT,
                 &CreateAllocation {
-                    supernet_id: sn.id.clone(),
+                    cidr_block_id: sn.id.clone(),
                     cidr: "10.0.0.0/24".to_string(),
                     status: None,
                     resource_id: None,
@@ -1010,10 +1014,13 @@ mod tests {
             .unwrap();
 
         let err = store
-            .delete_supernet(TEST_TENANT, &sn.id)
+            .delete_cidr_block(TEST_TENANT, &sn.id)
             .await
             .unwrap_err();
-        assert!(matches!(err, NetcidrError::SupernetHasActiveAllocations(_)));
+        assert!(matches!(
+            err,
+            NetcidrError::CidrBlockHasActiveAllocations(_)
+        ));
     }
 
     #[tokio::test]
@@ -1021,9 +1028,9 @@ mod tests {
         let store = test_store().await;
 
         let sn = store
-            .create_supernet(
+            .create_cidr_block(
                 TEST_TENANT,
-                &CreateSupernet {
+                &CreateCidrBlock {
                     cidr: "10.0.0.0/8".to_string(),
                     name: None,
                     description: None,
@@ -1036,7 +1043,7 @@ mod tests {
             .create_allocation(
                 TEST_TENANT,
                 &CreateAllocation {
-                    supernet_id: sn.id.clone(),
+                    cidr_block_id: sn.id.clone(),
                     cidr: "10.0.0.0/24".to_string(),
                     status: None,
                     resource_id: None,
@@ -1057,7 +1064,7 @@ mod tests {
             .create_allocation(
                 TEST_TENANT,
                 &CreateAllocation {
-                    supernet_id: sn.id.clone(),
+                    cidr_block_id: sn.id.clone(),
                     cidr: "10.0.1.0/24".to_string(),
                     status: Some(AllocationStatus::Reserved),
                     resource_id: None,
@@ -1077,7 +1084,7 @@ mod tests {
         store.release_allocation(TEST_TENANT, &a1.id).await.unwrap();
 
         let active = store
-            .find_allocations_in_supernet(
+            .find_allocations_in_cidr_block(
                 TEST_TENANT,
                 &sn.id,
                 &[AllocationStatus::Active, AllocationStatus::Reserved],
@@ -1096,9 +1103,9 @@ mod tests {
             .append_audit(&AuditEntry {
                 id: String::new(),
                 tenant_id: TEST_TENANT.to_string(),
-                entity_type: "supernet".to_string(),
+                entity_type: "cidr_block".to_string(),
                 entity_id: "sn-1".to_string(),
-                action: "create_supernet".to_string(),
+                action: "create_cidr_block".to_string(),
                 details: Some(r#"{"cidr":"10.0.0.0/8"}"#.to_string()),
                 timestamp: "2026-03-04T00:00:00Z".to_string(),
                 ..Default::default()
@@ -1117,7 +1124,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].action, "create_supernet");
+        assert_eq!(entries[0].action, "create_cidr_block");
     }
 
     #[tokio::test]
@@ -1125,9 +1132,9 @@ mod tests {
         let store = test_store().await;
 
         let sn = store
-            .create_supernet(
+            .create_cidr_block(
                 TEST_TENANT,
-                &CreateSupernet {
+                &CreateCidrBlock {
                     cidr: "10.0.0.0/8".to_string(),
                     name: None,
                     description: None,
@@ -1140,7 +1147,7 @@ mod tests {
             .create_allocation(
                 TEST_TENANT,
                 &CreateAllocation {
-                    supernet_id: sn.id.clone(),
+                    cidr_block_id: sn.id.clone(),
                     cidr: "10.0.0.0/24".to_string(),
                     status: None,
                     resource_id: None,
@@ -1251,14 +1258,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ipv6_supernet_total_hosts_roundtrip() {
+    async fn test_ipv6_cidr_block_total_hosts_roundtrip() {
         let store = test_store().await;
 
-        // Create an IPv6 /32 supernet (2^96 addresses > i64::MAX)
+        // Create an IPv6 /32 cidr_block (2^96 addresses > i64::MAX)
         let sn = store
-            .create_supernet(
+            .create_cidr_block(
                 TEST_TENANT,
-                &CreateSupernet {
+                &CreateCidrBlock {
                     cidr: "2001:db8::/32".to_string(),
                     name: Some("IPv6 test".to_string()),
                     description: None,
@@ -1272,11 +1279,11 @@ mod tests {
         assert_eq!(sn.ip_version, 6);
 
         // Verify roundtrip through get
-        let fetched = store.get_supernet(TEST_TENANT, &sn.id).await.unwrap();
+        let fetched = store.get_cidr_block(TEST_TENANT, &sn.id).await.unwrap();
         assert_eq!(fetched.total_hosts, expected);
 
         // Verify roundtrip through list
-        let all = store.list_supernets(TEST_TENANT).await.unwrap();
+        let all = store.list_cidr_blocks(TEST_TENANT).await.unwrap();
         assert_eq!(all[0].total_hosts, expected);
     }
 
@@ -1285,9 +1292,9 @@ mod tests {
         let store = test_store().await;
 
         let sn = store
-            .create_supernet(
+            .create_cidr_block(
                 TEST_TENANT,
-                &CreateSupernet {
+                &CreateCidrBlock {
                     cidr: "2001:db8::/32".to_string(),
                     name: None,
                     description: None,
@@ -1300,7 +1307,7 @@ mod tests {
             .create_allocation(
                 TEST_TENANT,
                 &CreateAllocation {
-                    supernet_id: sn.id.clone(),
+                    cidr_block_id: sn.id.clone(),
                     cidr: "2001:db8::/48".to_string(),
                     status: None,
                     resource_id: None,
@@ -1339,9 +1346,9 @@ mod tests {
                 .append_audit(&AuditEntry {
                     id: String::new(),
                     tenant_id: TEST_TENANT.to_string(),
-                    entity_type: "supernet".to_string(),
+                    entity_type: "cidr_block".to_string(),
                     entity_id: format!("sn-{i}"),
-                    action: "create_supernet".to_string(),
+                    action: "create_cidr_block".to_string(),
                     details: None,
                     timestamp: "2026-01-01T00:00:00Z".to_string(),
                     ..Default::default()
@@ -1374,9 +1381,9 @@ mod tests {
                 .append_audit(&AuditEntry {
                     id: String::new(),
                     tenant_id: TEST_TENANT.to_string(),
-                    entity_type: "supernet".to_string(),
+                    entity_type: "cidr_block".to_string(),
                     entity_id: format!("sn-{i}"),
-                    action: "create_supernet".to_string(),
+                    action: "create_cidr_block".to_string(),
                     details: None,
                     timestamp: "2026-01-01T00:00:00Z".to_string(),
                     ..Default::default()

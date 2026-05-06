@@ -3,11 +3,11 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { ErrorBanner } from "../components/ui/ErrorBanner";
 import { IpamStats } from "../components/ipam/IpamStats";
 import { IpamSearch } from "../components/ipam/IpamSearch";
-import { SupernetTable } from "../components/ipam/SupernetTable";
+import { CidrBlockTable } from "../components/ipam/CidrBlockTable";
 import { AllocationTable } from "../components/ipam/AllocationTable";
 import { FreeBlocksList } from "../components/ipam/FreeBlocksList";
 import { AuditLog } from "../components/ipam/AuditLog";
-import { CreateSupernetModal } from "../components/ipam/modals/CreateSupernetModal";
+import { CreateCidrBlockModal } from "../components/ipam/modals/CreateCidrBlockModal";
 import { AllocateSpecificModal } from "../components/ipam/modals/AllocateSpecificModal";
 import { AutoAllocateModal } from "../components/ipam/modals/AutoAllocateModal";
 import { AllocationDetailModal } from "../components/ipam/modals/AllocationDetailModal";
@@ -34,7 +34,7 @@ function IpamDashboard() {
       <ErrorBanner message={ipam.error} onDismiss={ipam.clearError} />
 
       <IpamStats
-        supernetCount={ipam.stats.supernets}
+        cidr_blockCount={ipam.stats.cidr_blocks}
         allocationCount={ipam.stats.allocations}
         avgUtilization={ipam.stats.utilization}
         freeBlockCount={ipam.stats.freeBlocks}
@@ -46,17 +46,17 @@ function IpamDashboard() {
         searchResults={ipam.searchResults}
       />
 
-      <SupernetTable
-        supernets={ipam.supernets}
+      <CidrBlockTable
+        cidr_blocks={ipam.cidr_blocks}
         utilization={ipam.utilization}
-        onSelect={ipam.selectSupernet}
-        onDelete={ipam.deleteSupernet}
-        onCreateClick={() => ipam.openModal("create-supernet")}
+        onSelect={ipam.selectCidrBlock}
+        onDelete={ipam.deleteCidrBlock}
+        onCreateClick={() => ipam.openModal("create-cidr-block")}
       />
 
       <AllocationTable
         allocations={ipam.allocations}
-        supernets={ipam.supernets}
+        cidr_blocks={ipam.cidr_blocks}
         snMap={ipam.snMap}
         filters={ipam.filters}
         onFiltersChange={ipam.setFilters}
@@ -68,7 +68,7 @@ function IpamDashboard() {
       />
 
       {/* Free blocks + Audit side by side */}
-      {ipam.filters.supernetId && (
+      {ipam.filters.cidr_blockId && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           <FreeBlocksList blocks={ipam.freeBlocks} />
           <AuditLog entries={ipam.audit} />
@@ -76,23 +76,23 @@ function IpamDashboard() {
       )}
 
       {/* Modals */}
-      <CreateSupernetModal
-        open={ipam.activeModal === "create-supernet"}
+      <CreateCidrBlockModal
+        open={ipam.activeModal === "create-cidr-block"}
         onClose={ipam.closeModal}
-        onSubmit={ipam.createSupernet}
+        onSubmit={ipam.createCidrBlock}
       />
       <AllocateSpecificModal
         open={ipam.activeModal === "allocate-specific"}
         onClose={ipam.closeModal}
-        supernets={ipam.supernets}
-        defaultSupernetId={ipam.filters.supernetId || undefined}
+        cidr_blocks={ipam.cidr_blocks}
+        defaultCidrBlockId={ipam.filters.cidr_blockId || undefined}
         onSubmit={ipam.allocateSpecific}
       />
       <AutoAllocateModal
         open={ipam.activeModal === "auto-allocate"}
         onClose={ipam.closeModal}
-        supernets={ipam.supernets}
-        defaultSupernetId={ipam.filters.supernetId || undefined}
+        cidr_blocks={ipam.cidr_blocks}
+        defaultCidrBlockId={ipam.filters.cidr_blockId || undefined}
         onSubmit={ipam.autoAllocate}
       />
       <AllocationDetailModal

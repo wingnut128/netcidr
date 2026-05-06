@@ -1,10 +1,10 @@
 import { Panel } from "../ui/Panel";
-import type { Supernet } from "../../types";
+import type { CidrBlock } from "../../types";
 import { fmtNum } from "../../lib/format";
 import { TABLE_HEADER } from "../../lib/styles";
 
-interface SupernetTableProps {
-  supernets: Supernet[];
+interface CidrBlockTableProps {
+  cidr_blocks: CidrBlock[];
   utilization: Record<string, { pct: number; count: number }>;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
@@ -17,16 +17,16 @@ function utilColor(pct: number): string {
   return "bg-green";
 }
 
-export function SupernetTable({
-  supernets,
+export function CidrBlockTable({
+  cidr_blocks,
   utilization,
   onSelect,
   onDelete,
   onCreateClick,
-}: SupernetTableProps) {
+}: CidrBlockTableProps) {
   return (
     <Panel
-      title="Supernets"
+      title="CIDR Blocks"
       collapsible
       actions={
         <button
@@ -39,7 +39,7 @@ export function SupernetTable({
     >
       {/* Mobile: stacked cards */}
       <div className="md:hidden flex flex-col gap-3">
-        {supernets.map((sn) => {
+        {cidr_blocks.map((sn) => {
           const u = utilization[sn.id];
           const pct = u?.pct ?? 0;
           return (
@@ -85,9 +85,9 @@ export function SupernetTable({
             </div>
           );
         })}
-        {supernets.length === 0 && (
+        {cidr_blocks.length === 0 && (
           <p className="text-center text-text-muted py-6 text-sm">
-            No supernets. Create one to get started.
+            No CIDR blocks. Create one to get started.
           </p>
         )}
       </div>
@@ -107,7 +107,7 @@ export function SupernetTable({
             </tr>
           </thead>
           <tbody>
-            {supernets.map((sn) => {
+            {cidr_blocks.map((sn) => {
               const u = utilization[sn.id];
               const pct = u?.pct ?? 0;
               return (
@@ -156,13 +156,13 @@ export function SupernetTable({
                 </tr>
               );
             })}
-            {supernets.length === 0 && (
+            {cidr_blocks.length === 0 && (
               <tr>
                 <td
                   colSpan={6}
                   className="px-3 py-6 text-center text-text-muted border-b border-border"
                 >
-                  No supernets. Create one to get started.
+                  No CIDR blocks. Create one to get started.
                 </td>
               </tr>
             )}

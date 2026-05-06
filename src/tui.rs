@@ -386,8 +386,8 @@ fn render_split_results(f: &mut Frame, app: &AppState, area: Rect) {
         let result_text = match count_subnets(&app.cidr_input, prefix) {
             Ok(summary) => {
                 format!(
-                    "Supernet: {}\nNew Prefix: /{}\nAvailable Subnets: {}",
-                    summary.supernet, summary.new_prefix, summary.available_subnets
+                    "CidrBlock: {}\nNew Prefix: /{}\nAvailable Subnets: {}",
+                    summary.cidr_block, summary.new_prefix, summary.available_subnets
                 )
             }
             Err(e) => format!("Error: {}", e),
@@ -431,7 +431,7 @@ fn render_split_results(f: &mut Frame, app: &AppState, area: Rect) {
         match generate_ipv6_subnets(&app.cidr_input, prefix, count) {
             Ok(result) => {
                 let mut lines = vec![
-                    format!("Supernet: {}", result.supernet.network),
+                    format!("CidrBlock: {}", result.cidr_block.network),
                     format!("New Prefix: /{}", result.new_prefix),
                     format!("Generated: {} subnets", result.requested_count),
                     String::from(""),
@@ -477,7 +477,7 @@ fn render_split_results(f: &mut Frame, app: &AppState, area: Rect) {
         match generate_ipv4_subnets(&app.cidr_input, prefix, count) {
             Ok(result) => {
                 let mut lines = vec![
-                    format!("Supernet: {}", result.supernet.network),
+                    format!("CidrBlock: {}", result.cidr_block.network),
                     format!("New Prefix: /{}", result.new_prefix),
                     format!("Generated: {} subnets", result.requested_count),
                     String::from(""),
