@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Multi-tenant IPAM isolation.** Every supernet, allocation, audit entry, and idempotency record is now scoped to the authenticated user's email. The `IpamStore` trait and `IpamOps` struct expose `tenant_id: &str` as an explicit parameter on every method, making per-tenant filtering unforgettable at the type level. HTTP middleware extracts the tenant from the OIDC principal's verified email and exposes it via Axum extensions; cross-tenant access returns 404 (not 403) to prevent existence enumeration. CLI invocations and stdio MCP both pass the literal `"local"`. Schema is destructive: migration `006` drops and recreates `supernets`, `allocations`, `audit_log`, `idempotency_keys`, and `allocation_tags` with `tenant_id` columns, `UNIQUE(tenant_id, cidr)` on supernets, composite tenant indexes, and triggers enforcing the cross-table invariant `allocations.tenant_id == supernets.tenant_id`. Five-test isolation matrix in `tests/ipam_isolation.rs` proves the guarantee end-to-end (supernets, same-CIDR-different-tenant, allocations, audit log, idempotency keys). Sub-project 1 of 3 toward a remote MCP endpoint.
+- **Multi-tenant IPAM isolation.** Every CIDR block, allocation, audit entry, and idempotency record is now scoped to the authenticated user's email. The `IpamStore` trait and `IpamOps` struct expose `tenant_id: &str` as an explicit parameter on every method, making per-tenant filtering unforgettable at the type level. HTTP middleware extracts the tenant from the OIDC principal's verified email and exposes it via Axum extensions; cross-tenant access returns 404 (not 403) to prevent existence enumeration. CLI invocations and stdio MCP both pass the literal `"local"`. Schema is destructive: migration `006` drops and recreates `cidr_blocks`, `allocations`, `audit_log`, `idempotency_keys`, and `allocation_tags` with `tenant_id` columns, `UNIQUE(tenant_id, cidr)` on cidr_blocks, composite tenant indexes, and triggers enforcing the cross-table invariant `allocations.tenant_id == cidr_blocks.tenant_id`. Five-test isolation matrix in `tests/ipam_isolation.rs` proves the guarantee end-to-end (cidr_blocks, same-CIDR-different-tenant, allocations, audit log, idempotency keys). Sub-project 1 of 3 toward a remote MCP endpoint.
 
 ## [0.23.0] - 2026-04-30
 
@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Release binary now ships with `mcp`, `tui`, and `ipam-postgres` features enabled.** The release workflow's `cargo build --release` step previously compiled with default features only (`swagger`, `dashboard`), so published binaries silently lacked `netcidr mcp-serve`, the terminal UI, and the Postgres IPAM backend. The `lambda` bin remains a separate `[[bin]]` target and is not built here, so we enumerate features explicitly rather than using `--all-features`. Also corrects the `Dispatch netcidr-deploy` step's comment to name the actually-required PAT scope (Contents: read+write, not Actions). Removes the obsolete `cloudbuild.yaml` left over from the GCP build pipeline.
 
-- **Visualizer: block grid + Hilbert curve, IPv6-aware.** The IPAM Visualizer's address-space view is now a cell grid with a Block ⇄ Hilbert toggle (persisted in `localStorage`). Replaces the prior single-color line strip, which made small allocations invisible at typical container widths and only handled IPv4. Cell granularity auto-snaps so total cells stay ≤ 1024; IPv6 supernets coarsen to /64 (or larger if the supernet is bigger than /54). Status colors carry over (active/reserved/released/free), and clicking a cell still opens the allocation detail. `dashboard/src/lib/cidr.ts` is rewritten on `BigInt` so the same code paths handle v4 and v6 — `start`/`end`/`size` are now `bigint` instead of `number`. WhatIfPanel still grades candidates as fits/conflict/outside; its map-overlay re-paint on top of the new grids is tracked as a follow-up.
+- **Visualizer: block grid + Hilbert curve, IPv6-aware.** The IPAM Visualizer's address-space view is now a cell grid with a Block ⇄ Hilbert toggle (persisted in `localStorage`). Replaces the prior single-color line strip, which made small allocations invisible at typical container widths and only handled IPv4. Cell granularity auto-snaps so total cells stay ≤ 1024; IPv6 cidr_blocks coarsen to /64 (or larger if the cidr_block is bigger than /54). Status colors carry over (active/reserved/released/free), and clicking a cell still opens the allocation detail. `dashboard/src/lib/cidr.ts` is rewritten on `BigInt` so the same code paths handle v4 and v6 — `start`/`end`/`size` are now `bigint` instead of `number`. WhatIfPanel still grades candidates as fits/conflict/outside; its map-overlay re-paint on top of the new grids is tracked as a follow-up.
 
 ### Fixed
 
@@ -29,9 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **Idempotency keys for IPAM allocation endpoints.** Clients can now send `Idempotency-Key: <opaque>` on `POST /ipam/supernets/{id}/allocate`, `POST /ipam/supernets/{id}/allocate-specific`, and `POST /ipam/batch/allocate` to make retries safe. Same key + same body returns the cached response (with `Idempotent-Replay: true`); same key + different body returns `409`. Records are scoped per-endpoint + per-supernet, persist for 24h, and only request bodies up to 64 KiB are cached (oversize bodies execute uncached). New `idempotency_keys` table (SQLite + Postgres migration `005`), `IpamStore::idempotency_{get,put,reap_expired}` trait methods, helpers in `src/ipam/idempotency.rs`, and an `idempotent_post` wrapper in `src/ipam_api.rs` that the three handlers funnel through. Six HTTP integration tests in `tests/ipam_idempotency.rs` cover replay, payload-conflict, no-key passthrough, and per-endpoint/per-supernet scoping. Closes #104.
+- **Idempotency keys for IPAM allocation endpoints.** Clients can now send `Idempotency-Key: <opaque>` on `POST /ipam/cidr-blocks/{id}/allocate`, `POST /ipam/cidr-blocks/{id}/allocate-specific`, and `POST /ipam/batch/allocate` to make retries safe. Same key + same body returns the cached response (with `Idempotent-Replay: true`); same key + different body returns `409`. Records are scoped per-endpoint + per-cidr_block, persist for 24h, and only request bodies up to 64 KiB are cached (oversize bodies execute uncached). New `idempotency_keys` table (SQLite + Postgres migration `005`), `IpamStore::idempotency_{get,put,reap_expired}` trait methods, helpers in `src/ipam/idempotency.rs`, and an `idempotent_post` wrapper in `src/ipam_api.rs` that the three handlers funnel through. Six HTTP integration tests in `tests/ipam_idempotency.rs` cover replay, payload-conflict, no-key passthrough, and per-endpoint/per-cidr_block scoping. Closes #104.
 - **CSV output hardening.** Cells beginning with `=`, `+`, `-`, `@`, tab, or carriage return are now prefixed with a single quote per OWASP CSV-injection guidance — preserves the visible value but prevents Excel/Sheets/LibreOffice from auto-evaluating it. CSV HTTP responses also carry `Content-Type: text/csv; charset=utf-8` and `Content-Disposition: attachment; filename="netcidr.csv"`, so a browser saves the file rather than rendering it inline. Combined with the existing global `X-Content-Type-Options: nosniff` and the per-field length limits in `validation.rs`, this closes the spreadsheet/browser-origin injection surface for the `csv` output format. Closes #106.
-- IPAM allocations are now serialized per-supernet so the "check overlap → insert" sequence is atomic within a single process. `IpamOps` carries a `HashMap<supernet_id, Arc<tokio::sync::Mutex<()>>>` and acquires the relevant lock at the top of `allocate_specific`, `allocate_auto`, `release_allocation`, and `update_allocation`. Two new tests in `tests/ipam_concurrency.rs` prove the invariant: 8 racing tasks for the same CIDR yield exactly 1 winner and 7 `AllocationConflict` errors; 16 racing auto-allocations on a /22 yield exactly 4 non-overlapping /24s and 12 `NoFreeSpace` errors. Cross-process callers (multiple netcidr instances against a shared database) still need DB-level locking — tracked separately. Closes #105.
+- IPAM allocations are now serialized per-cidr_block so the "check overlap → insert" sequence is atomic within a single process. `IpamOps` carries a `HashMap<cidr_block_id, Arc<tokio::sync::Mutex<()>>>` and acquires the relevant lock at the top of `allocate_specific`, `allocate_auto`, `release_allocation`, and `update_allocation`. Two new tests in `tests/ipam_concurrency.rs` prove the invariant: 8 racing tasks for the same CIDR yield exactly 1 winner and 7 `AllocationConflict` errors; 16 racing auto-allocations on a /22 yield exactly 4 non-overlapping /24s and 12 `NoFreeSpace` errors. Cross-process callers (multiple netcidr instances against a shared database) still need DB-level locking — tracked separately. Closes #105.
 - IPAM audit log now records caller identity on every mutation: `caller_sub` (stable subject — Google `sub` for OIDC, `"bearer-token"` for static-bearer mode), `caller_email` (verified email when available), `source_ip` (HTTP peer IP), and `request_id` (UUID v4 generated per request). New `audit_context` module threads these via tokio task-locals so existing `IpamOps` mutation methods don't change signature; CLI invocations leave the context unset and the new columns stay `NULL`. SQLite + Postgres migration `004` adds the columns and indexes on `request_id` and `caller_sub`. Closes #103.
 - New `.github/workflows/cargo-deny.yml` runs `cargo deny check advisories|bans|licenses|sources` on PRs that touch `Cargo.{toml,lock}` or `deny.toml`, on push to `main`, and weekly on a cron. `deny.toml` allowlists the project's actual transitive license set and ignores two pre-existing advisories (RUSTSEC-2023-0071 RSA Marvin Attack, RUSTSEC-2026-0097 rand 0.8 unsoundness) — neither is exploitable in this codebase (we never use RSA private-key ops; we don't define a custom logger that calls `rand::rng()`). Both clear automatically when `jsonwebtoken` upgrades past `rand 0.8` / a patched `rsa` ships.
 - New `.github/workflows/gitleaks.yml` scans every PR, push to main, and weekly cron for committed secrets using `gitleaks-action@v2`.
@@ -55,12 +55,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Shared `INPUT` and `BTN_PRIMARY` style tokens get `text-base md:text-sm` and `min-h-[44px] md:min-h-0` respectively, so every form across the dashboard inherits iOS-friendly sizing without per-component touch-ups. Closes #96.
 - **Dashboard mobile support, phase 1.** Layout, navigation, tables, and touch targets now work on narrow viewports (phase 2 — stat grids, BitGrid, typography, modals — tracked in #96):
   - Sidebar becomes a slide-in drawer on `< md` with a hamburger button in a new mobile top bar; backdrop dismiss + auto-close on route change. Stays as a fixed sidebar on `md:`+ (`MainLayout.tsx`, `Sidebar.tsx`).
-  - `AllocationTable` and `SupernetTable` render as stacked cards on `< md` (one card per row, key fields in a `<dl>`) and as the existing tables on `md:`+. Filter rows are now `flex-col sm:flex-row` so inputs stack on narrow screens; `min-w-[…]` constraints are scoped to `sm:`+.
+  - `AllocationTable` and `CidrBlockTable` render as stacked cards on `< md` (one card per row, key fields in a `<dl>`) and as the existing tables on `md:`+. Filter rows are now `flex-col sm:flex-row` so inputs stack on narrow screens; `min-w-[…]` constraints are scoped to `sm:`+.
   - Primary action buttons across Calculator, Splitter, Contains, Summarize, FromRange, IpamSearch, and the IPAM tables now have `min-h-[44px]` on mobile (iOS minimum tap target) and stay compact on `md:`+.
   - All form inputs use `text-base md:text-sm` so iOS doesn't zoom on focus.
 - Dashboard audit pass against the `netcidr-design` skill. All mechanical drift fixes:
   - `font-bold` swapped to `font-medium` (form labels, secondary headings) or `font-semibold` (table headers) to match the skill's typography hierarchy. ~22 occurrences across `Splitter`, `FromRange`, `Contains`, `Summarize`, `IpamSearch`, `Modal`, and `AllocationDetailModal`.
-  - Modal titles converted from Title Case to sentence case: "Create supernet", "Allocate specific block", "Auto-allocate", "Allocation detail".
+  - Modal titles converted from Title Case to sentence case: "Create CIDR block", "Allocate specific block", "Auto-allocate", "Allocation detail".
   - Panel titles converted: "Free blocks", "Audit log", "Bit visualization".
   - SignInCard's `shadow-sm` replaced with the canonical hairline `shadow-[0_1px_2px_rgba(15,23,42,0.04)]` — the only ambient shadow the system uses.
   - Modal inline error badges normalized to the system's tinted-background recipe (`border border-red/40 bg-red/10 text-red rounded-md`) to match StatusBadge and the Calculator scope pill.
@@ -86,7 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- IPAM-aware **Allocation Map** (replaces the standalone Subnet Visualizer): pick a supernet, render its full address space as a horizontal strip with each allocation colored by status (active / reserved / released / free). Auto multi-row layout for larger supernets so even small allocations stay visible. Hover for details, click an allocation to drill into its detail modal.
+- IPAM-aware **Allocation Map** (replaces the standalone Subnet Visualizer): pick a cidr_block, render its full address space as a horizontal strip with each allocation colored by status (active / reserved / released / free). Auto multi-row layout for larger cidr_blocks so even small allocations stay visible. Hover for details, click an allocation to drill into its detail modal.
 - **What-if overlay** on the Allocation Map: paste candidate CIDRs in the new "What if" panel and they render as outlined overlays — cyan dashed = fits, red dashed = conflicts, plus a per-CIDR verdict list (Fits / Conflict / Outside / Invalid). Useful for sanity-checking a proposed allocation before committing it.
 - Dashboard sidebar shows an "API Docs ↗" link to `/swagger-ui` when the server reports the `swagger` feature enabled (via `/features`).
 - `oidc_allowed_emails` config field and `NETCIDR_OIDC_ALLOWED_EMAILS` env var (comma-separated) — when set, only verified Google identities whose email matches the allowlist may call `/ipam/*`.
@@ -230,10 +230,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - MCP batch operations for reduced token usage in bulk workflows:
-  - `ipam_batch_allocate` — allocate multiple CIDR blocks across supernets in a single call (up to 100 items), returns compact output with per-item error handling
-  - `ipam_batch_release` — release allocations by IDs, resource_id, or supernet_id in one call
-  - `ipam_allocation_summary` — grouped overview of allocations across supernets organized by resource ID, with utilization stats
-- Compact allocation/supernet models (`CompactAllocation`, `CompactSupernet`) that omit null fields, timestamps, and tags to minimize response size
+  - `ipam_batch_allocate` — allocate multiple CIDR blocks across CIDR blocks in a single call (up to 100 items), returns compact output with per-item error handling
+  - `ipam_batch_release` — release allocations by IDs, resource_id, or cidr_block_id in one call
+  - `ipam_allocation_summary` — grouped overview of allocations across CIDR blocks organized by resource ID, with utilization stats
+- Compact allocation/cidr_block models (`CompactAllocation`, `CompactCidrBlock`) that omit null fields, timestamps, and tags to minimize response size
 - Batch allocate returns ~85% fewer tokens vs individual calls; batch release returns ~96% fewer tokens
 
 ## [0.16.1] - 2026-03-27
@@ -276,7 +276,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Dashboard: IPAM modal errors (e.g., allocation overlap conflicts) now display inline instead of being hidden behind the modal overlay
-- Dashboard: IPAM sections (Supernets, Allocations, Search, Free Blocks, Audit Log) are now collapsible via header toggle
+- Dashboard: IPAM sections (CidrBlocks, Allocations, Search, Free Blocks, Audit Log) are now collapsible via header toggle
 
 ## [0.14.0] - 2026-03-20
 
@@ -288,7 +288,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - React + Vite + TypeScript dashboard scaffolding (`dashboard/` directory) — replaces Alpine.js single-file dashboard
 - Dashboard: Calculator page with bit grid visualization, IPv4/IPv6 results, hextet display
 - Dashboard: Splitter, Contains, Summarize, and FromRange pages
-- Dashboard: Full IPAM page — supernet management, allocation CRUD with filters, search, free blocks, audit log, 4 modals (create supernet, allocate specific, auto-allocate, allocation detail with tags)
+- Dashboard: Full IPAM page — cidr_block management, allocation CRUD with filters, search, free blocks, audit log, 4 modals (create cidr_block, allocate specific, auto-allocate, allocation detail with tags)
 - Dashboard: Visualizer page with address space grid and subnet split distribution chart (recharts)
 
 ### Removed
@@ -297,7 +297,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Legacy dashboard route (`/dashboard/legacy`)
 - Legacy dashboard remains accessible at `/dashboard/legacy` during transition
 - `make dashboard` and `make dashboard-dev` targets for frontend build and development
-- IP version guard: cross-family allocations rejected (e.g., IPv4 CIDR in IPv6 supernet)
+- IP version guard: cross-family allocations rejected (e.g., IPv4 CIDR in IPv6 cidr_block)
 
 ### Fixed
 
@@ -306,7 +306,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - IPAM: reactivating a released allocation via status update now checks for overlap with other active/reserved allocations
 - Prefix length validation in auto-allocate (rejects prefix > 32 for IPv4, > 128 for IPv6)
 - IPv6 unit tests for range arithmetic: `parse_range`, `ranges_overlap`, `range_contains`, `find_gaps`, `find_free_blocks`, `range_to_cidrs`, `split_cidr_to_prefix`
-- IPv6 IPAM integration tests: supernet CRUD, allocate specific, auto-allocate, overlap rejection, utilization, free blocks, find-by-IP, release/re-allocate
+- IPv6 IPAM integration tests: cidr_block CRUD, allocate specific, auto-allocate, overlap rejection, utilization, free blocks, find-by-IP, release/re-allocate
 - IPv6 CLI integration test: end-to-end IPAM workflow via subprocess
 
 ### Changed
@@ -323,7 +323,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Schema migration v3: `total_hosts_text` TEXT column on `supernets` and `allocations` tables, enabling correct storage of IPv6 host counts that exceed i64 range (e.g., 2^96 for a /32 supernet)
+- Schema migration v3: `total_hosts_text` TEXT column on `cidr_blocks` and `allocations` tables, enabling correct storage of IPv6 host counts that exceed i64 range (e.g., 2^96 for a /32 cidr_block)
 
 ### Fixed
 
@@ -339,7 +339,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- JSON export/import: `ipam dump` exports all supernets and allocations to JSON, `ipam load` imports into an empty store
+- JSON export/import: `ipam dump` exports all cidr_blocks and allocations to JSON, `ipam load` imports into an empty store
 - Reservation TTL/expiry: `--ttl <seconds>` flag on `ipam allocate` and `ipam auto-allocate`, `expires_at` column (schema migration v2), lazy expiry via `reap_expired()`
 - Auto-merge CI workflow for PRs from repo owner and Dependabot (squash merge)
 - Utilization report now includes per-status breakdown (active/reserved/released addresses and counts)
@@ -369,7 +369,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - IPAM persistence layer with SQLite backend for tracking IP address allocations
   - `IpamStore` async trait defining a pluggable storage backend interface
   - `SqliteStore` implementation with r2d2 connection pooling and WAL mode
-  - Supernet management (create, list, get, delete with active-allocation guard)
+  - CidrBlock management (create, list, get, delete with active-allocation guard)
   - Allocation lifecycle (create, auto-allocate, update, release with conflict detection)
   - Free space discovery and utilization reporting
   - IP address and resource ID reverse lookup
@@ -378,7 +378,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - DB path resolution: CLI flag > env var > config file > XDG default
   - Embedded schema migrations with version tracking
 - IPAM CLI integration via `netcidr ipam` subcommand with full command suite:
-  - `ipam supernet create/list/get/delete` — manage top-level address spaces
+  - `ipam cidr_block create/list/get/delete` — manage top-level address spaces
   - `ipam allocate` / `ipam auto-allocate` — specific or next-available allocation
   - `ipam allocation get/list/update` — query and update allocations
   - `ipam release` — mark allocations as released
@@ -386,13 +386,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `ipam find-ip` / `ipam find-resource` — reverse lookup
   - `ipam audit` — query the immutable audit log
 - IPAM REST API endpoints via `netcidr serve --ipam-enabled`:
-  - `POST /ipam/supernets` — create supernet; `GET` — list all
-  - `GET /ipam/supernets/{id}` — get supernet; `DELETE` — delete (guarded by active allocations)
-  - `POST /ipam/supernets/{id}/allocate` — auto-allocate next-available blocks
-  - `POST /ipam/supernets/{id}/allocate-specific` — allocate a specific CIDR
-  - `GET /ipam/supernets/{id}/allocations` — list allocations with filters
-  - `GET /ipam/supernets/{id}/free` — free block discovery
-  - `GET /ipam/supernets/{id}/utilization` — utilization report
+  - `POST /ipam/cidr-blocks` — create cidr_block; `GET` — list all
+  - `GET /ipam/cidr-blocks/{id}` — get cidr_block; `DELETE` — delete (guarded by active allocations)
+  - `POST /ipam/cidr-blocks/{id}/allocate` — auto-allocate next-available blocks
+  - `POST /ipam/cidr-blocks/{id}/allocate-specific` — allocate a specific CIDR
+  - `GET /ipam/cidr-blocks/{id}/allocations` — list allocations with filters
+  - `GET /ipam/cidr-blocks/{id}/free` — free block discovery
+  - `GET /ipam/cidr-blocks/{id}/utilization` — utilization report
   - `GET /ipam/allocations/{id}` — get allocation; `PATCH` — update metadata
   - `POST /ipam/allocations/{id}/release` — release allocation
   - `PUT /ipam/allocations/{id}/tags` — set tags
@@ -407,7 +407,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Uses `rmcp` (official Rust SDK) with `#[tool]` macros for zero-overhead tool definitions
   - Calls library functions directly instead of shelling out to the binary
   - 5 calculator tools: `subnet_calc`, `subnet_split`, `contains_check`, `from_range`, `summarize`
-  - 10 IPAM tools: `ipam_create_supernet`, `ipam_list_supernets`, `ipam_allocate`, `ipam_allocate_specific`, `ipam_release`, `ipam_list_allocations`, `ipam_free_blocks`, `ipam_utilization`, `ipam_find_ip`, `ipam_find_resource`
+  - 10 IPAM tools: `ipam_create_cidr_block`, `ipam_list_cidr_blocks`, `ipam_allocate`, `ipam_allocate_specific`, `ipam_release`, `ipam_list_allocations`, `ipam_free_blocks`, `ipam_utilization`, `ipam_find_ip`, `ipam_find_resource`
   - IPAM tools enabled via `netcidr mcp-serve --ipam-db <path>`
   - Runs via `netcidr mcp-serve` subcommand over stdio transport
   - Enabled with `--features mcp` cargo feature flag
@@ -598,7 +598,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Out-of-memory crash when splitting large IPv6 supernets (e.g., /64 → /96 = 4.3B subnets)
+- Out-of-memory crash when splitting large IPv6 cidr_blocks (e.g., /64 → /96 = 4.3B subnets)
 
 ## [0.4.1] - 2026-02-09
 
@@ -773,7 +773,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - IPv4 network class detection (A, B, C, D, E) and private address identification
 - IPv6 prefix calculation with full hextet expansion
 - IPv6 address type detection (global unicast, link-local, ULA, multicast, loopback)
-- Subnet generator to split supernets into smaller subnets
+- Subnet generator to split cidr_blocks into smaller subnets
 - CLI interface with `v4`, `v6`, `split`, and `serve` commands
 - JSON output format (default)
 - Plain text output format (`--format text`)

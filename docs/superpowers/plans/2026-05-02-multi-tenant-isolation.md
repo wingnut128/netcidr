@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add per-OIDC-identity isolation of IPAM data (supernets, allocations, audit log, idempotency keys), with `tenant_id` threaded explicitly through the storage and operations layers.
+**Goal:** Add per-OIDC-identity isolation of IPAM data (cidr_blocks, allocations, audit log, idempotency keys), with `tenant_id` threaded explicitly through the storage and operations layers.
 
 **Architecture:** Destructive schema migration adds a `tenant_id TEXT NOT NULL` column to four tables. The `IpamStore` trait and `IpamOps` struct grow an explicit `tenant_id: &str` parameter on every tenant-scoped method. HTTP middleware extracts `tenant_id` from the authenticated principal's email and exposes it via Axum request extensions; handlers pass it explicitly into ops. CLI passes the literal `"local"`. Cross-tenant reads return `NotFound` (never `Forbidden`) to avoid existence leakage.
 
@@ -15,7 +15,7 @@
 ## File Map
 
 **Modified:**
-- `src/ipam/models.rs` — add `tenant_id` field to `Supernet`, `Allocation`, `AuditEntry`, `IdempotencyRecord`
+- `src/ipam/models.rs` — add `tenant_id` field to `CidrBlock`, `Allocation`, `AuditEntry`, `IdempotencyRecord`
 - `src/ipam/store.rs` — trait signatures gain `tenant_id: &str` parameter
 - `src/ipam/sqlite/migrations.rs` — add migration 006 (drop + recreate four tables with new schema)
 - `src/ipam/sqlite/mod.rs` — every query gains `WHERE tenant_id = ?` filter or `tenant_id` insert column
@@ -33,7 +33,7 @@
 - `tests/ipam_isolation.rs` — HTTP-level isolation matrix (two mock OIDC identities, every cross-tenant access path returns 404)
 
 **Test fixture sweep (mechanical):**
-- `tests/ipam_store_contract.rs`, `tests/ipam_api_tests.rs`, `tests/ipam_concurrency.rs`, `tests/ipam_idempotency.rs`, `tests/postgres_integration.rs`, `tests/integration_tests.rs` — every literal `Supernet { ... }` / `Allocation { ... }` / `IdempotencyRecord { ... }` and every `IpamOps::*` call needs the new field/parameter populated.
+- `tests/ipam_store_contract.rs`, `tests/ipam_api_tests.rs`, `tests/ipam_concurrency.rs`, `tests/ipam_idempotency.rs`, `tests/postgres_integration.rs`, `tests/integration_tests.rs` — every literal `CidrBlock { ... }` / `Allocation { ... }` / `IdempotencyRecord { ... }` and every `IpamOps::*` call needs the new field/parameter populated.
 
 ---
 
@@ -46,12 +46,12 @@
 
 Adds the field that the rest of the plan reads. No serde-skip needed because tenancy is enforced server-side and the dashboard already only sees its own data; if we ever want to suppress the field in JSON we can add `#[serde(skip_serializing)]` later.
 
-- [x] **Step 1: Add `tenant_id` to `Supernet`**
+- [x] **Step 1: Add `tenant_id` to `CidrBlock`**
 
-In `src/ipam/models.rs`, after `pub id: String,` in the `Supernet` struct (around line 10):
+In `src/ipam/models.rs`, after `pub id: String,` in the `CidrBlock` struct (around line 10):
 
 ```rust
-pub struct Supernet {
+pub struct CidrBlock {
     pub id: String,
     pub tenant_id: String,
     pub cidr: String,
@@ -67,7 +67,7 @@ In the `Allocation` struct (around line 78):
 pub struct Allocation {
     pub id: String,
     pub tenant_id: String,
-    pub supernet_id: String,
+    pub cidr_block_id: String,
     // ... rest unchanged
 }
 ```
@@ -128,7 +128,7 @@ update all call sites."
 **Files:**
 - Modify: `src/ipam/sqlite/migrations.rs`
 
-The migration drops `supernets`, `allocations`, `audit_log`, `idempotency_keys` and recreates them with `tenant_id`. `allocation_tags` references `allocations(id)` so we drop and recreate it too (no new column — inherits via FK).
+The migration drops `cidr_blocks`, `allocations`, `audit_log`, `idempotency_keys` and recreates them with `tenant_id`. `allocation_tags` references `allocations(id)` so we drop and recreate it too (no new column — inherits via FK).
 
 - [x] **Step 1: Read existing migration array structure**
 
@@ -149,11 +149,11 @@ Migration {
     sql: r#"
         DROP TABLE IF EXISTS allocation_tags;
         DROP TABLE IF EXISTS allocations;
-        DROP TABLE IF EXISTS supernets;
+        DROP TABLE IF EXISTS cidr_blocks;
         DROP TABLE IF EXISTS audit_log;
         DROP TABLE IF EXISTS idempotency_keys;
 
-        CREATE TABLE supernets (
+        CREATE TABLE cidr_blocks (
             id                TEXT PRIMARY KEY,
             tenant_id         TEXT NOT NULL,
             cidr              TEXT NOT NULL,
@@ -168,12 +168,12 @@ Migration {
             updated_at        TEXT NOT NULL,
             UNIQUE (tenant_id, cidr)
         );
-        CREATE INDEX idx_supernets_tenant ON supernets(tenant_id);
+        CREATE INDEX idx_cidr_blocks_tenant ON cidr_blocks(tenant_id);
 
         CREATE TABLE allocations (
             id                    TEXT PRIMARY KEY,
             tenant_id             TEXT NOT NULL,
-            supernet_id           TEXT NOT NULL REFERENCES supernets(id),
+            cidr_block_id           TEXT NOT NULL REFERENCES cidr_blocks(id),
             cidr                  TEXT NOT NULL,
             network_address       TEXT NOT NULL,
             broadcast_address     TEXT NOT NULL,
@@ -193,25 +193,25 @@ Migration {
             expires_at            TEXT
         );
         CREATE INDEX idx_allocations_tenant     ON allocations(tenant_id);
-        CREATE INDEX idx_allocations_tenant_sn  ON allocations(tenant_id, supernet_id);
-        CREATE INDEX idx_allocations_supernet   ON allocations(supernet_id);
+        CREATE INDEX idx_allocations_tenant_sn  ON allocations(tenant_id, cidr_block_id);
+        CREATE INDEX idx_allocations_cidr_block   ON allocations(cidr_block_id);
         CREATE INDEX idx_allocations_status     ON allocations(status);
         CREATE INDEX idx_allocations_cidr       ON allocations(cidr);
 
-        -- Cross-table invariant: allocations.tenant_id must match the parent supernet's.
+        -- Cross-table invariant: allocations.tenant_id must match the parent cidr_block's.
         CREATE TRIGGER trg_allocations_tenant_match_insert
             BEFORE INSERT ON allocations
             FOR EACH ROW
-            WHEN NEW.tenant_id != (SELECT tenant_id FROM supernets WHERE id = NEW.supernet_id)
+            WHEN NEW.tenant_id != (SELECT tenant_id FROM cidr_blocks WHERE id = NEW.cidr_block_id)
             BEGIN
-                SELECT RAISE(ABORT, 'allocation tenant_id must match parent supernet tenant_id');
+                SELECT RAISE(ABORT, 'allocation tenant_id must match parent cidr_block tenant_id');
             END;
         CREATE TRIGGER trg_allocations_tenant_match_update
-            BEFORE UPDATE OF tenant_id, supernet_id ON allocations
+            BEFORE UPDATE OF tenant_id, cidr_block_id ON allocations
             FOR EACH ROW
-            WHEN NEW.tenant_id != (SELECT tenant_id FROM supernets WHERE id = NEW.supernet_id)
+            WHEN NEW.tenant_id != (SELECT tenant_id FROM cidr_blocks WHERE id = NEW.cidr_block_id)
             BEGIN
-                SELECT RAISE(ABORT, 'allocation tenant_id must match parent supernet tenant_id');
+                SELECT RAISE(ABORT, 'allocation tenant_id must match parent cidr_block tenant_id');
             END;
 
         CREATE TABLE allocation_tags (
@@ -267,9 +267,9 @@ async fn allocation_with_mismatched_tenant_id_is_rejected_by_trigger() {
     let store = SqliteStore::in_memory().await.unwrap();
     store.migrate().await.unwrap();
 
-    // Insert a supernet for tenant "a@x".
+    // Insert a cidr_block for tenant "a@x".
     sqlx::query(
-        r#"INSERT INTO supernets
+        r#"INSERT INTO cidr_blocks
            (id, tenant_id, cidr, network_address, broadcast_address,
             prefix_length, total_hosts, ip_version, created_at, updated_at)
            VALUES ('s1','a@x','10.0.0.0/8','10.0.0.0','10.255.255.255',
@@ -282,7 +282,7 @@ async fn allocation_with_mismatched_tenant_id_is_rejected_by_trigger() {
     // Attempt to insert allocation with mismatched tenant_id.
     let result = sqlx::query(
         r#"INSERT INTO allocations
-           (id, tenant_id, supernet_id, cidr, network_address, broadcast_address,
+           (id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address,
             prefix_length, total_hosts, status, created_at, updated_at)
            VALUES ('a1','b@x','s1','10.1.0.0/16','10.1.0.0','10.1.255.255',
                    16,'65536','active','2026-05-02T00:00:00Z','2026-05-02T00:00:00Z')"#,
@@ -292,7 +292,7 @@ async fn allocation_with_mismatched_tenant_id_is_rejected_by_trigger() {
 
     assert!(
         result.is_err(),
-        "trigger should reject allocation whose tenant_id != supernet's tenant_id"
+        "trigger should reject allocation whose tenant_id != cidr_block's tenant_id"
     );
     let err = result.unwrap_err().to_string();
     assert!(
@@ -319,10 +319,10 @@ Expected: PASS. The migration runs without errors and the trigger rejects the ba
 git add src/ipam/sqlite/migrations.rs
 git commit -m "refactor(ipam/sqlite): migration 006 — multi-tenant schema
 
-Drops and recreates supernets, allocations, audit_log, idempotency_keys,
+Drops and recreates cidr_blocks, allocations, audit_log, idempotency_keys,
 and allocation_tags. Adds tenant_id columns, UNIQUE(tenant_id, cidr) on
-supernets, composite tenant indexes, and triggers enforcing the
-cross-table invariant allocations.tenant_id == supernets.tenant_id."
+cidr_blocks, composite tenant indexes, and triggers enforcing the
+cross-table invariant allocations.tenant_id == cidr_blocks.tenant_id."
 ```
 
 ---
@@ -349,11 +349,11 @@ Migration {
     sql: r#"
         DROP TABLE IF EXISTS allocation_tags CASCADE;
         DROP TABLE IF EXISTS allocations CASCADE;
-        DROP TABLE IF EXISTS supernets CASCADE;
+        DROP TABLE IF EXISTS cidr_blocks CASCADE;
         DROP TABLE IF EXISTS audit_log CASCADE;
         DROP TABLE IF EXISTS idempotency_keys CASCADE;
 
-        CREATE TABLE supernets (
+        CREATE TABLE cidr_blocks (
             id                TEXT PRIMARY KEY,
             tenant_id         TEXT NOT NULL,
             cidr              TEXT NOT NULL,
@@ -368,12 +368,12 @@ Migration {
             updated_at        TEXT NOT NULL,
             UNIQUE (tenant_id, cidr)
         );
-        CREATE INDEX idx_supernets_tenant ON supernets(tenant_id);
+        CREATE INDEX idx_cidr_blocks_tenant ON cidr_blocks(tenant_id);
 
         CREATE TABLE allocations (
             id                    TEXT PRIMARY KEY,
             tenant_id             TEXT NOT NULL,
-            supernet_id           TEXT NOT NULL REFERENCES supernets(id),
+            cidr_block_id           TEXT NOT NULL REFERENCES cidr_blocks(id),
             cidr                  TEXT NOT NULL,
             network_address       TEXT NOT NULL,
             broadcast_address     TEXT NOT NULL,
@@ -393,8 +393,8 @@ Migration {
             expires_at            TEXT
         );
         CREATE INDEX idx_allocations_tenant    ON allocations(tenant_id);
-        CREATE INDEX idx_allocations_tenant_sn ON allocations(tenant_id, supernet_id);
-        CREATE INDEX idx_allocations_supernet  ON allocations(supernet_id);
+        CREATE INDEX idx_allocations_tenant_sn ON allocations(tenant_id, cidr_block_id);
+        CREATE INDEX idx_allocations_cidr_block  ON allocations(cidr_block_id);
         CREATE INDEX idx_allocations_status    ON allocations(status);
         CREATE INDEX idx_allocations_cidr      ON allocations(cidr);
 
@@ -402,9 +402,9 @@ Migration {
         DECLARE
             sn_tenant TEXT;
         BEGIN
-            SELECT tenant_id INTO sn_tenant FROM supernets WHERE id = NEW.supernet_id;
+            SELECT tenant_id INTO sn_tenant FROM cidr_blocks WHERE id = NEW.cidr_block_id;
             IF sn_tenant IS NULL OR sn_tenant != NEW.tenant_id THEN
-                RAISE EXCEPTION 'allocation tenant_id must match parent supernet tenant_id';
+                RAISE EXCEPTION 'allocation tenant_id must match parent cidr_block tenant_id';
             END IF;
             RETURN NEW;
         END;
@@ -414,7 +414,7 @@ Migration {
             BEFORE INSERT ON allocations
             FOR EACH ROW EXECUTE FUNCTION assert_alloc_tenant_match();
         CREATE TRIGGER trg_allocations_tenant_match_update
-            BEFORE UPDATE OF tenant_id, supernet_id ON allocations
+            BEFORE UPDATE OF tenant_id, cidr_block_id ON allocations
             FOR EACH ROW EXECUTE FUNCTION assert_alloc_tenant_match();
 
         CREATE TABLE allocation_tags (
@@ -474,7 +474,7 @@ async fn pg_allocation_with_mismatched_tenant_id_is_rejected_by_trigger() {
     store.migrate().await.unwrap();
 
     sqlx::query(
-        r#"INSERT INTO supernets
+        r#"INSERT INTO cidr_blocks
            (id, tenant_id, cidr, network_address, broadcast_address,
             prefix_length, total_hosts, ip_version, created_at, updated_at)
            VALUES ('s1','a@x','10.0.0.0/8','10.0.0.0','10.255.255.255',
@@ -486,7 +486,7 @@ async fn pg_allocation_with_mismatched_tenant_id_is_rejected_by_trigger() {
 
     let result = sqlx::query(
         r#"INSERT INTO allocations
-           (id, tenant_id, supernet_id, cidr, network_address, broadcast_address,
+           (id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address,
             prefix_length, total_hosts, status, created_at, updated_at)
            VALUES ('a1','b@x','s1','10.1.0.0/16','10.1.0.0','10.1.255.255',
                    16,'65536','active','2026-05-02T00:00:00Z','2026-05-02T00:00:00Z')"#,
@@ -508,7 +508,7 @@ git add src/ipam/postgres/migrations.rs
 git commit -m "refactor(ipam/postgres): migration 006 — multi-tenant schema
 
 Mirror the SQLite migration: drop and recreate IPAM tables with tenant_id,
-UNIQUE(tenant_id, cidr) on supernets, composite tenant indexes, and a
+UNIQUE(tenant_id, cidr) on cidr_blocks, composite tenant indexes, and a
 plpgsql function + trigger enforcing the cross-table invariant."
 ```
 
@@ -546,15 +546,15 @@ pub trait IpamStore: Send + Sync {
     async fn initialize(&self) -> Result<()>;
     async fn migrate(&self) -> Result<()>;
 
-    // --- supernets ---
-    async fn create_supernet(
+    // --- cidr_blocks ---
+    async fn create_cidr_block(
         &self,
         tenant_id: &str,
-        input: &CreateSupernet,
-    ) -> Result<Supernet>;
-    async fn get_supernet(&self, tenant_id: &str, id: &str) -> Result<Supernet>;
-    async fn list_supernets(&self, tenant_id: &str) -> Result<Vec<Supernet>>;
-    async fn delete_supernet(&self, tenant_id: &str, id: &str) -> Result<()>;
+        input: &CreateCidrBlock,
+    ) -> Result<CidrBlock>;
+    async fn get_cidr_block(&self, tenant_id: &str, id: &str) -> Result<CidrBlock>;
+    async fn list_cidr_blocks(&self, tenant_id: &str) -> Result<Vec<CidrBlock>>;
+    async fn delete_cidr_block(&self, tenant_id: &str, id: &str) -> Result<()>;
 
     // --- allocations ---
     async fn create_allocation(
@@ -579,10 +579,10 @@ pub trait IpamStore: Send + Sync {
         tenant_id: &str,
         id: &str,
     ) -> Result<Allocation>;
-    async fn find_allocations_in_supernet(
+    async fn find_allocations_in_cidr_block(
         &self,
         tenant_id: &str,
-        supernet_id: &str,
+        cidr_block_id: &str,
         statuses: &[AllocationStatus],
     ) -> Result<Vec<Allocation>>;
 
@@ -643,24 +643,24 @@ will follow in subsequent commits."
 **Files:**
 - Modify: `src/ipam/sqlite/mod.rs`
 
-Pattern: each method that took `(id)` becomes `(tenant_id, id)` and the SQL adds `WHERE tenant_id = ?`. Each insert adds `tenant_id` to the column list and `?` to the values. Show the pattern on `create_supernet` and `get_supernet`; the rest is mechanical.
+Pattern: each method that took `(id)` becomes `(tenant_id, id)` and the SQL adds `WHERE tenant_id = ?`. Each insert adds `tenant_id` to the column list and `?` to the values. Show the pattern on `create_cidr_block` and `get_cidr_block`; the rest is mechanical.
 
-- [x] **Step 1: Update `create_supernet`**
+- [x] **Step 1: Update `create_cidr_block`**
 
-Find the existing `create_supernet` impl (search for `async fn create_supernet` in the file). Replace its body with the tenant-aware version:
+Find the existing `create_cidr_block` impl (search for `async fn create_cidr_block` in the file). Replace its body with the tenant-aware version:
 
 ```rust
-async fn create_supernet(
+async fn create_cidr_block(
     &self,
     tenant_id: &str,
-    input: &CreateSupernet,
-) -> Result<Supernet> {
+    input: &CreateCidrBlock,
+) -> Result<CidrBlock> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     let parsed = parse_cidr(&input.cidr)?;
 
     sqlx::query(
-        r#"INSERT INTO supernets
+        r#"INSERT INTO cidr_blocks
            (id, tenant_id, cidr, network_address, broadcast_address,
             prefix_length, total_hosts, name, description, ip_version,
             created_at, updated_at)
@@ -682,18 +682,18 @@ async fn create_supernet(
     .await
     .map_err(map_sqlite_error)?;
 
-    self.get_supernet(tenant_id, &id).await
+    self.get_cidr_block(tenant_id, &id).await
 }
 ```
 
 (Adapt to the actual existing helper functions like `parse_cidr` / `map_sqlite_error` whose names you'll see in the file.)
 
-- [x] **Step 2: Update `get_supernet`**
+- [x] **Step 2: Update `get_cidr_block`**
 
 ```rust
-async fn get_supernet(&self, tenant_id: &str, id: &str) -> Result<Supernet> {
-    let row = sqlx::query_as::<_, SupernetRow>(
-        "SELECT * FROM supernets WHERE id = ? AND tenant_id = ?",
+async fn get_cidr_block(&self, tenant_id: &str, id: &str) -> Result<CidrBlock> {
+    let row = sqlx::query_as::<_, CidrBlockRow>(
+        "SELECT * FROM cidr_blocks WHERE id = ? AND tenant_id = ?",
     )
     .bind(id)
     .bind(tenant_id)
@@ -701,27 +701,27 @@ async fn get_supernet(&self, tenant_id: &str, id: &str) -> Result<Supernet> {
     .await
     .map_err(map_sqlite_error)?;
 
-    row.map(Supernet::from)
+    row.map(CidrBlock::from)
         .ok_or_else(|| crate::error::NetcidrError::IpamError(IpamError::NotFound {
-            entity: "supernet".to_string(),
+            entity: "cidr_block".to_string(),
             id: id.to_string(),
         }))
 }
 ```
 
-`SupernetRow` is the existing sqlx::FromRow type. Add `tenant_id` to it. The `From<SupernetRow> for Supernet` conversion needs to copy the new field.
+`CidrBlockRow` is the existing sqlx::FromRow type. Add `tenant_id` to it. The `From<CidrBlockRow> for CidrBlock` conversion needs to copy the new field.
 
 - [x] **Step 3: Apply the same pattern to remaining methods**
 
 For each method in this list, the change is mechanical:
-- `list_supernets` → `WHERE tenant_id = ?`
-- `delete_supernet` → `WHERE id = ? AND tenant_id = ?`
-- `create_allocation` → INSERT includes `tenant_id` (read from input — but our trait passes tenant_id separately; use the parameter, NOT input.tenant_id since CreateAllocation doesn't have one). The trigger enforces the supernet match; we can rely on it.
+- `list_cidr_blocks` → `WHERE tenant_id = ?`
+- `delete_cidr_block` → `WHERE id = ? AND tenant_id = ?`
+- `create_allocation` → INSERT includes `tenant_id` (read from input — but our trait passes tenant_id separately; use the parameter, NOT input.tenant_id since CreateAllocation doesn't have one). The trigger enforces the cidr_block match; we can rely on it.
 - `get_allocation` → `WHERE id = ? AND tenant_id = ?`
 - `list_allocations` → `WHERE tenant_id = ?` plus existing filter clauses
 - `update_allocation` → `WHERE id = ? AND tenant_id = ?`
 - `release_allocation` → `WHERE id = ? AND tenant_id = ?`
-- `find_allocations_in_supernet` → `WHERE supernet_id = ? AND tenant_id = ?`
+- `find_allocations_in_cidr_block` → `WHERE cidr_block_id = ? AND tenant_id = ?`
 - `set_tags` → first verify the allocation is in this tenant: `SELECT 1 FROM allocations WHERE id = ? AND tenant_id = ?`. If absent → `NotFound`. Then existing tag insert logic.
 - `get_tags` → same: verify allocation belongs to tenant, then read tags.
 - `append_audit` → INSERT includes `tenant_id` from `entry.tenant_id`
@@ -732,7 +732,7 @@ For each method in this list, the change is mechanical:
 
 For each, the key invariants:
 - Reads of unowned IDs return `IpamError::NotFound`, not `Forbidden`
-- `SELECT *` queries that map to `SupernetRow` / `AllocationRow` / `AuditEntryRow` need those Row types to include `tenant_id`
+- `SELECT *` queries that map to `CidrBlockRow` / `AllocationRow` / `AuditEntryRow` need those Row types to include `tenant_id`
 
 - [x] **Step 4: Update Row → Model conversions**
 
@@ -762,9 +762,9 @@ git commit -m "refactor(ipam/sqlite): implement tenant_id-aware IpamStore"
 
 Same pattern as SQLite. The bind syntax is `$1, $2, ...` instead of `?`.
 
-- [x] **Step 1: Update `create_supernet`** — `INSERT INTO supernets (id, tenant_id, cidr, ...) VALUES ($1, $2, $3, ...)`. Pattern shown in Task 5 Step 1.
+- [x] **Step 1: Update `create_cidr_block`** — `INSERT INTO cidr_blocks (id, tenant_id, cidr, ...) VALUES ($1, $2, $3, ...)`. Pattern shown in Task 5 Step 1.
 
-- [x] **Step 2: Update `get_supernet`** — `SELECT * FROM supernets WHERE id = $1 AND tenant_id = $2`.
+- [x] **Step 2: Update `get_cidr_block`** — `SELECT * FROM cidr_blocks WHERE id = $1 AND tenant_id = $2`.
 
 - [x] **Step 3: Apply same pattern to remaining methods** — same list as Task 5 Step 3.
 
@@ -801,10 +801,10 @@ Every public method on `IpamOps` grows `tenant_id: &str`. The internal calls to 
 For every public `async fn` on `IpamOps`, add `tenant_id: &str` as the first parameter (after `&self`). Methods affected (roughly 15-20 — search for `pub async fn` in the file):
 
 ```
-pub async fn create_supernet(&self, tenant_id: &str, ...) -> Result<Supernet>
-pub async fn get_supernet(&self, tenant_id: &str, id: &str) -> Result<Supernet>
-pub async fn list_supernets(&self, tenant_id: &str) -> Result<SupernetList>
-pub async fn delete_supernet(&self, tenant_id: &str, id: &str) -> Result<()>
+pub async fn create_cidr_block(&self, tenant_id: &str, ...) -> Result<CidrBlock>
+pub async fn get_cidr_block(&self, tenant_id: &str, id: &str) -> Result<CidrBlock>
+pub async fn list_cidr_blocks(&self, tenant_id: &str) -> Result<CidrBlockList>
+pub async fn delete_cidr_block(&self, tenant_id: &str, id: &str) -> Result<()>
 pub async fn allocate_specific(&self, tenant_id: &str, input: CreateAllocation) -> Result<Allocation>
 pub async fn allocate_auto(&self, tenant_id: &str, req: AutoAllocateRequest) -> Result<Vec<Allocation>>
 pub async fn get_allocation(&self, tenant_id: &str, id: &str) -> Result<Allocation>
@@ -813,8 +813,8 @@ pub async fn update_allocation(&self, tenant_id: &str, id: &str, input: UpdateAl
 pub async fn release_allocation(&self, tenant_id: &str, id: &str) -> Result<Allocation>
 pub async fn batch_allocate(&self, tenant_id: &str, items: Vec<BatchAllocateItem>) -> Result<BatchAllocateResult>
 pub async fn batch_release(&self, tenant_id: &str, req: BatchReleaseRequest) -> Result<BatchReleaseResult>
-pub async fn utilization(&self, tenant_id: &str, supernet_id: &str) -> Result<UtilizationReport>
-pub async fn free_blocks(&self, tenant_id: &str, supernet_id: &str, ...) -> Result<FreeBlocksReport>
+pub async fn utilization(&self, tenant_id: &str, cidr_block_id: &str) -> Result<UtilizationReport>
+pub async fn free_blocks(&self, tenant_id: &str, cidr_block_id: &str, ...) -> Result<FreeBlocksReport>
 pub async fn find_ip(&self, tenant_id: &str, ip: &str) -> Result<...>
 pub async fn find_resource(&self, tenant_id: &str, query: &str) -> Result<...>
 pub async fn audit_log(&self, tenant_id: &str, filter: AuditFilter) -> Result<...>
@@ -830,9 +830,9 @@ Search for `AuditEntry {` literals in `operations.rs`. Add `tenant_id: tenant_id
 
 The existing `audit_context::current()` call (line 942) still provides `caller_sub`, `caller_email`, `source_ip`, `request_id`. Keep that; only `tenant_id` comes from the new parameter.
 
-- [x] **Step 4: Update the per-supernet allocation lock map**
+- [x] **Step 4: Update the per-cidr_block allocation lock map**
 
-The `HashMap<supernet_id, Arc<Mutex<()>>>` keys on supernet_id. Two tenants could have the same supernet_id... no, actually they can't — UUIDs are globally unique. Locking is fine as-is.
+The `HashMap<cidr_block_id, Arc<Mutex<()>>>` keys on cidr_block_id. Two tenants could have the same cidr_block_id... no, actually they can't — UUIDs are globally unique. Locking is fine as-is.
 
 - [x] **Step 5: Update tests in `operations.rs` to pass `tenant_id`**
 
@@ -1028,26 +1028,26 @@ Every handler that calls `IpamOps::*` extracts `Tenant` and passes its inner str
 
 - [x] **Step 1: Update one handler as the canonical example**
 
-Pick `list_supernets` (or whichever is simplest). Change:
+Pick `list_cidr_blocks` (or whichever is simplest). Change:
 
 ```rust
-async fn list_supernets(
+async fn list_cidr_blocks(
     Extension(ops): Extension<Arc<IpamOps>>,
-) -> Result<Json<SupernetList>, ApiError> {
-    let supernets = ops.list_supernets().await?;
-    Ok(Json(supernets))
+) -> Result<Json<CidrBlockList>, ApiError> {
+    let cidr_blocks = ops.list_cidr_blocks().await?;
+    Ok(Json(cidr_blocks))
 }
 ```
 
 to:
 
 ```rust
-async fn list_supernets(
+async fn list_cidr_blocks(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
-) -> Result<Json<SupernetList>, ApiError> {
-    let supernets = ops.list_supernets(tenant.as_str()).await?;
-    Ok(Json(supernets))
+) -> Result<Json<CidrBlockList>, ApiError> {
+    let cidr_blocks = ops.list_cidr_blocks(tenant.as_str()).await?;
+    Ok(Json(cidr_blocks))
 }
 ```
 
@@ -1057,7 +1057,7 @@ Mechanical sweep. Add `tenant: crate::tenant::Tenant,` to the function signature
 
 - [x] **Step 3: Update `idempotent_post` call sites**
 
-For the three idempotent handlers (`POST /ipam/supernets/{id}/allocate`, `POST /ipam/supernets/{id}/allocate-specific`, `POST /ipam/batch/allocate`), pass `tenant.as_str()` as the new `tenant_id` argument.
+For the three idempotent handlers (`POST /ipam/cidr-blocks/{id}/allocate`, `POST /ipam/cidr-blocks/{id}/allocate-specific`, `POST /ipam/batch/allocate`), pass `tenant.as_str()` as the new `tenant_id` argument.
 
 - [x] **Step 4: Run unit tests on the lib**
 
@@ -1181,14 +1181,14 @@ mod common;
 use common::{spawn_test_server, mint_id_token, TestServer};
 
 #[tokio::test]
-async fn supernets_are_isolated_per_tenant() {
+async fn cidr_blocks_are_isolated_per_tenant() {
     let server = spawn_test_server().await;
     let token_a = mint_id_token(&server, "a@example.com");
     let token_b = mint_id_token(&server, "b@example.com");
 
-    // A creates a supernet.
+    // A creates a cidr_block.
     let resp = server
-        .post("/ipam/supernets")
+        .post("/ipam/cidr-blocks")
         .bearer_auth(&token_a)
         .json(&json!({ "cidr": "10.0.0.0/8" }))
         .send()
@@ -1198,14 +1198,14 @@ async fn supernets_are_isolated_per_tenant() {
     let s_a: serde_json::Value = resp.json().await.unwrap();
     let s_a_id = s_a["id"].as_str().unwrap().to_string();
 
-    // B sees zero supernets.
-    let resp = server.get("/ipam/supernets").bearer_auth(&token_b).send().await.unwrap();
+    // B sees zero CIDR blocks.
+    let resp = server.get("/ipam/cidr-blocks").bearer_auth(&token_b).send().await.unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["count"], 0);
 
-    // B requesting A's supernet by ID gets 404, not 403.
+    // B requesting A's cidr_block by ID gets 404, not 403.
     let resp = server
-        .get(&format!("/ipam/supernets/{}", s_a_id))
+        .get(&format!("/ipam/cidr-blocks/{}", s_a_id))
         .bearer_auth(&token_b)
         .send()
         .await
@@ -1221,7 +1221,7 @@ async fn same_cidr_in_two_tenants_both_succeed() {
 
     for token in [&token_a, &token_b] {
         let resp = server
-            .post("/ipam/supernets")
+            .post("/ipam/cidr-blocks")
             .bearer_auth(token)
             .json(&json!({ "cidr": "10.0.0.0/8" }))
             .send()
@@ -1237,15 +1237,15 @@ async fn allocations_are_isolated_per_tenant() {
     let token_a = mint_id_token(&server, "a@example.com");
     let token_b = mint_id_token(&server, "b@example.com");
 
-    // A creates supernet + allocation.
+    // A creates cidr_block + allocation.
     let s_a: serde_json::Value = server
-        .post("/ipam/supernets").bearer_auth(&token_a)
+        .post("/ipam/cidr-blocks").bearer_auth(&token_a)
         .json(&json!({ "cidr": "10.0.0.0/8" })).send().await.unwrap()
         .json().await.unwrap();
     let s_a_id = s_a["id"].as_str().unwrap();
 
     let alloc: serde_json::Value = server
-        .post(&format!("/ipam/supernets/{}/allocate-specific", s_a_id))
+        .post(&format!("/ipam/cidr-blocks/{}/allocate-specific", s_a_id))
         .bearer_auth(&token_a)
         .json(&json!({ "cidr": "10.1.0.0/16" })).send().await.unwrap()
         .json().await.unwrap();
@@ -1257,9 +1257,9 @@ async fn allocations_are_isolated_per_tenant() {
         .bearer_auth(&token_b).send().await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
-    // B trying to allocate inside A's supernet gets 404.
+    // B trying to allocate inside A's cidr_block gets 404.
     let resp = server
-        .post(&format!("/ipam/supernets/{}/allocate-specific", s_a_id))
+        .post(&format!("/ipam/cidr-blocks/{}/allocate-specific", s_a_id))
         .bearer_auth(&token_b)
         .json(&json!({ "cidr": "10.2.0.0/16" })).send().await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -1271,8 +1271,8 @@ async fn audit_log_is_isolated_per_tenant() {
     let token_a = mint_id_token(&server, "a@example.com");
     let token_b = mint_id_token(&server, "b@example.com");
 
-    // A creates a supernet (mutation -> audit row).
-    server.post("/ipam/supernets").bearer_auth(&token_a)
+    // A creates a cidr_block (mutation -> audit row).
+    server.post("/ipam/cidr-blocks").bearer_auth(&token_a)
         .json(&json!({ "cidr": "10.0.0.0/8" })).send().await.unwrap();
 
     // B's audit log is empty.
@@ -1292,14 +1292,14 @@ async fn idempotency_keys_are_isolated_per_tenant() {
     let token_a = mint_id_token(&server, "a@example.com");
     let token_b = mint_id_token(&server, "b@example.com");
 
-    // A creates supernet.
-    let s_a: serde_json::Value = server.post("/ipam/supernets").bearer_auth(&token_a)
+    // A creates cidr_block.
+    let s_a: serde_json::Value = server.post("/ipam/cidr-blocks").bearer_auth(&token_a)
         .json(&json!({ "cidr": "10.0.0.0/8" })).send().await.unwrap()
         .json().await.unwrap();
     let s_a_id = s_a["id"].as_str().unwrap();
 
-    // B creates *its own* supernet (different namespace; same CIDR is OK).
-    let s_b: serde_json::Value = server.post("/ipam/supernets").bearer_auth(&token_b)
+    // B creates *its own* cidr_block (different namespace; same CIDR is OK).
+    let s_b: serde_json::Value = server.post("/ipam/cidr-blocks").bearer_auth(&token_b)
         .json(&json!({ "cidr": "10.0.0.0/8" })).send().await.unwrap()
         .json().await.unwrap();
     let s_b_id = s_b["id"].as_str().unwrap();
@@ -1307,7 +1307,7 @@ async fn idempotency_keys_are_isolated_per_tenant() {
     // Both call allocate-specific with the same Idempotency-Key.
     let key = "shared-key-1";
     let resp_a = server
-        .post(&format!("/ipam/supernets/{}/allocate-specific", s_a_id))
+        .post(&format!("/ipam/cidr-blocks/{}/allocate-specific", s_a_id))
         .bearer_auth(&token_a)
         .header("Idempotency-Key", key)
         .json(&json!({ "cidr": "10.1.0.0/16" })).send().await.unwrap();
@@ -1315,7 +1315,7 @@ async fn idempotency_keys_are_isolated_per_tenant() {
     assert!(resp_a.headers().get("Idempotent-Replay").is_none());
 
     let resp_b = server
-        .post(&format!("/ipam/supernets/{}/allocate-specific", s_b_id))
+        .post(&format!("/ipam/cidr-blocks/{}/allocate-specific", s_b_id))
         .bearer_auth(&token_b)
         .header("Idempotency-Key", key)
         .json(&json!({ "cidr": "10.2.0.0/16" })).send().await.unwrap();
@@ -1362,7 +1362,7 @@ const TEST_TENANT: &str = "test@example.com";
 
 at the top of each test file. Pass it to every `ops.*` call.
 
-For struct literals: `Supernet { id, tenant_id: TEST_TENANT.to_string(), cidr, ... }`. Same for `Allocation`, `AuditEntry`, `IdempotencyRecord`.
+For struct literals: `CidrBlock { id, tenant_id: TEST_TENANT.to_string(), cidr, ... }`. Same for `Allocation`, `AuditEntry`, `IdempotencyRecord`.
 
 - [x] **Step 2: Run the full test suite**
 
@@ -1402,7 +1402,7 @@ Add under `[Unreleased]`:
 ```markdown
 ### Changed
 
-- **Multi-tenant IPAM isolation.** Every supernet, allocation, audit entry, and idempotency record is now scoped to the authenticated user's email. The `IpamStore` trait and `IpamOps` struct expose `tenant_id: &str` as an explicit parameter on every method, making per-tenant filtering unforgettable at the type level. HTTP middleware extracts the tenant from the OIDC principal's verified email and exposes it via Axum extensions; cross-tenant access returns 404 (not 403) to prevent existence enumeration. CLI invocations and stdio MCP both pass the literal `"local"`. Schema is destructive: migration `006` drops and recreates `supernets`, `allocations`, `audit_log`, `idempotency_keys`, and `allocation_tags` with `tenant_id` columns, `UNIQUE(tenant_id, cidr)` on supernets, composite tenant indexes, and triggers enforcing the cross-table invariant `allocations.tenant_id == supernets.tenant_id`. Five-test isolation matrix in `tests/ipam_isolation.rs` proves the guarantee end-to-end (supernets, same-CIDR-different-tenant, allocations, audit log, idempotency keys). Sub-project 1 of 3 toward a remote MCP endpoint.
+- **Multi-tenant IPAM isolation.** Every CIDR block, allocation, audit entry, and idempotency record is now scoped to the authenticated user's email. The `IpamStore` trait and `IpamOps` struct expose `tenant_id: &str` as an explicit parameter on every method, making per-tenant filtering unforgettable at the type level. HTTP middleware extracts the tenant from the OIDC principal's verified email and exposes it via Axum extensions; cross-tenant access returns 404 (not 403) to prevent existence enumeration. CLI invocations and stdio MCP both pass the literal `"local"`. Schema is destructive: migration `006` drops and recreates `cidr_blocks`, `allocations`, `audit_log`, `idempotency_keys`, and `allocation_tags` with `tenant_id` columns, `UNIQUE(tenant_id, cidr)` on cidr_blocks, composite tenant indexes, and triggers enforcing the cross-table invariant `allocations.tenant_id == cidr_blocks.tenant_id`. Five-test isolation matrix in `tests/ipam_isolation.rs` proves the guarantee end-to-end (cidr_blocks, same-CIDR-different-tenant, allocations, audit log, idempotency keys). Sub-project 1 of 3 toward a remote MCP endpoint.
 ```
 
 - [x] **Step 3: Update README.md** if any user-facing CLI behavior changed (it didn't — `--db` SQLite usage stays single-tenant, just with a `local` row marker invisible to users).
@@ -1442,7 +1442,7 @@ gh pr create --title "feat(ipam): multi-tenant isolation per OIDC identity" --bo
 | Goal & non-goals | T1-T15 (whole plan) |
 | Tenancy model (email, "local" for CLI) | T9 (auth middleware), T11 (CLI), T12 (MCP) |
 | Schema changes (4 tables + tag inheritance) | T2 (SQLite), T3 (Postgres) |
-| Cross-table invariant | T2/T3 (DB triggers), T7 (app-level supernet check in `create_allocation`) |
+| Cross-table invariant | T2/T3 (DB triggers), T7 (app-level cidr_block check in `create_allocation`) |
 | Auth → tenant flow | T9 (extractor + middleware), T10 (handlers) |
 | IpamOps signature changes | T7 |
 | Cross-tenant 404 semantics | T5/T6 (NotFound on missing rows), T13 (integration test) |

@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import type { Allocation, FreeBlock, Supernet } from "../../types";
+import type { Allocation, FreeBlock, CidrBlock } from "../../types";
 import { bigIntToIp, parseCidr, type ParsedCidr } from "../../lib/cidr";
 import { buildGrid } from "./gridUnits";
 import { BlockGrid } from "./BlockGrid";
 import { HilbertGrid } from "./HilbertGrid";
 
 interface AllocationMapProps {
-  supernet: Supernet;
+  cidr_block: CidrBlock;
   allocations: Allocation[];
   freeBlocks: FreeBlock[];
   whatIfFits?: ParsedCidr[];
@@ -18,7 +18,7 @@ type ViewMode = "block" | "hilbert";
 const VIEW_STORAGE_KEY = "netcidr.visualizer.view";
 
 export function AllocationMap({
-  supernet,
+  cidr_block,
   allocations,
   freeBlocks,
   // whatIfFits/whatIfConflicts are accepted to keep the WhatIfPanel API
@@ -30,12 +30,12 @@ export function AllocationMap({
   onAllocationClick,
 }: AllocationMapProps) {
 
-  const parsedSupernet = useMemo(
-    () => parseCidr(supernet.cidr),
-    [supernet.cidr],
+  const parsedCidrBlock = useMemo(
+    () => parseCidr(cidr_block.cidr),
+    [cidr_block.cidr],
   );
 
-  // Persist toggle across visits — small UX win when comparing supernets.
+  // Persist toggle across visits — small UX win when comparing CIDR blocks.
   const [view, setView] = useState<ViewMode>(() => {
     if (typeof window === "undefined") return "block";
     const saved = window.localStorage.getItem(VIEW_STORAGE_KEY);
@@ -48,14 +48,14 @@ export function AllocationMap({
   }, [view]);
 
   const grid = useMemo(() => {
-    if (!parsedSupernet) return null;
-    return buildGrid(parsedSupernet, allocations, freeBlocks, parseCidr);
-  }, [parsedSupernet, allocations, freeBlocks]);
+    if (!parsedCidrBlock) return null;
+    return buildGrid(parsedCidrBlock, allocations, freeBlocks, parseCidr);
+  }, [parsedCidrBlock, allocations, freeBlocks]);
 
-  if (!parsedSupernet) {
+  if (!parsedCidrBlock) {
     return (
       <div className="text-text-muted text-sm">
-        Could not parse supernet CIDR <code>{supernet.cidr}</code>.
+        Could not parse CIDR block CIDR <code>{cidr_block.cidr}</code>.
       </div>
     );
   }
@@ -67,7 +67,7 @@ export function AllocationMap({
       <div className="flex items-center justify-between text-xs text-text-muted">
         <div>
           {grid.cellCount.toLocaleString()} cells, each a /{grid.unitPrefix}
-          {grid.truncatedToMin && parsedSupernet.kind === "v6" && (
+          {grid.truncatedToMin && parsedCidrBlock.kind === "v6" && (
             <span className="ml-2 italic">
               (coarsened to /64 — finer detail not shown)
             </span>
@@ -83,8 +83,8 @@ export function AllocationMap({
       )}
 
       <div className="flex justify-between text-xs text-text-muted font-mono pt-1">
-        <span>{bigIntToIp(parsedSupernet.start, parsedSupernet.kind)}</span>
-        <span>{bigIntToIp(parsedSupernet.end, parsedSupernet.kind)}</span>
+        <span>{bigIntToIp(parsedCidrBlock.start, parsedCidrBlock.kind)}</span>
+        <span>{bigIntToIp(parsedCidrBlock.end, parsedCidrBlock.kind)}</span>
       </div>
     </div>
   );

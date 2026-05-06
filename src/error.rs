@@ -73,17 +73,17 @@ pub enum NetcidrError {
     #[error("Allocation conflict: {candidate} overlaps with existing {existing}")]
     AllocationConflict { existing: String, candidate: String },
 
-    #[error("Supernet not found: {0}")]
-    SupernetNotFound(String),
+    #[error("CIDR block not found: {0}")]
+    CidrBlockNotFound(String),
 
     #[error("Allocation not found: {0}")]
     AllocationNotFound(String),
 
-    #[error("Supernet {0} has active allocations and cannot be deleted")]
-    SupernetHasActiveAllocations(String),
+    #[error("CIDR block {0} has active allocations and cannot be deleted")]
+    CidrBlockHasActiveAllocations(String),
 
-    #[error("No free space in {supernet} for a /{prefix} allocation")]
-    NoFreeSpace { supernet: String, prefix: u8 },
+    #[error("No free space in {cidr_block} for a /{prefix} allocation")]
+    NoFreeSpace { cidr_block: String, prefix: u8 },
 
     #[error("Invalid input: {0}")]
     InvalidInput(String),

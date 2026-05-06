@@ -1,16 +1,16 @@
 import { useState, useEffect } from "react";
 import { Modal } from "./Modal";
-import type { Supernet } from "../../../types";
+import type { CidrBlock } from "../../../types";
 import { getErrorMessage } from "../../../lib/errors";
 import { FORM_LABEL, INPUT, BTN_PRIMARY } from "../../../lib/styles";
 
 interface AutoAllocateModalProps {
   open: boolean;
   onClose: () => void;
-  supernets: Supernet[];
-  defaultSupernetId?: string;
+  cidr_blocks: CidrBlock[];
+  defaultCidrBlockId?: string;
   onSubmit: (form: {
-    supernetId: string;
+    cidr_blockId: string;
     prefix: number;
     count: number;
     name: string;
@@ -22,11 +22,11 @@ interface AutoAllocateModalProps {
 export function AutoAllocateModal({
   open,
   onClose,
-  supernets,
-  defaultSupernetId,
+  cidr_blocks,
+  defaultCidrBlockId,
   onSubmit,
 }: AutoAllocateModalProps) {
-  const [supernetId, setSupernetId] = useState("");
+  const [cidr_blockId, setCidrBlockId] = useState("");
   const [prefix, setPrefix] = useState("24");
   const [count, setCount] = useState("1");
   const [name, setName] = useState("");
@@ -36,7 +36,7 @@ export function AutoAllocateModal({
 
   useEffect(() => {
     if (open) {
-      setSupernetId(defaultSupernetId ?? supernets[0]?.id ?? "");
+      setCidrBlockId(defaultCidrBlockId ?? cidr_blocks[0]?.id ?? "");
       setPrefix("24");
       setCount("1");
       setName("");
@@ -45,14 +45,14 @@ export function AutoAllocateModal({
       setError(null);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- only reset when modal opens
-  }, [open, defaultSupernetId]);
+  }, [open, defaultCidrBlockId]);
 
   const handleSubmit = async () => {
-    if (!supernetId || !prefix) return;
+    if (!cidr_blockId || !prefix) return;
     setError(null);
     try {
       await onSubmit({
-        supernetId,
+        cidr_blockId,
         prefix: Number(prefix),
         count: Number(count) || 1,
         name: name.trim(),
@@ -74,14 +74,14 @@ export function AutoAllocateModal({
         )}
         <div>
           <label className={FORM_LABEL}>
-            Supernet
+            CidrBlock
           </label>
           <select
             className={INPUT}
-            value={supernetId}
-            onChange={(e) => setSupernetId(e.target.value)}
+            value={cidr_blockId}
+            onChange={(e) => setCidrBlockId(e.target.value)}
           >
-            {supernets.map((sn) => (
+            {cidr_blocks.map((sn) => (
               <option key={sn.id} value={sn.id}>
                 {sn.cidr} {sn.name ? `– ${sn.name}` : ""}
               </option>

@@ -82,7 +82,7 @@ impl PostgresStore {
         Allocation {
             id: row.get("id"),
             tenant_id: row.get("tenant_id"),
-            supernet_id: row.get("supernet_id"),
+            cidr_block_id: row.get("cidr_block_id"),
             cidr: row.get("cidr"),
             network_address: row.get("network_address"),
             broadcast_address: row.get("broadcast_address"),
@@ -152,15 +152,19 @@ impl IpamStore for PostgresStore {
         Ok(())
     }
 
-    // --- supernets ---
+    // --- cidr_blocks ---
 
-    async fn create_supernet(&self, tenant_id: &str, input: &CreateSupernet) -> Result<Supernet> {
+    async fn create_cidr_block(
+        &self,
+        tenant_id: &str,
+        input: &CreateCidrBlock,
+    ) -> Result<CidrBlock> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = Self::now();
         let (network, broadcast, prefix, total, ip_version) = parse_cidr_metadata(&input.cidr)?;
 
         sqlx::query(
-            "INSERT INTO supernets (id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at)
+            "INSERT INTO cidr_blocks (id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
         )
         .bind(&id)
@@ -179,7 +183,7 @@ impl IpamStore for PostgresStore {
         .await
         .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
-        Ok(Supernet {
+        Ok(CidrBlock {
             id,
             tenant_id: tenant_id.to_string(),
             cidr: input.cidr.clone(),
@@ -195,21 +199,21 @@ impl IpamStore for PostgresStore {
         })
     }
 
-    async fn get_supernet(&self, tenant_id: &str, id: &str) -> Result<Supernet> {
+    async fn get_cidr_block(&self, tenant_id: &str, id: &str) -> Result<CidrBlock> {
         let row = sqlx::query(
-            "SELECT id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM supernets WHERE id = $1 AND tenant_id = $2",
+            "SELECT id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM cidr_blocks WHERE id = $1 AND tenant_id = $2",
         )
         .bind(id)
         .bind(tenant_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
-        .ok_or_else(|| NetcidrError::SupernetNotFound(id.to_string()))?;
+        .ok_or_else(|| NetcidrError::CidrBlockNotFound(id.to_string()))?;
 
         let total_hosts_text: String = row.get("total_hosts");
         let prefix_length: i16 = row.get("prefix_length");
         let ip_version: i16 = row.get("ip_version");
-        Ok(Supernet {
+        Ok(CidrBlock {
             id: row.get("id"),
             tenant_id: row.get("tenant_id"),
             cidr: row.get("cidr"),
@@ -225,9 +229,9 @@ impl IpamStore for PostgresStore {
         })
     }
 
-    async fn list_supernets(&self, tenant_id: &str) -> Result<Vec<Supernet>> {
+    async fn list_cidr_blocks(&self, tenant_id: &str) -> Result<Vec<CidrBlock>> {
         let rows = sqlx::query(
-            "SELECT id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM supernets WHERE tenant_id = $1 ORDER BY created_at",
+            "SELECT id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM cidr_blocks WHERE tenant_id = $1 ORDER BY created_at",
         )
         .bind(tenant_id)
         .fetch_all(&self.pool)
@@ -240,7 +244,7 @@ impl IpamStore for PostgresStore {
                 let total_hosts_text: String = row.get("total_hosts");
                 let prefix_length: i16 = row.get("prefix_length");
                 let ip_version: i16 = row.get("ip_version");
-                Supernet {
+                CidrBlock {
                     id: row.get("id"),
                     tenant_id: row.get("tenant_id"),
                     cidr: row.get("cidr"),
@@ -258,10 +262,10 @@ impl IpamStore for PostgresStore {
             .collect())
     }
 
-    async fn delete_supernet(&self, tenant_id: &str, id: &str) -> Result<()> {
-        // Verify supernet exists in this tenant; cross-tenant ⇒ NotFound.
+    async fn delete_cidr_block(&self, tenant_id: &str, id: &str) -> Result<()> {
+        // Verify cidr_block exists in this tenant; cross-tenant ⇒ NotFound.
         let exists_row =
-            sqlx::query("SELECT COUNT(*) as cnt FROM supernets WHERE id = $1 AND tenant_id = $2")
+            sqlx::query("SELECT COUNT(*) as cnt FROM cidr_blocks WHERE id = $1 AND tenant_id = $2")
                 .bind(id)
                 .bind(tenant_id)
                 .fetch_one(&self.pool)
@@ -269,11 +273,11 @@ impl IpamStore for PostgresStore {
                 .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         let exists_cnt: i64 = exists_row.get("cnt");
         if exists_cnt == 0 {
-            return Err(NetcidrError::SupernetNotFound(id.to_string()));
+            return Err(NetcidrError::CidrBlockNotFound(id.to_string()));
         }
 
         let row = sqlx::query(
-            "SELECT COUNT(*) as cnt FROM allocations WHERE supernet_id = $1 AND tenant_id = $2 AND status != 'released'",
+            "SELECT COUNT(*) as cnt FROM allocations WHERE cidr_block_id = $1 AND tenant_id = $2 AND status != 'released'",
         )
         .bind(id)
         .bind(tenant_id)
@@ -283,12 +287,12 @@ impl IpamStore for PostgresStore {
         let active_count: i64 = row.get("cnt");
 
         if active_count > 0 {
-            return Err(NetcidrError::SupernetHasActiveAllocations(id.to_string()));
+            return Err(NetcidrError::CidrBlockHasActiveAllocations(id.to_string()));
         }
 
-        // Delete released allocations' tags, then allocations, then supernet
+        // Delete released allocations' tags, then allocations, then cidr_block
         sqlx::query(
-            "DELETE FROM allocation_tags WHERE allocation_id IN (SELECT id FROM allocations WHERE supernet_id = $1 AND tenant_id = $2)",
+            "DELETE FROM allocation_tags WHERE allocation_id IN (SELECT id FROM allocations WHERE cidr_block_id = $1 AND tenant_id = $2)",
         )
         .bind(id)
         .bind(tenant_id)
@@ -296,14 +300,14 @@ impl IpamStore for PostgresStore {
         .await
         .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
-        sqlx::query("DELETE FROM allocations WHERE supernet_id = $1 AND tenant_id = $2")
+        sqlx::query("DELETE FROM allocations WHERE cidr_block_id = $1 AND tenant_id = $2")
             .bind(id)
             .bind(tenant_id)
             .execute(&self.pool)
             .await
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
-        let result = sqlx::query("DELETE FROM supernets WHERE id = $1 AND tenant_id = $2")
+        let result = sqlx::query("DELETE FROM cidr_blocks WHERE id = $1 AND tenant_id = $2")
             .bind(id)
             .bind(tenant_id)
             .execute(&self.pool)
@@ -311,7 +315,7 @@ impl IpamStore for PostgresStore {
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         if result.rows_affected() == 0 {
-            return Err(NetcidrError::SupernetNotFound(id.to_string()));
+            return Err(NetcidrError::CidrBlockNotFound(id.to_string()));
         }
         Ok(())
     }
@@ -337,27 +341,27 @@ impl IpamStore for PostgresStore {
             .map(|ttl| (Utc::now() + chrono::Duration::seconds(ttl as i64)).to_rfc3339());
 
         // Application-level cross-tenant invariant: confirm the parent
-        // supernet belongs to this tenant. NotFound (not Forbidden) hides
+        // cidr_block belongs to this tenant. NotFound (not Forbidden) hides
         // existence. The DB trigger is belt-and-suspenders.
-        let supernet_row =
-            sqlx::query("SELECT COUNT(*) as cnt FROM supernets WHERE id = $1 AND tenant_id = $2")
-                .bind(&input.supernet_id)
+        let cidr_block_row =
+            sqlx::query("SELECT COUNT(*) as cnt FROM cidr_blocks WHERE id = $1 AND tenant_id = $2")
+                .bind(&input.cidr_block_id)
                 .bind(tenant_id)
                 .fetch_one(&self.pool)
                 .await
                 .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        let supernet_cnt: i64 = supernet_row.get("cnt");
-        if supernet_cnt == 0 {
-            return Err(NetcidrError::SupernetNotFound(input.supernet_id.clone()));
+        let cidr_block_cnt: i64 = cidr_block_row.get("cnt");
+        if cidr_block_cnt == 0 {
+            return Err(NetcidrError::CidrBlockNotFound(input.cidr_block_id.clone()));
         }
 
         sqlx::query(
-            "INSERT INTO allocations (id, tenant_id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, expires_at)
+            "INSERT INTO allocations (id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, expires_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)",
         )
         .bind(&id)
         .bind(tenant_id)
-        .bind(&input.supernet_id)
+        .bind(&input.cidr_block_id)
         .bind(&input.cidr)
         .bind(&network)
         .bind(&broadcast)
@@ -397,7 +401,7 @@ impl IpamStore for PostgresStore {
         Ok(Allocation {
             id,
             tenant_id: tenant_id.to_string(),
-            supernet_id: input.supernet_id.clone(),
+            cidr_block_id: input.cidr_block_id.clone(),
             cidr: input.cidr.clone(),
             network_address: network,
             broadcast_address: broadcast,
@@ -421,7 +425,7 @@ impl IpamStore for PostgresStore {
 
     async fn get_allocation(&self, tenant_id: &str, id: &str) -> Result<Allocation> {
         let row = sqlx::query(
-            "SELECT id, tenant_id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = $1 AND tenant_id = $2",
+            "SELECT id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = $1 AND tenant_id = $2",
         )
         .bind(id)
         .bind(tenant_id)
@@ -441,14 +445,14 @@ impl IpamStore for PostgresStore {
         filter: &AllocationFilter,
     ) -> Result<Vec<Allocation>> {
         let mut sql = String::from(
-            "SELECT id, tenant_id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE tenant_id = $1",
+            "SELECT id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE tenant_id = $1",
         );
         let mut param_values: Vec<String> = Vec::new();
         param_values.push(tenant_id.to_string());
         let mut idx = 2;
 
-        if let Some(ref sid) = filter.supernet_id {
-            sql.push_str(&format!(" AND supernet_id = ${idx}"));
+        if let Some(ref sid) = filter.cidr_block_id {
+            sql.push_str(&format!(" AND cidr_block_id = ${idx}"));
             param_values.push(sid.clone());
             idx += 1;
         }
@@ -594,10 +598,10 @@ impl IpamStore for PostgresStore {
         self.get_allocation(tenant_id, id).await
     }
 
-    async fn find_allocations_in_supernet(
+    async fn find_allocations_in_cidr_block(
         &self,
         tenant_id: &str,
-        supernet_id: &str,
+        cidr_block_id: &str,
         statuses: &[AllocationStatus],
     ) -> Result<Vec<Allocation>> {
         if statuses.is_empty() {
@@ -605,17 +609,17 @@ impl IpamStore for PostgresStore {
         }
 
         let mut placeholders = Vec::new();
-        // $1 = supernet_id, $2 = tenant_id, statuses start at $3.
+        // $1 = cidr_block_id, $2 = tenant_id, statuses start at $3.
         for i in 0..statuses.len() {
             placeholders.push(format!("${}", i + 3));
         }
 
         let sql = format!(
-            "SELECT id, tenant_id, supernet_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE supernet_id = $1 AND tenant_id = $2 AND status IN ({}) ORDER BY network_address",
+            "SELECT id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE cidr_block_id = $1 AND tenant_id = $2 AND status IN ({}) ORDER BY network_address",
             placeholders.join(", ")
         );
 
-        let mut query = sqlx::query(&sql).bind(supernet_id).bind(tenant_id);
+        let mut query = sqlx::query(&sql).bind(cidr_block_id).bind(tenant_id);
         for s in statuses {
             query = query.bind(s.to_string());
         }

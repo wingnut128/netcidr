@@ -1,16 +1,16 @@
 import { useState, useEffect } from "react";
 import { Modal } from "./Modal";
-import type { Supernet } from "../../../types";
+import type { CidrBlock } from "../../../types";
 import { getErrorMessage } from "../../../lib/errors";
 import { FORM_LABEL, INPUT, BTN_PRIMARY } from "../../../lib/styles";
 
 interface AllocateSpecificModalProps {
   open: boolean;
   onClose: () => void;
-  supernets: Supernet[];
-  defaultSupernetId?: string;
+  cidr_blocks: CidrBlock[];
+  defaultCidrBlockId?: string;
   onSubmit: (form: {
-    supernetId: string;
+    cidr_blockId: string;
     cidr: string;
     name: string;
     environment: string;
@@ -22,11 +22,11 @@ interface AllocateSpecificModalProps {
 export function AllocateSpecificModal({
   open,
   onClose,
-  supernets,
-  defaultSupernetId,
+  cidr_blocks,
+  defaultCidrBlockId,
   onSubmit,
 }: AllocateSpecificModalProps) {
-  const [supernetId, setSupernetId] = useState("");
+  const [cidr_blockId, setCidrBlockId] = useState("");
   const [cidr, setCidr] = useState("");
   const [name, setName] = useState("");
   const [environment, setEnvironment] = useState("");
@@ -36,7 +36,7 @@ export function AllocateSpecificModal({
 
   useEffect(() => {
     if (open) {
-      setSupernetId(defaultSupernetId ?? supernets[0]?.id ?? "");
+      setCidrBlockId(defaultCidrBlockId ?? cidr_blocks[0]?.id ?? "");
       setCidr("");
       setName("");
       setEnvironment("");
@@ -45,14 +45,14 @@ export function AllocateSpecificModal({
       setError(null);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- only reset when modal opens
-  }, [open, defaultSupernetId]);
+  }, [open, defaultCidrBlockId]);
 
   const handleSubmit = async () => {
-    if (!supernetId || !cidr.trim()) return;
+    if (!cidr_blockId || !cidr.trim()) return;
     setError(null);
     try {
       await onSubmit({
-        supernetId,
+        cidr_blockId,
         cidr: cidr.trim(),
         name: name.trim(),
         environment: environment.trim(),
@@ -91,13 +91,13 @@ export function AllocateSpecificModal({
           </div>
         )}
         <div>
-          <label className={FORM_LABEL}>Supernet</label>
+          <label className={FORM_LABEL}>CIDR Block</label>
           <select
             className={INPUT}
-            value={supernetId}
-            onChange={(e) => setSupernetId(e.target.value)}
+            value={cidr_blockId}
+            onChange={(e) => setCidrBlockId(e.target.value)}
           >
-            {supernets.map((sn) => (
+            {cidr_blocks.map((sn) => (
               <option key={sn.id} value={sn.id}>
                 {sn.cidr} {sn.name ? `– ${sn.name}` : ""}
               </option>

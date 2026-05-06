@@ -32,23 +32,23 @@ This sub-project handles isolation only. Personal access tokens (sub-project 2) 
 
 ### Schema changes
 
-Single migration file `006_multi_tenant_isolation.sql` for both backends. Migration is **destructive** — drops and recreates `supernets`, `allocations`, `audit_log`, `idempotency_keys`. No backfill.
+Single migration file `006_multi_tenant_isolation.sql` for both backends. Migration is **destructive** — drops and recreates `cidr_blocks`, `allocations`, `audit_log`, `idempotency_keys`. No backfill.
 
 | Table | Change |
 |---|---|
-| `supernets` | Add `tenant_id TEXT NOT NULL`. Replace `UNIQUE (cidr)` with `UNIQUE (tenant_id, cidr)` so each tenant has its own RFC1918 namespace. |
-| `allocations` | Add `tenant_id TEXT NOT NULL`, denormalized from owning supernet. No CIDR uniqueness (allocation overlap is checked logically per-supernet). |
+| `cidr_blocks` | Add `tenant_id TEXT NOT NULL`. Replace `UNIQUE (cidr)` with `UNIQUE (tenant_id, cidr)` so each tenant has its own RFC1918 namespace. |
+| `allocations` | Add `tenant_id TEXT NOT NULL`, denormalized from owning cidr_block. No CIDR uniqueness (allocation overlap is checked logically per-cidr_block). |
 | `audit_log` | Add `tenant_id TEXT NOT NULL` for read-side filtering. |
 | `idempotency_keys` (PR #104) | PK becomes `(tenant_id, key, scope)`. Tenant B can never replay tenant A's cached response. |
 | `allocation_tags` | **No new column.** Tags inherit tenancy via FK to `allocations`. Every tag read/write goes through the parent allocation's tenant check, so a tenant can never see or attach tags to another tenant's allocation. |
 
-Indexes: `(tenant_id)` on each table. Composite `(tenant_id, supernet_id)` on `allocations` and `audit_log` for per-tenant-per-supernet scans.
+Indexes: `(tenant_id)` on each table. Composite `(tenant_id, cidr_block_id)` on `allocations` and `audit_log` for per-tenant-per-cidr_block scans.
 
 ### Cross-table invariant
 
-`allocations.tenant_id == supernets.tenant_id` for the linked supernet. Enforced two ways:
+`allocations.tenant_id == cidr_blocks.tenant_id` for the linked cidr_block. Enforced two ways:
 
-1. **Application-level (primary):** `IpamOps::create_allocation` looks up the supernet, refuses if `request.tenant_id != supernet.tenant_id` (returns `IpamError::NotFound`, not `Forbidden` — see "Cross-tenant access" below).
+1. **Application-level (primary):** `IpamOps::create_allocation` looks up the cidr_block, refuses if `request.tenant_id != cidr_block.tenant_id` (returns `IpamError::NotFound`, not `Forbidden` — see "Cross-tenant access" below).
 2. **DB-level (defense in depth):** trigger on `allocations` insert/update verifies the join. Same trigger pattern on both backends.
 
 ### Auth → tenant flow
@@ -66,10 +66,10 @@ Extends the audit-context plumbing from PR #103.
 Every method that touches a tenant-scoped table grows a `tenant_id: &str` parameter. No task-local magic from inside `IpamOps` — the type system makes the parameter unforgettable.
 
 **Reads (filter result by tenant):**
-`list_supernets`, `get_supernet`, `list_allocations`, `get_allocation`, `audit_log`, `utilization`, `free_blocks`, `find_ip`, `find_resource`.
+`list_cidr_blocks`, `get_cidr_block`, `list_allocations`, `get_allocation`, `audit_log`, `utilization`, `free_blocks`, `find_ip`, `find_resource`.
 
 **Writes (insert/update tagged with tenant; cross-tenant refs rejected):**
-`create_supernet`, `create_allocation`, `update_allocation`, `release_allocation`, `batch_allocate`, `batch_release`, `auto_allocate`.
+`create_cidr_block`, `create_allocation`, `update_allocation`, `release_allocation`, `batch_allocate`, `batch_release`, `auto_allocate`.
 
 **Idempotency helpers:**
 `idempotency_get`, `idempotency_put` — gain `tenant_id`. `idempotency_reap_expired` is tenant-agnostic (just deletes expired rows everywhere).
@@ -80,10 +80,10 @@ The `IpamStore` trait (`src/ipam/store.rs`) gets the same signature changes. Bot
 
 Tenant A requesting a resource owned by tenant B never reveals that the resource exists.
 
-- `GET /ipam/supernets/{id}` for another tenant's UUID → **404 Not Found**, identical body to a non-existent UUID.
-- `POST /ipam/supernets/{id}/allocate` against another tenant's supernet → **404**.
+- `GET /ipam/cidr-blocks/{id}` for another tenant's UUID → **404 Not Found**, identical body to a non-existent UUID.
+- `POST /ipam/cidr-blocks/{id}/allocate` against another tenant's cidr_block → **404**.
 - `GET /ipam/allocations/{id}` for another tenant's allocation → **404**.
-- Audit log queries: `?supernet_id=<other-tenant's-id>` → empty page.
+- Audit log queries: `?cidr_block_id=<other-tenant's-id>` → empty page.
 - Idempotency: PK `(tenant_id, key, scope)` enforces isolation at the DB level.
 
 403 is rejected because it leaks existence — an attacker probing UUIDs would learn which ones are valid in some tenant.
@@ -96,14 +96,14 @@ Tenant A requesting a resource owned by tenant B never reveals that the resource
 
 ### Unit tests (per backend)
 
-- **Two-tenant fixture:** supernet S_A under `a@x`, S_B under `b@x`. Assertions:
-  - `list_supernets("a@x")` returns only S_A.
-  - `get_supernet("a@x", S_B.id)` → `NotFound`.
+- **Two-tenant fixture:** cidr_block S_A under `a@x`, S_B under `b@x`. Assertions:
+  - `list_cidr_blocks("a@x")` returns only S_A.
+  - `get_cidr_block("a@x", S_B.id)` → `NotFound`.
   - `create_allocation("a@x", S_B.id, ...)` → `NotFound`.
 - **Same-CIDR-different-tenant:** both tenants create `10.0.0.0/8`; both succeed. Confirms `UNIQUE (tenant_id, cidr)`.
 - **Allocation invariant:** `create_allocation("a@x", S_A.id, cidr)` succeeds; mismatched tenant returns `NotFound`. Direct DB write violating the invariant is rejected by the trigger.
 - **Audit isolation:** mutations under tenant A produce audit rows with `tenant_id = "a@x"`; `audit_log("b@x", ...)` returns none of them.
-- **Idempotency isolation:** tenant A POSTs with key `K`, response cached. Tenant B POSTs same supernet ID + key `K` with different body → executes fresh; no 409, no replay.
+- **Idempotency isolation:** tenant A POSTs with key `K`, response cached. Tenant B POSTs same cidr_block ID + key `K` with different body → executes fresh; no 409, no replay.
 
 ### HTTP integration tests
 
@@ -117,13 +117,13 @@ Existing CLI integration tests stay green with `tenant_id = "local"` threaded in
 
 ### Test fixture sweep
 
-The destructive migration means existing test fixtures need updating. Mechanical sweep: every `Supernet { ... }` and `Allocation { ... }` literal in tests gets a `tenant_id` field. Same for SQL inserts in test setup.
+The destructive migration means existing test fixtures need updating. Mechanical sweep: every `CidrBlock { ... }` and `Allocation { ... }` literal in tests gets a `tenant_id` field. Same for SQL inserts in test setup.
 
 ## Migration / deploy
 
 - Single migration file `006_multi_tenant_isolation.sql` per backend.
 - Pre-deploy: nothing to back up (no production data of value).
-- Post-deploy on cloudreaper.dev: re-create supernets via the dashboard. Trivial — there were only test entries.
+- Post-deploy on cloudreaper.dev: re-create cidr_blocks via the dashboard. Trivial — there were only test entries.
 - Local development: `just db-reset` (or equivalent) drops and re-runs migrations.
 
 ## Risks

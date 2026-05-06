@@ -1,8 +1,8 @@
 /**
  * Address-space cellularization shared by Block and Hilbert views.
  *
- * Both grids walk the supernet at a fixed unit prefix, producing one
- * cell per `2^(unitPrefix - supernetPrefix)` slot. Each cell carries
+ * Both grids walk the CIDR block at a fixed unit prefix, producing one
+ * cell per `2^(unitPrefix - cidr_blockPrefix)` slot. Each cell carries
  * the dominant allocation that touches it (for status-coloring) and
  * a CIDR label for the hover.
  */
@@ -23,15 +23,15 @@ export interface Cell {
 
 export interface GridLayout {
   unitPrefix: number; // CIDR length of one cell
-  cellCount: number; // total cells = 2^(unitPrefix - supernetPrefix)
+  cellCount: number; // total cells = 2^(unitPrefix - cidr_blockPrefix)
   cells: Cell[];
-  truncatedToMin: boolean; // true when supernet was finer than the unit floor
+  truncatedToMin: boolean; // true when cidr_block was finer than the unit floor
 }
 
 const MAX_CELLS = 1024; // 32×32 — comfortable on a desktop, scrollable on mobile
 
 /**
- * Smallest cell prefix the dashboard will render at. v6 supernets bigger
+ * Smallest cell prefix the dashboard will render at. v6 cidr_blocks bigger
  * than ~/64 always coarsen — never try to draw individual /128s.
  */
 const MIN_UNIT_PREFIX_V4 = 32;
@@ -41,32 +41,32 @@ const MIN_UNIT_PREFIX_V6 = 64;
  * Pick the cell granularity.
  *
  *   - We want the smallest unit (largest prefix number) such that
- *     `2^(unitPrefix - supernetPrefix) ≤ MAX_CELLS`.
+ *     `2^(unitPrefix - cidr_blockPrefix) ≤ MAX_CELLS`.
  *   - But never finer than MIN_UNIT_PREFIX_v* for that family.
- *   - And never coarser than the supernet itself (degenerate single cell).
+ *   - And never coarser than the cidr_block itself (degenerate single cell).
  */
-export function pickUnitPrefix(supernet: ParsedCidr): number {
+export function pickUnitPrefix(cidr_block: ParsedCidr): number {
   const minUnit =
-    supernet.kind === "v4" ? MIN_UNIT_PREFIX_V4 : MIN_UNIT_PREFIX_V6;
+    cidr_block.kind === "v4" ? MIN_UNIT_PREFIX_V4 : MIN_UNIT_PREFIX_V6;
   const maxBitsBelow = Math.floor(Math.log2(MAX_CELLS)); // 10 for 1024
-  let unit = supernet.prefix + maxBitsBelow;
+  let unit = cidr_block.prefix + maxBitsBelow;
   if (unit > minUnit) unit = minUnit;
-  if (unit < supernet.prefix) unit = supernet.prefix;
+  if (unit < cidr_block.prefix) unit = cidr_block.prefix;
   return unit;
 }
 
 /**
- * Walk the supernet at `unitPrefix` granularity, classify each cell.
+ * Walk the CIDR block at `unitPrefix` granularity, classify each cell.
  */
 export function buildGrid(
-  supernet: ParsedCidr,
+  cidr_block: ParsedCidr,
   allocations: Allocation[],
   freeBlocks: FreeBlock[],
   parseCidr: (s: string) => ParsedCidr | null,
 ): GridLayout {
-  const unitPrefix = pickUnitPrefix(supernet);
-  const cellSize = 1n << BigInt(supernet.bits - unitPrefix);
-  const cellCountBig = supernet.size / cellSize;
+  const unitPrefix = pickUnitPrefix(cidr_block);
+  const cellSize = 1n << BigInt(cidr_block.bits - unitPrefix);
+  const cellCountBig = cidr_block.size / cellSize;
   // Defensive: cellCount should always fit in a JS number given MAX_CELLS=1024.
   const cellCount = Number(cellCountBig);
 
@@ -87,9 +87,9 @@ export function buildGrid(
 
   for (const a of allocations) {
     const p = parseCidr(a.cidr);
-    if (!p || p.kind !== supernet.kind) continue;
-    const firstCell = Number((p.start - supernet.start) / cellSize);
-    const lastCell = Number((p.end - supernet.start) / cellSize);
+    if (!p || p.kind !== cidr_block.kind) continue;
+    const firstCell = Number((p.start - cidr_block.start) / cellSize);
+    const lastCell = Number((p.end - cidr_block.start) / cellSize);
     const status = a.status as CellStatus;
     for (let i = firstCell; i <= lastCell && i < cellCount; i++) {
       if (i < 0) continue;
@@ -106,14 +106,14 @@ export function buildGrid(
   void freeBlocks;
 
   const cells: Cell[] = Array.from({ length: cellCount }, (_, i) => {
-    const startAddr = supernet.start + cellSize * BigInt(i);
+    const startAddr = cidr_block.start + cellSize * BigInt(i);
     const endAddr = startAddr + cellSize - 1n;
     const cls = cellStatus[i]!;
     return {
       index: i,
       startAddr,
       endAddr,
-      cidr: `${bigIntToIp(startAddr, supernet.kind)}/${unitPrefix}`,
+      cidr: `${bigIntToIp(startAddr, cidr_block.kind)}/${unitPrefix}`,
       status: cls.status,
       allocation: cls.allocation,
     };
@@ -124,8 +124,8 @@ export function buildGrid(
     cellCount,
     cells,
     truncatedToMin:
-      (supernet.kind === "v6" && unitPrefix === MIN_UNIT_PREFIX_V6) ||
-      (supernet.kind === "v4" && unitPrefix === MIN_UNIT_PREFIX_V4),
+      (cidr_block.kind === "v6" && unitPrefix === MIN_UNIT_PREFIX_V6) ||
+      (cidr_block.kind === "v4" && unitPrefix === MIN_UNIT_PREFIX_V4),
   };
 }
 
