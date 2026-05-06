@@ -41,6 +41,12 @@ impl IpamOps {
         self.store.as_ref()
     }
 
+    /// Borrow the inner `Arc<dyn IpamStore>` so other layers (e.g. the
+    /// auth middleware's PAT verifier) can hold their own owned handle
+    /// without needing a second store instance.
+    pub fn store_arc(&self) -> Arc<dyn IpamStore> {
+        Arc::clone(&self.store)
+    }
     /// Acquire (or create) the per-cidr_block allocation mutex. Held for the
     /// duration of allocate / release / update so the read-then-insert
     /// sequence cannot be interleaved with another mutation.
@@ -1076,6 +1082,8 @@ impl IpamOps {
                 caller_email: ctx.caller_email,
                 source_ip: ctx.source_ip,
                 request_id: ctx.request_id,
+                auth_method: ctx.auth_method.unwrap_or_else(|| "oidc".to_string()),
+                pat_id: ctx.pat_id,
             })
             .await
     }

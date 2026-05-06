@@ -1,0 +1,15 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Allowlist for known test fixtures and intentionally-fake credentials"
+paths = [
+  '''tests/fixtures/iap-test-private\.pem''',
+  '''tests/fixtures/.*\.pem''',
+]
+
+# Test PAT fixtures live in src/pat.rs unit tests — `ghp_validlookingbutwrong...`
+# is a deliberate non-secret used to exercise prefix validation.
+regexes = [
+  '''ghp_validlookingbutwrongprefix1234567890''',
+]

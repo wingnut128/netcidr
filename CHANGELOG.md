@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Personal access tokens (PATs).** Long-lived opaque bearer tokens (`ncdr_pat_<43 b64url chars>`) that authenticate against `/ipam/*` and let users call netcidr from CLIs, scripts, and CI without keeping an OIDC ID token fresh. End-to-end across six phases:
+  - **Storage layer.** New `personal_access_tokens` table (SQLite + Postgres migration `007`) with `(tenant_id)`, `(prefix)`, and `UNIQUE(token_hash)` indexes. `IpamStore` gains six methods (`pat_create`, `pat_get_by_hash`, `pat_list_for_owner`, `pat_revoke`, `pat_touch_last_used`, `pat_reap_expired`); `pat_get_by_hash` filters `revoked_at IS NULL AND expires_at > now` in a single SQL predicate. Contract tests in `tests/ipam_store_contract.rs` lock the behavior so any third backend hits the same surface.
+  - **Hashing + minting (`src/pat.rs`).** Pure-function module — `PatPepper` (env-loaded from `NETCIDR_PAT_PEPPER`, redacted `Debug`, ≥16-byte minimum), `MintedToken` (one-time plaintext, public prefix, hash; redacted `Debug`), `mint()` (32 random bytes from `OsRng` + URL-safe-no-pad b64), `hash_for_lookup()` (regex-gated SHA-256 of `secret || pepper`). No I/O, no DB, no clock.
+  - **Auth middleware.** `require_auth` now dispatches by header prefix: `Bearer ncdr_pat_…` → `verify_pat`, `Bearer <jwt>` → existing OIDC, `Bearer <static>` → existing bearer. `Principal` carries `auth_method` (`oidc | pat | bearer`) and `pat_id`. Successful PAT auth fires a detached `tokio::spawn` to `pat_touch_last_used` so the request path never blocks on a write. `serve` startup refuses to boot in OIDC mode without `NETCIDR_PAT_PEPPER` set.
+  - **REST endpoints `/me/tokens`.** `POST` mints (returns plaintext exactly once), `GET` lists summaries (no hash, no plaintext), `DELETE /{id}` revokes idempotently. The router is gated by a `require_oidc` middleware layer so PATs and static-bearer callers cannot mint PATs (closes the privilege-escalation path). Cross-tenant or unknown id on revoke returns 404, never 403, to avoid leaking existence. Seven integration tests in `tests/pat_api_tests.rs` cover the lifecycle, isolation, and validation.
+  - **CLI: `netcidr token list|create|revoke`.** Talks to a remote `netcidr serve` instance over `/me/tokens`. Auth from `NETCIDR_API_TOKEN` (an OIDC ID token, since /me/tokens is OIDC-only); base URL from `NETCIDR_API_URL` or `--api-url`. `create --name <NAME> [--expires-in <DURATION>]` accepts a tightly-bounded `<N><unit>` shape with `unit ∈ {d, w, y}` (no `m` to dodge minute/month ambiguity, no decimals, no compounds, no leading zeros). Output respects `--format json|text|csv|yaml`. End-to-end `tests/cli_token.rs` spawns the in-process router on an ephemeral port and drives the real CLI binary.
+  - **Dashboard `/tokens` page.** React UI with create/list/revoke. The create modal has an expiry picker (30/60/90/180/365 days); the success modal shows the plaintext exactly once with copy-to-clipboard and an explicit "I've saved it" dismiss before the plaintext leaves the DOM. The revoke modal requires explicit confirm with red styling. Sidebar entry only appears for authenticated users.
+- **Audit-log attribution.** `audit_log` rows now carry `auth_method` (default `oidc`) and `pat_id` columns so operations performed via a PAT are distinguishable from interactive OIDC sessions in `query_audit` results.
+
+### Changed
+
+- **Gitleaks: allowlist test fixtures.** Added `.gitleaks.toml` extending the default ruleset to allowlist `tests/fixtures/*.pem` (test private-key fixtures) and the deliberately-fake `ghp_validlookingbutwrongprefix...` literal in `src/pat.rs` used to assert PAT prefix validation. Unblocks the scheduled `gitleaks` workflow on `main`.
+
+### Fixed
+
+- Configure release-plz for git-only releases so version detection comes from Git tags and `cargo publish` is skipped. This lets the release PR/tag/draft GitHub Release flow work for the private binary distribution model, while the existing release workflow continues attaching and publishing the built `netcidr` artifact.
+
 ## [0.24.0] - 2026-05-02
 
 ### Changed
