@@ -214,9 +214,9 @@ dependencies = [
 
 [[package]]
 name = "aws_lambda_events"
-version = "1.1.3"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6714eb6910c2370e48e739252ebf5024c6609ee83fc74cde50a1764949d17974"
+checksum = "d02c123e89527e7b424f74f52d11be0d17ef2887819323a42dcae1c7630ca53d"
 dependencies = [
  "base64",
  "bytes",
@@ -464,9 +464,9 @@ dependencies = [
 
 [[package]]
 name = "clap_complete"
-version = "4.6.3"
+version = "4.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "660c0520455b1013b9bcb0393d5f643d7e4454fb69c915b8d6d2aa0e9a45acc3"
+checksum = "e3e962dae2b1e5007fe9e3db363ddc43a8bf25546d279f7a8a4401204690e80c"
 dependencies = [
  "clap",
 ]
@@ -1798,16 +1798,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d98f6fed1fde3f8c21bc40a1abb88dd75e67924f9cffc3ef95607bad8017f8e2"
 
 [[package]]
-name = "iri-string"
-version = "0.7.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25e659a4bb38e810ebc252e53b5814ff908a8c58c2a9ce2fae1bbec24cbf4e20"
-dependencies = [
- "memchr",
- "serde",
-]
-
-[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1936,9 +1926,9 @@ checksum = "bf36173d4167ed999940f804952e6b08197cae5ad5d572eb4db150ce8ad5d58f"
 
 [[package]]
 name = "lambda_http"
-version = "1.1.3"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "731a62bf6abfb725284454871c73c4e801dc42359f3eecf03e86a98d547c7105"
+checksum = "7b5fc0b7ef9af5e63e348c4b11e7e31eab573603348b7eb9c3e831d8e87c1ecc"
 dependencies = [
  "aws_lambda_events",
  "bytes",
@@ -1961,9 +1951,9 @@ dependencies = [
 
 [[package]]
 name = "lambda_runtime"
-version = "1.1.3"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fcfafa53f881580c291de6a487e7f6d3c5830744fb004581cc82736cac258e2a"
+checksum = "5cc1b380b7fb92ddf3913b01f094c3fcf59e31d995bb609645cd64dcdb56ce63"
 dependencies = [
  "async-stream",
  "base64",
@@ -4236,9 +4226,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
-version = "1.52.1"
+version = "1.52.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b67dee974fe86fd92cc45b7a95fdd2f99a36a6d7b0d431a231178d3d670bbcc6"
+checksum = "8fc7f01b389ac15039e4dc9531aa973a135d7a4135281b12d7c1bc79fd57fffe"
 dependencies = [
  "bytes",
  "libc",
@@ -4397,9 +4387,9 @@ dependencies = [
 
 [[package]]
 name = "tower-http"
-version = "0.6.8"
+version = "0.6.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4e6559d53cc268e5031cd8429d05415bc4cb4aefc4aa5d6cc35fbf5b924a1f8"
+checksum = "68d6fdd9f81c2819c9a8b0e0cd91660e7746a8e6ea2ba7c6b2b057985f6bcb51"
 dependencies = [
  "bitflags 2.11.0",
  "bytes",
@@ -4407,13 +4397,13 @@ dependencies = [
  "http",
  "http-body",
  "http-body-util",
- "iri-string",
  "pin-project-lite",
  "tokio",
  "tower",
  "tower-layer",
  "tower-service",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -4651,9 +4641,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "utoipa"
-version = "5.4.0"
+version = "5.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2fcc29c80c21c31608227e0912b2d7fddba57ad76b606890627ba8ee7964e993"
+checksum = "8bde15df68e80b16c7d16b9616e80770ad158988daa56a27dccd1e55558b0160"
 dependencies = [
  "indexmap",
  "serde",
@@ -4663,9 +4653,9 @@ dependencies = [
 
 [[package]]
 name = "utoipa-gen"
-version = "5.4.0"
+version = "5.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d79d08d92ab8af4c5e8a6da20c47ae3f61a0f1dabc1997cdf2d082b757ca08b"
+checksum = "6ba0b99ee52df3028635d93840c797102da61f8a7bb3cf751032455895b52ef8"
 dependencies = [
  "proc-macro2",
  "quote",
