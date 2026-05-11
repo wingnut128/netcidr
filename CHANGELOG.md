@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.1](https://github.com/wingnut128/netcidr/compare/v0.24.0...v0.24.1) - 2026-05-06
+
+### Added
+
+- personal access tokens ([#153](https://github.com/wingnut128/netcidr/pull/153))
+
+### Other
+
+- Configure release-plz for git-only releases ([#155](https://github.com/wingnut128/netcidr/pull/155))
+- Rename IPAM supernets to CIDR blocks ([#154](https://github.com/wingnut128/netcidr/pull/154))
+- *(deps)* bump lambda_http from 0.13.0 to 1.1.3 ([#152](https://github.com/wingnut128/netcidr/pull/152))
+- *(deps)* bump the cargo-minor-and-patch group with 3 updates ([#149](https://github.com/wingnut128/netcidr/pull/149))
+- *(deps)* bump step-security/harden-runner from 2.18.0 to 2.19.1 ([#147](https://github.com/wingnut128/netcidr/pull/147))
+- *(deps)* bump github/codeql-action from 4.35.2 to 4.35.3 ([#148](https://github.com/wingnut128/netcidr/pull/148))
+
 ### Added
 
 - **Personal access tokens (PATs).** Long-lived opaque bearer tokens (`ncdr_pat_<43 b64url chars>`) that authenticate against `/ipam/*` and let users call netcidr from CLIs, scripts, and CI without keeping an OIDC ID token fresh. End-to-end across six phases:
