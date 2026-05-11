@@ -345,6 +345,7 @@ pub fn create_ipam_router() -> Router {
         (status = 400, description = "Invalid CIDR", body = IpamErrorResponse),
         (status = 409, description = "Overlapping cidr_block", body = IpamErrorResponse),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_create_cidr_block(
@@ -364,6 +365,7 @@ async fn ipam_create_cidr_block(
     responses(
         (status = 200, description = "List of cidr_blocks", body = CidrBlockList),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_list_cidr_blocks(
@@ -392,6 +394,7 @@ async fn ipam_list_cidr_blocks(
         (status = 200, description = "CIDR block details", body = CidrBlock),
         (status = 404, description = "CIDR block not found", body = IpamErrorResponse),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_get_cidr_block(
@@ -416,6 +419,7 @@ async fn ipam_get_cidr_block(
         (status = 404, description = "CIDR block not found", body = IpamErrorResponse),
         (status = 409, description = "CIDR block has active allocations", body = IpamErrorResponse),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_delete_cidr_block(
@@ -442,6 +446,7 @@ async fn ipam_delete_cidr_block(
         (status = 404, description = "CIDR block not found", body = IpamErrorResponse),
         (status = 409, description = "Overlapping allocation", body = IpamErrorResponse),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_allocate_specific(
@@ -498,6 +503,7 @@ async fn ipam_allocate_specific(
         (status = 404, description = "CIDR block not found", body = IpamErrorResponse),
         (status = 422, description = "No free space available", body = IpamErrorResponse),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_auto_allocate(
@@ -558,6 +564,7 @@ async fn ipam_auto_allocate(
         (status = 200, description = "List of allocations", body = AllocationList),
         (status = 404, description = "CIDR block not found", body = IpamErrorResponse),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_list_cidr_block_allocations(
@@ -598,6 +605,7 @@ async fn ipam_list_cidr_block_allocations(
         (status = 200, description = "Free blocks report", body = FreeBlocksReport),
         (status = 404, description = "CIDR block not found", body = IpamErrorResponse),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_free_blocks(
@@ -625,6 +633,7 @@ async fn ipam_free_blocks(
         (status = 200, description = "Utilization report", body = UtilizationReport),
         (status = 404, description = "CIDR block not found", body = IpamErrorResponse),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_utilization(
@@ -648,6 +657,7 @@ async fn ipam_utilization(
         (status = 200, description = "Allocation details", body = Allocation),
         (status = 404, description = "Allocation not found", body = IpamErrorResponse),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_get_allocation(
@@ -672,6 +682,7 @@ async fn ipam_get_allocation(
         (status = 200, description = "Allocation updated", body = Allocation),
         (status = 404, description = "Allocation not found", body = IpamErrorResponse),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_update_allocation(
@@ -696,6 +707,7 @@ async fn ipam_update_allocation(
         (status = 200, description = "Allocation released", body = Allocation),
         (status = 404, description = "Allocation not found", body = IpamErrorResponse),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_release_allocation(
@@ -718,6 +730,7 @@ async fn ipam_release_allocation(
     responses(
         (status = 200, description = "Matching allocations", body = AllocationList),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_find_ip(
@@ -746,6 +759,7 @@ async fn ipam_find_ip(
     responses(
         (status = 200, description = "Matching allocations", body = AllocationList),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_find_resource(
@@ -772,6 +786,7 @@ async fn ipam_find_resource(
     responses(
         (status = 200, description = "Audit log entries", body = AuditList),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_query_audit(
@@ -808,6 +823,7 @@ async fn ipam_query_audit(
         (status = 200, description = "Tags updated, returns allocation", body = Allocation),
         (status = 404, description = "Allocation not found", body = IpamErrorResponse),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_set_tags(
