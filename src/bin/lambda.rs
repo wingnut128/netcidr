@@ -70,10 +70,20 @@ async fn main() -> Result<(), Error> {
         None
     };
 
+    // Keep Lambda startup aligned with `netcidr serve`: OIDC deployments
+    // that can mint PATs must also configure the pepper used to hash and
+    // verify them. Without this, the dashboard can ship token UI while the
+    // Lambda router never mounts /me/tokens.
+    let pat_pepper = if matches!(server.auth_mode, AuthMode::Oidc) {
+        Some(Arc::new(netcidr::pat::PatPepper::from_env()?))
+    } else {
+        None
+    };
+
     let router = create_router(RouterConfig {
         server,
         ipam_ops,
-        pat_pepper: None,
+        pat_pepper,
     });
 
     run(router).await
