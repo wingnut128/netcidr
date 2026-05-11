@@ -149,6 +149,7 @@ impl IpamStore for PostgresStore {
                     .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
             }
         }
+        Self::validate_schema(&self.pool).await?;
         Ok(())
     }
 
@@ -985,6 +986,36 @@ fn pg_row_to_pat(row: sqlx::postgres::PgRow) -> PersonalAccessToken {
 }
 
 impl PostgresStore {
+    async fn validate_schema(pool: &PgPool) -> Result<()> {
+        let rows = sqlx::query(
+            "SELECT required.name \
+             FROM (VALUES \
+                ('cidr_blocks'), \
+                ('allocations'), \
+                ('audit_log'), \
+                ('idempotency_keys'), \
+                ('personal_access_tokens') \
+             ) AS required(name) \
+             WHERE to_regclass(required.name) IS NULL",
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+
+        if !rows.is_empty() {
+            let missing = rows
+                .iter()
+                .map(|row| row.get::<String, _>("name"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(NetcidrError::DatabaseError(format!(
+                "PostgreSQL schema is incomplete after migrations; missing required table(s): {missing}"
+            )));
+        }
+
+        Ok(())
+    }
+
     /// Execute a migration SQL blob. Postgres prepared statements only support
     /// one statement, so we split on `;` — but plpgsql function bodies
     /// (`$$ ... $$`) themselves contain `;`. Track whether we're inside a
