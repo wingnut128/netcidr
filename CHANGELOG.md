@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.3](https://github.com/wingnut128/netcidr/compare/v0.24.2...v0.24.3) - 2026-05-12
+
+### Other
+
+- *(ipam)* move idempotency into IpamOps with wire-format-agnostic cache ([#176](https://github.com/wingnut128/netcidr/pull/176))
+- *(ipam_api)* collapse HTTP body → domain-model field shuffles ([#174](https://github.com/wingnut128/netcidr/pull/174))
+- *(pat)* deepen PatLifecycle to own principal-to-owner translation + tidy-ups ([#172](https://github.com/wingnut128/netcidr/pull/172))
+- ADR-0001 (tenancy-via-explicit-parameter) + consolidate Tenant::LOCAL ([#170](https://github.com/wingnut128/netcidr/pull/170))
+- extract single error-presentation seam across HTTP, /me, and MCP frontends ([#168](https://github.com/wingnut128/netcidr/pull/168))
+- *(api)* document auth endpoints + bearerAuth in OpenAPI ([#165](https://github.com/wingnut128/netcidr/pull/165))
+- *(deps)* bump the cargo-minor-and-patch group across 1 directory with 6 updates ([#161](https://github.com/wingnut128/netcidr/pull/161))
+
 ### Changed
 
 - **Idempotency lives in `IpamOps`, not the HTTP layer.** New `allocate_specific_idempotent`, `allocate_auto_idempotent`, and `batch_allocate_idempotent` methods accept an `Idempotency-Key` and return `IdempotentOutcome<T> { Fresh(T) | Replayed(T) }`. The HTTP API now calls these; the old HTTP-layer `idempotent_post` wrapper is gone. The cache became wire-format-agnostic — operations serialize domain values via serde_json — so CLI and MCP callers can use the same replay protection by forwarding a key. HTTP behaviour is bit-for-bit preserved (replay status, `Idempotent-Replay: true` header, 409 on same-key-different-body, 24h TTL, 64KB body cap, identical scope strings). New `NetcidrError::IdempotencyConflict { key, scope }` variant; the error presenter maps it to 409 with a fixed safe message (the caller-supplied key is never echoed back). Subtle improvement: the request hash now hashes the deserialized input via `serde_json` rather than raw request bytes, so two clients sending logically identical requests with different JSON formatting (whitespace, field order) both replay instead of one getting a spurious 409.
