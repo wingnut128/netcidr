@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **OpenAPI coverage for auth endpoints.** `/me`, `/admin/allowlist`, `/me/tokens` (GET/POST), `/me/tokens/{id}` (DELETE), and `/features` are now annotated with `utoipa::path` and registered in the `ApiDoc`. A new `bearerAuth` security scheme (HTTP Bearer; accepts OIDC JWT, PAT, or static bearer) is declared via a `SecurityAddon` modifier and attached to every protected handler — `/ipam/*` plus the new `/me/*` and `/admin/*` paths — so Swagger UI's "Authorize" button now works. Added an `auth` tag for the identity/allowlist/PAT endpoints and exposed `MeResponse`, `AllowlistResponse`, `FeaturesResponse`, `CreateTokenRequest`, `CreateTokenResponse`, `TokenListResponse`, and `PersonalAccessTokenSummary` as schemas.
+
 ## [0.24.2](https://github.com/wingnut128/netcidr/compare/v0.24.1...v0.24.2) - 2026-05-11
 
 ### Other

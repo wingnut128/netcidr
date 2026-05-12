@@ -492,6 +492,7 @@ pub struct CreatePersonalAccessToken {
 
 /// Public-safe view of a PAT — no plaintext, no hash. Used by `GET /me/tokens`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct PersonalAccessTokenSummary {
     pub id: String,
     pub name: String,

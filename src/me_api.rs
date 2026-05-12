@@ -44,7 +44,9 @@ use crate::pat::PatPepper;
 use crate::pat_lifecycle::{CreatePatRequest, PatLifecycle, PatOwner};
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct CreateTokenRequest {
+    /// Human-readable label for the token (shown in the UI / list response).
     pub name: String,
     /// Number of days from now until the token expires. `None` defaults
     /// to the lifecycle default; values outside `1..=365` are 400.
@@ -54,6 +56,7 @@ pub struct CreateTokenRequest {
 /// One-time response to a successful mint. The `token` field is the
 /// plaintext secret — surfaced exactly once and never again.
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct CreateTokenResponse {
     pub id: String,
     pub name: String,
@@ -68,12 +71,14 @@ pub struct CreateTokenResponse {
 /// `GET /me/tokens` envelope. Mirrors the `CidrBlockList` shape used by
 /// `/ipam/cidr-blocks` — `{ tokens: [...], count: N }`.
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct TokenListResponse {
     pub tokens: Vec<PersonalAccessTokenSummary>,
     pub count: usize,
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 struct ErrorBody {
     error: String,
 }
@@ -126,8 +131,21 @@ pub fn create_me_router() -> Router {
         .layer(middleware::from_fn(require_oidc))
 }
 
+#[cfg_attr(feature = "swagger", utoipa::path(
+    post,
+    path = "/me/tokens",
+    request_body = CreateTokenRequest,
+    responses(
+        (status = 201, description = "PAT minted. The plaintext `token` is returned exactly once.", body = CreateTokenResponse),
+        (status = 400, description = "Invalid request body"),
+        (status = 401, description = "Missing or invalid bearer token"),
+        (status = 403, description = "OIDC authentication required (PAT and static-bearer auth are rejected here)"),
+    ),
+    security(("bearerAuth" = [])),
+    tag = "auth"
+))]
 #[instrument(skip_all, fields(owner_email = %principal.email.as_deref().unwrap_or("<none>")))]
-async fn create_token(
+pub(crate) async fn create_token(
     Extension(ops): Extension<Arc<IpamOps>>,
     Extension(pepper): Extension<Arc<PatPepper>>,
     Extension(principal): Extension<AuthenticatedPrincipal>,
@@ -177,8 +195,19 @@ async fn create_token(
     (StatusCode::CREATED, Json(resp)).into_response()
 }
 
+#[cfg_attr(feature = "swagger", utoipa::path(
+    get,
+    path = "/me/tokens",
+    responses(
+        (status = 200, description = "All PATs (including revoked) owned by the caller", body = TokenListResponse),
+        (status = 401, description = "Missing or invalid bearer token"),
+        (status = 403, description = "OIDC authentication required"),
+    ),
+    security(("bearerAuth" = [])),
+    tag = "auth"
+))]
 #[instrument(skip_all, fields(owner_email = %principal.email.as_deref().unwrap_or("<none>")))]
-async fn list_tokens(
+pub(crate) async fn list_tokens(
     Extension(ops): Extension<Arc<IpamOps>>,
     Extension(pepper): Extension<Arc<PatPepper>>,
     Extension(principal): Extension<AuthenticatedPrincipal>,
@@ -208,8 +237,23 @@ async fn list_tokens(
     }
 }
 
+#[cfg_attr(feature = "swagger", utoipa::path(
+    delete,
+    path = "/me/tokens/{id}",
+    params(
+        ("id" = String, Path, description = "PAT id (from the create/list response)"),
+    ),
+    responses(
+        (status = 204, description = "Token revoked (idempotent — already-revoked tokens also return 204)"),
+        (status = 401, description = "Missing or invalid bearer token"),
+        (status = 403, description = "OIDC authentication required"),
+        (status = 404, description = "Token id not found in the caller's bucket"),
+    ),
+    security(("bearerAuth" = [])),
+    tag = "auth"
+))]
 #[instrument(skip_all, fields(pat_id = %id, owner_email = %principal.email.as_deref().unwrap_or("<none>")))]
-async fn revoke_token(
+pub(crate) async fn revoke_token(
     Extension(ops): Extension<Arc<IpamOps>>,
     Extension(pepper): Extension<Arc<PatPepper>>,
     Extension(principal): Extension<AuthenticatedPrincipal>,
