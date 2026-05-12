@@ -52,20 +52,19 @@ impl TokenClient {
         format!("{}{}", self.base_url, path)
     }
 
+    /// Map a non-success HTTP response from `netcidr serve` to an
+    /// `Upstream { status, message }`. The CLI surfaces the resulting
+    /// error via its Display impl ("upstream error (HTTP 401): …"), so
+    /// the user gets both the status class and the upstream's chosen
+    /// message without this layer doing its own classification.
     async fn map_error(resp: reqwest::Response) -> NetcidrError {
         let status = resp.status().as_u16();
-        let body = resp
+        let message = resp
             .json::<ApiError>()
             .await
             .map(|e| e.error)
             .unwrap_or_else(|_| format!("HTTP {status}"));
-        match status {
-            400 | 422 => NetcidrError::InvalidInput(body),
-            401 => NetcidrError::InvalidInput(format!("authentication failed: {body}")),
-            403 => NetcidrError::InvalidInput(format!("forbidden: {body}")),
-            404 => NetcidrError::InvalidInput(format!("not found: {body}")),
-            _ => NetcidrError::DatabaseError(body),
-        }
+        NetcidrError::Upstream { status, message }
     }
 
     async fn list(&self) -> Result<TokenListResponse> {

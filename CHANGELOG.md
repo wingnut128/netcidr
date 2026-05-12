@@ -9,7 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Error presenter seam (`src/error_presenter.rs`).** A single `present(&NetcidrError) → PresentedError { status, client_msg, log_level }` is now the only place `NetcidrError` becomes a caller-visible response. IPAM HTTP API, `/me/tokens` HTTP API, and MCP tool results all call it; classification, scrubbing, and the "log this at error" decision live in one place. Table-driven unit tests assert every variant against `(status, message, log_level)`; the match has no catch-all, so adding a new variant produces a compile error rather than a silent 500. Added `Error Presenter` and `Presented Error` to `CONTEXT.md`.
+
+- **`NetcidrError::Upstream { status, message }`** for HTTP-client adapters. Replaces the previous flattening of upstream HTTP non-2xx responses to `DatabaseError(body)`, which lost the status code and overloaded a name that should mean "the SQL backend failed."
+
 - **OpenAPI coverage for auth endpoints.** `/me`, `/admin/allowlist`, `/me/tokens` (GET/POST), `/me/tokens/{id}` (DELETE), and `/features` are now annotated with `utoipa::path` and registered in the `ApiDoc`. A new `bearerAuth` security scheme (HTTP Bearer; accepts OIDC JWT, PAT, or static bearer) is declared via a `SecurityAddon` modifier and attached to every protected handler — `/ipam/*` plus the new `/me/*` and `/admin/*` paths — so Swagger UI's "Authorize" button now works. Added an `auth` tag for the identity/allowlist/PAT endpoints and exposed `MeResponse`, `AllowlistResponse`, `FeaturesResponse`, `CreateTokenRequest`, `CreateTokenResponse`, `TokenListResponse`, and `PersonalAccessTokenSummary` as schemas.
+
+### Fixed
+
+- **MCP no longer leaks SQL backend text.** Before, MCP tool errors used `format!("Error: {e}")` directly on `NetcidrError`, so a `DatabaseError` would expose raw SQL driver messages (table names, file paths, constraint names) to the MCP client. The MCP frontend now goes through the error presenter and surfaces `"Error: internal server error"` plus a server-side `tracing::error!`.
+
+- **`mcp_client.rs` and `token_cli.rs` preserve upstream status.** Both used to flatten every non-2xx upstream HTTP response (incl. 401/403/404/409/422) to `DatabaseError(body)`, which the IPAM frontend then mapped back to 500. They now emit `NetcidrError::Upstream { status, message }`, so a 409 from the upstream stays a 409 at the MCP boundary, and a 401 stays a 401 at the CLI.
+
+### Changed
+
+- **Dropped substring-based `DatabaseError` classification in `ipam_api`.** The legacy shim mapped `DatabaseError(msg)` containing `"overlap"`/`"conflict"`/`"not found"` to 409/404. Verified vestigial — overlap rejection has gone through the typed `AllocationConflict` variant since well before this change. All `DatabaseError` now collapses to 500. If a future SQL backend error needs a non-500 status, classify it at the source (in `operations.rs` or the store adapter), not by sniffing strings at the response boundary.
+
+- **`PatNotFound` is canonicalised to `"token not found"` across all HTTP paths.** Previously this was only enforced in the `/me/tokens` mapper; PAT lookups via `/ipam/*` paths fell through to 500. Both surfaces now agree, and the caller-supplied id is never echoed back.
 
 ## [0.24.2](https://github.com/wingnut128/netcidr/compare/v0.24.1...v0.24.2) - 2026-05-11
 

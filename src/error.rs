@@ -90,6 +90,14 @@ pub enum NetcidrError {
 
     #[error("Personal access token not found: {0}")]
     PatNotFound(String),
+
+    /// A response from an upstream HTTP API (e.g. the MCP server's
+    /// remote-API backend, or the `netcidr token` CLI talking to a
+    /// remote `netcidr serve`). Carries the status code and a message
+    /// the upstream chose to expose; both have already passed through
+    /// that upstream's own error presenter.
+    #[error("upstream error (HTTP {status}): {message}")]
+    Upstream { status: u16, message: String },
 }
 
 pub type Result<T> = std::result::Result<T, NetcidrError>;

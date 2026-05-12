@@ -38,6 +38,7 @@ use tracing::{info, instrument, warn};
 
 use crate::auth::{AuthMethod, AuthenticatedPrincipal};
 use crate::error::NetcidrError;
+use crate::error_presenter::{LogLevel, present};
 use crate::ipam::models::PersonalAccessTokenSummary;
 use crate::ipam::operations::IpamOps;
 use crate::pat::PatPepper;
@@ -274,11 +275,9 @@ pub(crate) async fn revoke_token(
         // pat_revoke is idempotent on already-revoked rows by contract,
         // so a successful Ok(_) covers both first-revoke and re-revoke.
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        // Per spec: cross-tenant or unknown id → 404, never 403. Don't
-        // leak whether the id exists in another user's bucket.
-        Err(NetcidrError::PatNotFound(_)) => {
-            error_response(StatusCode::NOT_FOUND, "token not found")
-        }
+        // PatNotFound flows through map_pat_error → presenter → 404
+        // "token not found" without echoing the id. Cross-tenant ids
+        // surface as PatNotFound by spec; never 403.
         Err(e) => {
             warn!(error = %e, "pat_revoke failed");
             map_pat_error(e)
@@ -295,22 +294,13 @@ fn owner_from_principal(principal: &AuthenticatedPrincipal) -> Option<PatOwner> 
     })
 }
 
-/// Map storage-layer errors to HTTP. Mirrors the conservative pattern in
-/// `ipam_api`: never echo raw DB messages, and treat anything we don't
-/// explicitly recognize as 500.
+/// Map storage-layer errors to HTTP via the shared error presenter.
+/// Identical classification, scrubbing, and log policy as `ipam_api`.
 fn map_pat_error(err: NetcidrError) -> Response {
-    match err {
-        NetcidrError::InvalidInput(msg) | NetcidrError::InvalidCidr(msg) => {
-            error_response(StatusCode::BAD_REQUEST, msg)
-        }
-        NetcidrError::PatNotFound(_) => error_response(StatusCode::NOT_FOUND, "token not found"),
-        NetcidrError::DatabaseError(_) => {
-            tracing::error!(error = %err, "database error in /me/tokens");
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal server error")
-        }
-        _ => {
-            tracing::error!(error = %err, "unexpected error in /me/tokens");
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal server error")
-        }
+    let p = present(&err);
+    if p.log_level == LogLevel::Error {
+        tracing::error!(error = %err, "error in /me/tokens");
     }
+    let status = StatusCode::from_u16(p.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    error_response(status, p.client_msg)
 }

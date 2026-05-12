@@ -35,6 +35,7 @@ pub mod dns;
 pub mod config;
 pub mod daemon;
 pub mod error;
+pub mod error_presenter;
 pub mod logging;
 pub mod validation;
 
