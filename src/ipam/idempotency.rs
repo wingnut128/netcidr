@@ -21,9 +21,10 @@
 
 use axum::http::HeaderMap;
 use chrono::{Duration, Utc};
+use serde::{Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 
-use crate::error::Result;
+use crate::error::{NetcidrError, Result};
 use crate::ipam::models::IdempotencyRecord;
 use crate::ipam::store::IpamStore;
 
@@ -121,6 +122,83 @@ pub async fn record(
             request_hash: request_hash.to_string(),
             status_code: status,
             response_body: body.to_string(),
+            created_at: now.to_rfc3339(),
+            expires_at: expires.to_rfc3339(),
+        })
+        .await
+}
+
+// ---------------------------------------------------------------------------
+// Wire-format-agnostic helpers for use from operations.rs.
+//
+// The above check/record API caches raw HTTP response bytes and is
+// scoped to HTTP callers. The helpers below cache serde-serialized
+// domain values so non-HTTP callers (CLI, MCP) can also get replay
+// protection. Status code is hardcoded to 200 in the stored record —
+// operation-layer idempotency does not carry a wire-format status.
+// ---------------------------------------------------------------------------
+
+/// Stable hash of a serializable input, used to detect a key being
+/// reused with a different logical request. Unlike `hash_body`, two
+/// inputs that serialize to the same `serde_json` representation will
+/// hash identically even if their original wire formats differed in
+/// whitespace or field ordering.
+pub fn input_hash<T: Serialize>(input: &T) -> Result<String> {
+    let bytes = serde_json::to_vec(input)?;
+    Ok(hash_body(&bytes))
+}
+
+/// Look up a cached response for `(tenant_id, key, scope)`.
+///
+/// - `Ok(Some(value))` — cached entry exists and `request_hash` matches.
+///   Caller should return `value` as a replay without re-running the op.
+/// - `Ok(None)` — no cached entry. Caller proceeds with the operation
+///   and should call [`record_output`] when it succeeds.
+/// - `Err(IdempotencyConflict { .. })` — cached entry exists but
+///   `request_hash` differs. Caller surfaces the error to its frontend.
+pub async fn try_replay<T: DeserializeOwned>(
+    store: &dyn IpamStore,
+    tenant_id: &str,
+    key: &str,
+    scope: &str,
+    request_hash: &str,
+) -> Result<Option<T>> {
+    let Some(existing) = store.idempotency_get(tenant_id, key, scope).await? else {
+        return Ok(None);
+    };
+    if existing.request_hash != request_hash {
+        return Err(NetcidrError::IdempotencyConflict {
+            key: key.to_string(),
+            scope: scope.to_string(),
+        });
+    }
+    let value = serde_json::from_str::<T>(&existing.response_body)?;
+    Ok(Some(value))
+}
+
+/// Persist a freshly-computed `output` so subsequent calls with the
+/// same `(tenant_id, key, scope, request_hash)` replay it instead of
+/// re-running the operation. Failures are returned to the caller; the
+/// caller decides whether to surface them or warn-and-continue.
+pub async fn record_output<T: Serialize>(
+    store: &dyn IpamStore,
+    tenant_id: &str,
+    key: &str,
+    scope: &str,
+    request_hash: &str,
+    output: &T,
+) -> Result<()> {
+    let body = serde_json::to_string(output)?;
+    let now = Utc::now();
+    let expires = now + TTL;
+    store
+        .idempotency_put(&IdempotencyRecord {
+            tenant_id: tenant_id.to_string(),
+            key: key.to_string(),
+            scope: scope.to_string(),
+            request_hash: request_hash.to_string(),
+            status_code: 200,
+            response_body: body,
             created_at: now.to_rfc3339(),
             expires_at: expires.to_rfc3339(),
         })
