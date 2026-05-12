@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **ADR-0001 (`docs/adr/0001-tenancy-via-explicit-parameter.md`).** Formalises the existing multi-tenant isolation design decision: every `IpamOps` and `IpamStore` method that touches tenant-scoped data takes `tenant_id: &str` as an explicit parameter; no task-local context. Records the rejected alternative (task-local tenancy mirroring `audit_context`) and the conditions under which to revisit. Establishes `docs/adr/` as the location for future architectural decisions.
+
+- **`Tenant::LOCAL` constant** on the existing `Tenant` newtype, naming the `"local"` tenant id used by single-tenant frontends. Replaces the duplicated `CLI_TENANT_ID` in `src/ipam_cli.rs` and `MCP_LOCAL_TENANT_ID` in `src/mcp.rs` so they can't drift.
+
 - **Error presenter seam (`src/error_presenter.rs`).** A single `present(&NetcidrError) → PresentedError { status, client_msg, log_level }` is now the only place `NetcidrError` becomes a caller-visible response. IPAM HTTP API, `/me/tokens` HTTP API, and MCP tool results all call it; classification, scrubbing, and the "log this at error" decision live in one place. Table-driven unit tests assert every variant against `(status, message, log_level)`; the match has no catch-all, so adding a new variant produces a compile error rather than a silent 500. Added `Error Presenter` and `Presented Error` to `CONTEXT.md`.
 
 - **`NetcidrError::Upstream { status, message }`** for HTTP-client adapters. Replaces the previous flattening of upstream HTTP non-2xx responses to `DatabaseError(body)`, which lost the status code and overloaded a name that should mean "the SQL backend failed."

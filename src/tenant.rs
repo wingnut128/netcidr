@@ -14,6 +14,12 @@ use axum::{
 pub struct Tenant(pub String);
 
 impl Tenant {
+    /// The tenant id used by single-tenant frontends — the CLI and the
+    /// local MCP backend. Multi-tenant frontends (HTTP API, remote MCP)
+    /// derive their tenant from the authenticated principal instead.
+    /// See ADR-0001.
+    pub const LOCAL: &str = "local";
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
