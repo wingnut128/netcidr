@@ -90,6 +90,15 @@ pub fn present(err: &NetcidrError) -> PresentedError {
             log_level: LogLevel::None,
         },
 
+        // 409 — idempotency-key reuse. Don't echo the key or scope back
+        // to the caller; the safe message is sufficient and the key may
+        // be sensitive (caller-supplied opaque string).
+        IdempotencyConflict { .. } => PresentedError {
+            status: 409,
+            client_msg: "Idempotency-Key reused with a different request body".to_string(),
+            log_level: LogLevel::None,
+        },
+
         // 422 — domain rule violated by an otherwise-valid request
         NoFreeSpace { .. } => PresentedError {
             status: 422,
@@ -294,6 +303,22 @@ mod tests {
             NetcidrError::CidrBlockHasActiveAllocations("sn1".into()),
             409,
             "CIDR block sn1 has active allocations and cannot be deleted",
+            LogLevel::None,
+        );
+    }
+
+    #[test]
+    fn idempotency_conflict_scrubs_key_and_scope() {
+        // The caller's `key` and `scope` are NOT echoed back — the safe
+        // message is a fixed string. Defense-in-depth against the caller
+        // putting sensitive data in the key.
+        case(
+            NetcidrError::IdempotencyConflict {
+                key: "caller-supplied-secret-tag".into(),
+                scope: "allocate-specific:abc".into(),
+            },
+            409,
+            "Idempotency-Key reused with a different request body",
             LogLevel::None,
         );
     }
