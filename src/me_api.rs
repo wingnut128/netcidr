@@ -40,8 +40,6 @@ use crate::auth::{AuthMethod, AuthenticatedPrincipal};
 use crate::error::NetcidrError;
 use crate::error_presenter::{LogLevel, present};
 use crate::ipam::models::PersonalAccessTokenSummary;
-use crate::ipam::operations::IpamOps;
-use crate::pat::PatPepper;
 use crate::pat_lifecycle::{CreatePatRequest, PatLifecycle, PatOwner};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -147,8 +145,7 @@ pub fn create_me_router() -> Router {
 ))]
 #[instrument(skip_all, fields(owner_email = %principal.email.as_deref().unwrap_or("<none>")))]
 pub(crate) async fn create_token(
-    Extension(ops): Extension<Arc<IpamOps>>,
-    Extension(pepper): Extension<Arc<PatPepper>>,
+    Extension(lifecycle): Extension<Arc<PatLifecycle>>,
     Extension(principal): Extension<AuthenticatedPrincipal>,
     Json(body): Json<CreateTokenRequest>,
 ) -> Response {
@@ -165,7 +162,6 @@ pub(crate) async fn create_token(
         }
     };
 
-    let lifecycle = PatLifecycle::new(ops.store_arc(), pepper);
     let minted = match lifecycle
         .mint_for_owner(
             &owner,
@@ -209,8 +205,7 @@ pub(crate) async fn create_token(
 ))]
 #[instrument(skip_all, fields(owner_email = %principal.email.as_deref().unwrap_or("<none>")))]
 pub(crate) async fn list_tokens(
-    Extension(ops): Extension<Arc<IpamOps>>,
-    Extension(pepper): Extension<Arc<PatPepper>>,
+    Extension(lifecycle): Extension<Arc<PatLifecycle>>,
     Extension(principal): Extension<AuthenticatedPrincipal>,
 ) -> Response {
     let owner = match owner_from_principal(&principal) {
@@ -223,7 +218,6 @@ pub(crate) async fn list_tokens(
         }
     };
 
-    let lifecycle = PatLifecycle::new(ops.store_arc(), pepper);
     match lifecycle.list_for_owner(&owner).await {
         Ok(tokens) => {
             // Soft-delete contract: revoked rows stay visible to their
@@ -255,8 +249,7 @@ pub(crate) async fn list_tokens(
 ))]
 #[instrument(skip_all, fields(pat_id = %id, owner_email = %principal.email.as_deref().unwrap_or("<none>")))]
 pub(crate) async fn revoke_token(
-    Extension(ops): Extension<Arc<IpamOps>>,
-    Extension(pepper): Extension<Arc<PatPepper>>,
+    Extension(lifecycle): Extension<Arc<PatLifecycle>>,
     Extension(principal): Extension<AuthenticatedPrincipal>,
     Path(id): Path<String>,
 ) -> Response {
@@ -270,7 +263,6 @@ pub(crate) async fn revoke_token(
         }
     };
 
-    let lifecycle = PatLifecycle::new(ops.store_arc(), pepper);
     match lifecycle.revoke_for_owner(&owner, &id).await {
         // pat_revoke is idempotent on already-revoked rows by contract,
         // so a successful Ok(_) covers both first-revoke and re-revoke.

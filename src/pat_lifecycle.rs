@@ -108,14 +108,6 @@ impl PatLifecycle {
             .await
             .map(|_| ())
     }
-
-    pub async fn verify_bearer_token(
-        &self,
-        token: &str,
-        allowed_emails: &[String],
-    ) -> std::result::Result<VerifiedPat, VerifyPatError> {
-        verify_bearer_token(&self.store, self.pepper.as_ref(), allowed_emails, token).await
-    }
 }
 
 pub async fn verify_bearer_token(

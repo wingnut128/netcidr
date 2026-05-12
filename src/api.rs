@@ -441,9 +441,12 @@ pub fn create_router(config: RouterConfig) -> Router {
         // OIDC, PAT, and bearer.
         if let Some(pepper) = config.pat_pepper.as_ref() {
             let me_auth = auth_config.clone();
+            let lifecycle = Arc::new(crate::pat_lifecycle::PatLifecycle::new(
+                ops.store_arc(),
+                Arc::clone(pepper),
+            ));
             let me_router = crate::me_api::create_me_router()
-                .layer(Extension(Arc::clone(&ops)))
-                .layer(Extension(Arc::clone(pepper)))
+                .layer(Extension(lifecycle))
                 .layer(middleware::from_fn(move |request, next| {
                     let auth_config = me_auth.clone();
                     async move { require_auth(auth_config, request, next).await }
