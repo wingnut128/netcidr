@@ -13,73 +13,28 @@ use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::error::NetcidrError;
+use crate::error_presenter::{LogLevel, present};
 use crate::ipam::idempotency;
 use crate::ipam::models::*;
 use crate::ipam::operations::IpamOps;
 
 // ---------------------------------------------------------------------------
-// Error mapping
+// Error mapping — thin adapter over `error_presenter::present`. All
+// classification, scrubbing, and log-policy lives there.
 // ---------------------------------------------------------------------------
 
 pub(crate) fn error_to_status_value(err: NetcidrError) -> (StatusCode, serde_json::Value) {
-    let (status, client_msg) = error_to_parts(&err);
-    (status, serde_json::json!({ "error": client_msg }))
+    let p = present(&err);
+    if p.log_level == LogLevel::Error {
+        tracing::error!(error = %err, "ipam request failed");
+    }
+    let status = StatusCode::from_u16(p.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    (status, serde_json::json!({ "error": p.client_msg }))
 }
 
 fn ipam_error_response(err: NetcidrError) -> Response {
-    let (status, client_msg) = error_to_parts(&err);
-    let body = serde_json::json!({ "error": client_msg });
+    let (status, body) = error_to_status_value(err);
     (status, Json(body)).into_response()
-}
-
-fn error_to_parts(err: &NetcidrError) -> (StatusCode, String) {
-    match err {
-        NetcidrError::InvalidCidr(_)
-        | NetcidrError::InvalidPrefixLength { .. }
-        | NetcidrError::InvalidInput(_)
-        | NetcidrError::InvalidSubnetSplit { .. }
-        | NetcidrError::InvalidIpv4Address(_)
-        | NetcidrError::InvalidIpv6Address(_) => (StatusCode::BAD_REQUEST, err.to_string()),
-
-        NetcidrError::CidrBlockNotFound(_) | NetcidrError::AllocationNotFound(_) => {
-            (StatusCode::NOT_FOUND, err.to_string())
-        }
-
-        NetcidrError::AllocationConflict { .. }
-        | NetcidrError::CidrBlockHasActiveAllocations(_) => (StatusCode::CONFLICT, err.to_string()),
-
-        NetcidrError::NoFreeSpace { .. } => (StatusCode::UNPROCESSABLE_ENTITY, err.to_string()),
-
-        // DatabaseError: classify by content for status code, but never expose
-        // raw DB messages (table names, file paths, constraint names) to clients.
-        NetcidrError::DatabaseError(msg)
-            if msg.contains("not found") || msg.contains("No cidr_block") =>
-        {
-            tracing::error!(error = %err, "database error");
-            (StatusCode::NOT_FOUND, "not found".to_string())
-        }
-
-        NetcidrError::DatabaseError(msg) if msg.contains("overlap") || msg.contains("conflict") => {
-            tracing::error!(error = %err, "database error");
-            (StatusCode::CONFLICT, "allocation conflict".to_string())
-        }
-
-        NetcidrError::DatabaseError(_) => {
-            tracing::error!(error = %err, "database error");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal server error".to_string(),
-            )
-        }
-
-        _ => {
-            tracing::error!(error = %err, "unexpected error");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal server error".to_string(),
-            )
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------

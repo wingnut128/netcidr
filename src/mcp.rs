@@ -366,7 +366,13 @@ fn is_ipv6(s: &str) -> bool {
 fn result_to_string<T: serde::Serialize>(result: crate::error::Result<T>) -> String {
     match result {
         Ok(val) => serde_json::to_string_pretty(&val).unwrap_or_else(|e| format!("Error: {e}")),
-        Err(e) => format!("Error: {e}"),
+        Err(e) => {
+            let p = crate::error_presenter::present(&e);
+            if p.log_level == crate::error_presenter::LogLevel::Error {
+                tracing::error!(error = %e, "mcp tool failed");
+            }
+            format!("Error: {}", p.client_msg)
+        }
     }
 }
 
