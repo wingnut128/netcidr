@@ -34,6 +34,16 @@ impl<T> IdempotentOutcome<T> {
     pub fn is_replayed(&self) -> bool {
         matches!(self, Self::Replayed(_))
     }
+
+    /// Transform the inner value while preserving the Fresh/Replayed
+    /// variant. Used by frontends that wrap the domain value before
+    /// serializing (e.g. HTTP `Vec<Allocation>` → `AllocationList`).
+    pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> IdempotentOutcome<U> {
+        match self {
+            Self::Fresh(v) => IdempotentOutcome::Fresh(f(v)),
+            Self::Replayed(v) => IdempotentOutcome::Replayed(f(v)),
+        }
+    }
 }
 
 /// High-level IPAM operations that sit above the store trait.

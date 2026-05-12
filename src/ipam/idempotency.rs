@@ -27,6 +27,13 @@ use sha2::{Digest, Sha256};
 use crate::error::{NetcidrError, Result};
 use crate::ipam::models::IdempotencyRecord;
 use crate::ipam::store::IpamStore;
+//
+// This module owns the persistence + helpers for idempotency keys.
+// The wire-format-agnostic `try_replay<T>` / `record_output<T>` /
+// `input_hash<T>` are the canonical API; they serialize domain values
+// via serde_json and are consumed by `IpamOps::*_idempotent`.
+// `key_from_headers` and `MAX_BODY_BYTES` stay here for HTTP callers.
+//
 
 /// Cached records expire after this window. Long enough for retry storms
 /// (network blips, retries-with-backoff in clients) without unbounded
@@ -38,21 +45,9 @@ pub const TTL: Duration = Duration::hours(24);
 /// `idempotency_keys` table with huge cached payloads.
 pub const MAX_BODY_BYTES: usize = 64 * 1024;
 
-#[derive(Debug)]
-pub enum Outcome {
-    /// No key supplied; caller proceeds normally and does not store anything.
-    NoKey,
-    /// Key present and unseen; caller proceeds, then records the result.
-    Proceed { key: String, request_hash: String },
-    /// Key present and the cached request matches; caller returns the
-    /// cached response without re-running the operation.
-    Replay { status: u16, body: String },
-    /// Key present but bound to a *different* request body; caller must
-    /// return `409 Conflict`.
-    Conflict,
-}
-
-/// Look up the `Idempotency-Key` header.
+/// Look up the `Idempotency-Key` header. HTTP callers use this to
+/// fish out the opaque caller-supplied string before forwarding it to
+/// the appropriate `IpamOps::*_idempotent` method.
 pub fn key_from_headers(headers: &HeaderMap) -> Option<String> {
     headers
         .get("idempotency-key")
@@ -61,88 +56,17 @@ pub fn key_from_headers(headers: &HeaderMap) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// Stable hex SHA-256 of the request body. Used to detect a key being
-/// reused with a different payload.
-pub fn hash_body(body: &[u8]) -> String {
+/// Hex SHA-256 of arbitrary bytes. Internal helper for [`input_hash`].
+fn hash_body(body: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(body);
     format!("{:x}", hasher.finalize())
 }
 
-/// Decide whether to proceed with the operation, replay a cached
-/// response, or reject as a conflict.
-///
-/// `tenant_id` scopes the lookup so the same key reused by a different
-/// tenant is treated as a fresh request.
-pub async fn check(
-    store: &dyn IpamStore,
-    tenant_id: &str,
-    headers: &HeaderMap,
-    scope: &str,
-    body: &[u8],
-) -> Result<Outcome> {
-    let Some(key) = key_from_headers(headers) else {
-        return Ok(Outcome::NoKey);
-    };
-
-    let request_hash = hash_body(body);
-
-    if let Some(existing) = store.idempotency_get(tenant_id, &key, scope).await? {
-        if existing.request_hash == request_hash {
-            return Ok(Outcome::Replay {
-                status: existing.status_code,
-                body: existing.response_body,
-            });
-        }
-        return Ok(Outcome::Conflict);
-    }
-
-    Ok(Outcome::Proceed { key, request_hash })
-}
-
-/// Persist a `(tenant_id, key, scope, request_hash) -> response` mapping.
-/// Called after the operation succeeded *or* failed deterministically
-/// (e.g. 4xx) so retries return the same outcome.
-pub async fn record(
-    store: &dyn IpamStore,
-    tenant_id: &str,
-    key: &str,
-    scope: &str,
-    request_hash: &str,
-    status: u16,
-    body: &str,
-) -> Result<()> {
-    let now = Utc::now();
-    let expires = now + TTL;
-    store
-        .idempotency_put(&IdempotencyRecord {
-            tenant_id: tenant_id.to_string(),
-            key: key.to_string(),
-            scope: scope.to_string(),
-            request_hash: request_hash.to_string(),
-            status_code: status,
-            response_body: body.to_string(),
-            created_at: now.to_rfc3339(),
-            expires_at: expires.to_rfc3339(),
-        })
-        .await
-}
-
-// ---------------------------------------------------------------------------
-// Wire-format-agnostic helpers for use from operations.rs.
-//
-// The above check/record API caches raw HTTP response bytes and is
-// scoped to HTTP callers. The helpers below cache serde-serialized
-// domain values so non-HTTP callers (CLI, MCP) can also get replay
-// protection. Status code is hardcoded to 200 in the stored record —
-// operation-layer idempotency does not carry a wire-format status.
-// ---------------------------------------------------------------------------
-
 /// Stable hash of a serializable input, used to detect a key being
-/// reused with a different logical request. Unlike `hash_body`, two
-/// inputs that serialize to the same `serde_json` representation will
-/// hash identically even if their original wire formats differed in
-/// whitespace or field ordering.
+/// reused with a different logical request. Two inputs that serialize
+/// to the same `serde_json` representation hash identically even if
+/// their original wire formats differed in whitespace or field ordering.
 ///
 /// `?Sized` allows slice references (e.g. `&[BatchAllocateItem]`).
 pub fn input_hash<T: Serialize + ?Sized>(input: &T) -> Result<String> {
