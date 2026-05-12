@@ -100,7 +100,7 @@ pub struct Allocation {
     pub expires_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateAllocation {
     pub cidr_block_id: String,
     pub cidr: String,
@@ -117,7 +117,7 @@ pub struct CreateAllocation {
     pub ttl_seconds: Option<u64>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutoAllocateRequest {
     pub cidr_block_id: String,
     pub prefix_length: u8,

@@ -143,7 +143,9 @@ pub async fn record(
 /// inputs that serialize to the same `serde_json` representation will
 /// hash identically even if their original wire formats differed in
 /// whitespace or field ordering.
-pub fn input_hash<T: Serialize>(input: &T) -> Result<String> {
+///
+/// `?Sized` allows slice references (e.g. `&[BatchAllocateItem]`).
+pub fn input_hash<T: Serialize + ?Sized>(input: &T) -> Result<String> {
     let bytes = serde_json::to_vec(input)?;
     Ok(hash_body(&bytes))
 }
@@ -180,7 +182,7 @@ pub async fn try_replay<T: DeserializeOwned>(
 /// same `(tenant_id, key, scope, request_hash)` replay it instead of
 /// re-running the operation. Failures are returned to the caller; the
 /// caller decides whether to surface them or warn-and-continue.
-pub async fn record_output<T: Serialize>(
+pub async fn record_output<T: Serialize + ?Sized>(
     store: &dyn IpamStore,
     tenant_id: &str,
     key: &str,
