@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use tracing::warn;
 
+use crate::auth::AuthenticatedPrincipal;
 use crate::error::{NetcidrError, Result};
 use crate::ipam::models::{CreatePersonalAccessToken, PersonalAccessTokenSummary};
 use crate::ipam::store::IpamStore;
@@ -108,6 +109,71 @@ impl PatLifecycle {
             .await
             .map(|_| ())
     }
+
+    /// Mint a PAT for the identity carried by `principal`. The lifecycle
+    /// owns the principal-to-owner translation so HTTP handlers don't
+    /// reimplement it. Returns `NoVerifiedEmail` if the principal is
+    /// missing the email that becomes the tenant/owner key.
+    pub async fn mint_for_principal(
+        &self,
+        principal: &AuthenticatedPrincipal,
+        request: CreatePatRequest,
+    ) -> std::result::Result<MintedPat, MintForPrincipalError> {
+        let owner =
+            owner_from_principal(principal).ok_or(MintForPrincipalError::NoVerifiedEmail)?;
+        self.mint_for_owner(&owner, request)
+            .await
+            .map_err(MintForPrincipalError::Lifecycle)
+    }
+
+    /// List the PATs owned by the identity carried by `principal`.
+    pub async fn list_for_principal(
+        &self,
+        principal: &AuthenticatedPrincipal,
+    ) -> std::result::Result<Vec<PersonalAccessTokenSummary>, MintForPrincipalError> {
+        let owner =
+            owner_from_principal(principal).ok_or(MintForPrincipalError::NoVerifiedEmail)?;
+        self.list_for_owner(&owner)
+            .await
+            .map_err(MintForPrincipalError::Lifecycle)
+    }
+
+    /// Revoke a PAT belonging to the identity carried by `principal`.
+    pub async fn revoke_for_principal(
+        &self,
+        principal: &AuthenticatedPrincipal,
+        id: &str,
+    ) -> std::result::Result<(), MintForPrincipalError> {
+        let owner =
+            owner_from_principal(principal).ok_or(MintForPrincipalError::NoVerifiedEmail)?;
+        self.revoke_for_owner(&owner, id)
+            .await
+            .map_err(MintForPrincipalError::Lifecycle)
+    }
+}
+
+/// Failure modes for the `*_for_principal` family. Separates "the
+/// principal can't be mapped to a PAT owner" (a 403 the auth layer
+/// should have caught — surfaced explicitly for defense in depth)
+/// from downstream lifecycle errors that pass through unchanged.
+#[derive(Debug)]
+pub enum MintForPrincipalError {
+    NoVerifiedEmail,
+    Lifecycle(NetcidrError),
+}
+
+/// Translate an authenticated OIDC principal into the `PatOwner` that
+/// keys storage. Today `tenant_id == email`; both fields are denormalised
+/// for lookup ergonomics. Returns `None` if the principal lacks the
+/// verified email — `require_auth` enforces this for OIDC mode, but the
+/// lifecycle defends in depth.
+fn owner_from_principal(principal: &AuthenticatedPrincipal) -> Option<PatOwner> {
+    let email = principal.email.clone()?;
+    Some(PatOwner {
+        tenant_id: email.clone(),
+        subject: principal.subject.clone(),
+        email,
+    })
 }
 
 pub async fn verify_bearer_token(

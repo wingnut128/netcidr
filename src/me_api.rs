@@ -40,7 +40,7 @@ use crate::auth::{AuthMethod, AuthenticatedPrincipal};
 use crate::error::NetcidrError;
 use crate::error_presenter::{LogLevel, present};
 use crate::ipam::models::PersonalAccessTokenSummary;
-use crate::pat_lifecycle::{CreatePatRequest, PatLifecycle, PatOwner};
+use crate::pat_lifecycle::{CreatePatRequest, MintForPrincipalError, PatLifecycle};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
@@ -50,6 +50,15 @@ pub struct CreateTokenRequest {
     /// Number of days from now until the token expires. `None` defaults
     /// to the lifecycle default; values outside `1..=365` are 400.
     pub expires_in_days: Option<u32>,
+}
+
+impl From<CreateTokenRequest> for CreatePatRequest {
+    fn from(r: CreateTokenRequest) -> Self {
+        Self {
+            name: r.name,
+            expires_in_days: r.expires_in_days,
+        }
+    }
 }
 
 /// One-time response to a successful mint. The `token` field is the
@@ -149,34 +158,9 @@ pub(crate) async fn create_token(
     Extension(principal): Extension<AuthenticatedPrincipal>,
     Json(body): Json<CreateTokenRequest>,
 ) -> Response {
-    // 1. Pull required identity fields off the principal. OIDC requires
-    //    a verified email; the require_auth layer already enforces this
-    //    for OIDC mode, but defend in depth.
-    let owner = match owner_from_principal(&principal) {
-        Some(owner) => owner,
-        None => {
-            return error_response(
-                StatusCode::FORBIDDEN,
-                "OIDC principal has no verified email; cannot mint tokens",
-            );
-        }
-    };
-
-    let minted = match lifecycle
-        .mint_for_owner(
-            &owner,
-            CreatePatRequest {
-                name: body.name,
-                expires_in_days: body.expires_in_days,
-            },
-        )
-        .await
-    {
+    let minted = match lifecycle.mint_for_principal(&principal, body.into()).await {
         Ok(minted) => minted,
-        Err(e) => {
-            warn!(error = %e, "PAT mint failed");
-            return map_pat_error(e);
-        }
+        Err(e) => return map_principal_error(e, "mint token"),
     };
 
     info!(pat_id = %minted.summary.id, "PAT minted");
@@ -208,27 +192,14 @@ pub(crate) async fn list_tokens(
     Extension(lifecycle): Extension<Arc<PatLifecycle>>,
     Extension(principal): Extension<AuthenticatedPrincipal>,
 ) -> Response {
-    let owner = match owner_from_principal(&principal) {
-        Some(owner) => owner,
-        None => {
-            return error_response(
-                StatusCode::FORBIDDEN,
-                "OIDC principal has no verified email",
-            );
-        }
-    };
-
-    match lifecycle.list_for_owner(&owner).await {
+    match lifecycle.list_for_principal(&principal).await {
         Ok(tokens) => {
             // Soft-delete contract: revoked rows stay visible to their
             // owner with `revoked_at` set. Don't filter them out here.
             let count = tokens.len();
             Json(TokenListResponse { tokens, count }).into_response()
         }
-        Err(e) => {
-            warn!(error = %e, "pat_list_for_owner failed");
-            map_pat_error(e)
-        }
+        Err(e) => map_principal_error(e, "list tokens"),
     }
 }
 
@@ -253,37 +224,32 @@ pub(crate) async fn revoke_token(
     Extension(principal): Extension<AuthenticatedPrincipal>,
     Path(id): Path<String>,
 ) -> Response {
-    let owner = match owner_from_principal(&principal) {
-        Some(owner) => owner,
-        None => {
-            return error_response(
-                StatusCode::FORBIDDEN,
-                "OIDC principal has no verified email",
-            );
-        }
-    };
-
-    match lifecycle.revoke_for_owner(&owner, &id).await {
-        // pat_revoke is idempotent on already-revoked rows by contract,
-        // so a successful Ok(_) covers both first-revoke and re-revoke.
+    // pat_revoke is idempotent on already-revoked rows by contract,
+    // so a successful Ok(_) covers both first-revoke and re-revoke.
+    // PatNotFound (including cross-tenant ids by spec) flows through
+    // map_pat_error → presenter → 404 "token not found" without
+    // echoing the id; never 403.
+    match lifecycle.revoke_for_principal(&principal, &id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        // PatNotFound flows through map_pat_error → presenter → 404
-        // "token not found" without echoing the id. Cross-tenant ids
-        // surface as PatNotFound by spec; never 403.
-        Err(e) => {
-            warn!(error = %e, "pat_revoke failed");
-            map_pat_error(e)
-        }
+        Err(e) => map_principal_error(e, "revoke token"),
     }
 }
 
-fn owner_from_principal(principal: &AuthenticatedPrincipal) -> Option<PatOwner> {
-    let email = principal.email.clone()?;
-    Some(PatOwner {
-        tenant_id: email.clone(),
-        subject: principal.subject.clone(),
-        email,
-    })
+/// Map a `MintForPrincipalError` to an HTTP response. NoVerifiedEmail
+/// surfaces as 403 (the auth layer should have caught it, but the
+/// lifecycle defends in depth). Lifecycle errors go through the shared
+/// presenter and inherit its scrubbing.
+fn map_principal_error(err: MintForPrincipalError, action: &str) -> Response {
+    match err {
+        MintForPrincipalError::NoVerifiedEmail => error_response(
+            StatusCode::FORBIDDEN,
+            format!("OIDC principal has no verified email; cannot {action}"),
+        ),
+        MintForPrincipalError::Lifecycle(e) => {
+            warn!(error = %e, action = %action, "pat operation failed");
+            map_pat_error(e)
+        }
+    }
 }
 
 /// Map storage-layer errors to HTTP via the shared error presenter.
