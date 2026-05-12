@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- S3-backed SQLite sync for Lambda deployments (`NETCIDR_S3_BUCKET` env var). Setting this variable switches the Lambda binary from Postgres to SQLite, pulling the database from S3 on cold start and pushing it back after every mutating request. Eliminates the need for an RDS instance (~$0.01/mo in S3 costs vs ~$15/mo for RDS). Requires `reserved_concurrency = 1` on the Lambda function to prevent split-brain from concurrent containers.
+
 ## [0.24.3](https://github.com/wingnut128/netcidr/compare/v0.24.2...v0.24.3) - 2026-05-12
 
 ### Other
