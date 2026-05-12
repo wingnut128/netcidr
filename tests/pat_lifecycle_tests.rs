@@ -3,18 +3,22 @@ use std::sync::Arc;
 use netcidr::ipam::sqlite::SqliteStore;
 use netcidr::ipam::store::IpamStore;
 use netcidr::pat::PatPepper;
-use netcidr::pat_lifecycle::{CreatePatRequest, PatLifecycle, PatOwner, VerifyPatError};
+use netcidr::pat_lifecycle::{self, CreatePatRequest, PatLifecycle, PatOwner, VerifyPatError};
 
 const OWNER_EMAIL: &str = "owner@example.com";
 const OWNER_SUB: &str = "oidc-sub-123";
 
-async fn lifecycle() -> (PatLifecycle, Arc<PatPepper>) {
+async fn lifecycle() -> (PatLifecycle, Arc<dyn IpamStore>, Arc<PatPepper>) {
     let store = SqliteStore::in_memory().unwrap();
     store.initialize().await.unwrap();
     store.migrate().await.unwrap();
     let store: Arc<dyn IpamStore> = Arc::new(store);
     let pepper = Arc::new(PatPepper::from_bytes(&[0xA5u8; 32]).unwrap());
-    (PatLifecycle::new(store, Arc::clone(&pepper)), pepper)
+    (
+        PatLifecycle::new(Arc::clone(&store), Arc::clone(&pepper)),
+        store,
+        pepper,
+    )
 }
 
 fn owner() -> PatOwner {
@@ -27,7 +31,7 @@ fn owner() -> PatOwner {
 
 #[tokio::test]
 async fn lifecycle_mints_lists_and_verifies_for_owner() {
-    let (lifecycle, _pepper) = lifecycle().await;
+    let (lifecycle, store, pepper) = lifecycle().await;
 
     let minted = lifecycle
         .mint_for_owner(
@@ -47,8 +51,7 @@ async fn lifecycle_mints_lists_and_verifies_for_owner() {
     let listed = lifecycle.list_for_owner(&owner()).await.unwrap();
     assert_eq!(listed, vec![minted.summary.clone()]);
 
-    let verified = lifecycle
-        .verify_bearer_token(&minted.plaintext, &[])
+    let verified = pat_lifecycle::verify_bearer_token(&store, &pepper, &[], &minted.plaintext)
         .await
         .unwrap();
     assert_eq!(verified.pat_id, minted.summary.id);
@@ -59,7 +62,7 @@ async fn lifecycle_mints_lists_and_verifies_for_owner() {
 
 #[tokio::test]
 async fn lifecycle_rejects_invalid_create_policy_before_storage() {
-    let (lifecycle, _pepper) = lifecycle().await;
+    let (lifecycle, _store, _pepper) = lifecycle().await;
 
     assert!(
         lifecycle
@@ -101,7 +104,7 @@ async fn lifecycle_rejects_invalid_create_policy_before_storage() {
 
 #[tokio::test]
 async fn lifecycle_verify_collapses_shape_miss_and_allowlist_failures() {
-    let (lifecycle, _pepper) = lifecycle().await;
+    let (lifecycle, store, pepper) = lifecycle().await;
     let minted = lifecycle
         .mint_for_owner(
             &owner(),
@@ -114,17 +117,20 @@ async fn lifecycle_verify_collapses_shape_miss_and_allowlist_failures() {
         .unwrap();
 
     assert_eq!(
-        lifecycle
-            .verify_bearer_token("ncdr_pat_too_short", &[])
+        pat_lifecycle::verify_bearer_token(&store, &pepper, &[], "ncdr_pat_too_short")
             .await
             .unwrap_err(),
         VerifyPatError::Unauthorized
     );
     assert_eq!(
-        lifecycle
-            .verify_bearer_token(&minted.plaintext, &["someone@example.com".to_string()])
-            .await
-            .unwrap_err(),
+        pat_lifecycle::verify_bearer_token(
+            &store,
+            &pepper,
+            &["someone@example.com".to_string()],
+            &minted.plaintext,
+        )
+        .await
+        .unwrap_err(),
         VerifyPatError::Unauthorized
     );
 }

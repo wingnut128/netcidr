@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`PatLifecycle` now owns the principal-to-owner translation it was already documented as owning.** New `mint_for_principal` / `list_for_principal` / `revoke_for_principal` methods take `&AuthenticatedPrincipal` directly; failure modes are reported via a new `MintForPrincipalError` enum that distinguishes "no verified email" (403, defense-in-depth) from downstream lifecycle errors. The `*_for_owner` methods remain public for tests and lower-level callers.
+- **`me_api` handlers no longer re-implement principal extraction.** The 15-line `match owner_from_principal(&principal)` boilerplate in each of `create_token`, `list_tokens`, `revoke_token` is gone; handlers are now ~10 lines each.
+- **`PatLifecycle` is injected via Axum `Extension`** instead of being constructed per-request in three handlers. Matches the existing `IpamOps` wiring pattern.
+- **Removed the duplicate `PatLifecycle::verify_bearer_token` method.** It delegated to the standalone `pat_lifecycle::verify_bearer_token` function used by `auth.rs::verify_pat`. Tests now call the free function directly.
+
 ### Added
 
 - **ADR-0001 (`docs/adr/0001-tenancy-via-explicit-parameter.md`).** Formalises the existing multi-tenant isolation design decision: every `IpamOps` and `IpamStore` method that touches tenant-scoped data takes `tenant_id: &str` as an explicit parameter; no task-local context. Records the rejected alternative (task-local tenancy mirroring `audit_context`) and the conditions under which to revisit. Establishes `docs/adr/` as the location for future architectural decisions.
