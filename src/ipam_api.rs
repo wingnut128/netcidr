@@ -170,6 +170,27 @@ pub struct AllocateSpecificRequest {
     pub ttl_seconds: Option<u64>,
 }
 
+impl AllocateSpecificRequest {
+    /// Combine the body with the path-supplied cidr_block_id. The id can
+    /// only come from the path so the body can't override it.
+    pub fn into_create_allocation(self, cidr_block_id: String) -> CreateAllocation {
+        CreateAllocation {
+            cidr_block_id,
+            cidr: self.cidr,
+            status: self.status,
+            resource_id: self.resource_id,
+            resource_type: self.resource_type,
+            name: self.name,
+            description: self.description,
+            environment: self.environment,
+            owner: self.owner,
+            parent_allocation_id: self.parent_allocation_id,
+            tags: self.tags,
+            ttl_seconds: self.ttl_seconds,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "swagger", derive(ToSchema))]
 pub struct AutoAllocateBody {
@@ -197,6 +218,28 @@ pub struct AutoAllocateBody {
     pub tags: Option<Vec<Tag>>,
     /// TTL in seconds (reservation expires after this duration)
     pub ttl_seconds: Option<u64>,
+}
+
+impl AutoAllocateBody {
+    /// Combine the body with the path-supplied cidr_block_id. The id can
+    /// only come from the path so the body can't override it.
+    pub fn into_auto_allocate_request(self, cidr_block_id: String) -> AutoAllocateRequest {
+        AutoAllocateRequest {
+            cidr_block_id,
+            prefix_length: self.prefix_length,
+            count: self.count,
+            status: self.status,
+            resource_id: self.resource_id,
+            resource_type: self.resource_type,
+            name: self.name,
+            description: self.description,
+            environment: self.environment,
+            owner: self.owner,
+            parent_allocation_id: self.parent_allocation_id,
+            tags: self.tags,
+            ttl_seconds: self.ttl_seconds,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -421,20 +464,7 @@ async fn ipam_allocate_specific(
         move |ops, tenant_id, parsed: AllocateSpecificRequest| {
             let cidr_block_id = cidr_block_id.clone();
             async move {
-                let input = CreateAllocation {
-                    cidr_block_id,
-                    cidr: parsed.cidr,
-                    status: parsed.status,
-                    resource_id: parsed.resource_id,
-                    resource_type: parsed.resource_type,
-                    name: parsed.name,
-                    description: parsed.description,
-                    environment: parsed.environment,
-                    owner: parsed.owner,
-                    parent_allocation_id: parsed.parent_allocation_id,
-                    tags: parsed.tags,
-                    ttl_seconds: parsed.ttl_seconds,
-                };
+                let input = parsed.into_create_allocation(cidr_block_id);
                 let allocation = ops.allocate_specific(&tenant_id, &input).await?;
                 Ok((
                     StatusCode::CREATED,
@@ -478,21 +508,7 @@ async fn ipam_auto_allocate(
         move |ops, tenant_id, parsed: AutoAllocateBody| {
             let cidr_block_id = cidr_block_id.clone();
             async move {
-                let request = AutoAllocateRequest {
-                    cidr_block_id,
-                    prefix_length: parsed.prefix_length,
-                    count: parsed.count,
-                    status: parsed.status,
-                    resource_id: parsed.resource_id,
-                    resource_type: parsed.resource_type,
-                    name: parsed.name,
-                    description: parsed.description,
-                    environment: parsed.environment,
-                    owner: parsed.owner,
-                    parent_allocation_id: parsed.parent_allocation_id,
-                    tags: parsed.tags,
-                    ttl_seconds: parsed.ttl_seconds,
-                };
+                let request = parsed.into_auto_allocate_request(cidr_block_id);
                 let allocations = ops.allocate_auto(&tenant_id, &request).await?;
                 let list = AllocationList {
                     count: allocations.len(),
