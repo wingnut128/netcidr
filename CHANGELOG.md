@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`ipam_api`: HTTP body → domain-model field shuffles collapsed.** `AllocateSpecificRequest` and `AutoAllocateBody` each gain an `into_*` method that combines the body with the path-supplied `cidr_block_id`. The handlers' two 12-line field-by-field copies become one-liners; the knowledge of how to translate an HTTP body into a domain input now sits next to the body struct.
+
 - **`PatLifecycle` now owns the principal-to-owner translation it was already documented as owning.** New `mint_for_principal` / `list_for_principal` / `revoke_for_principal` methods take `&AuthenticatedPrincipal` directly; failure modes are reported via a new `MintForPrincipalError` enum that distinguishes "no verified email" (403, defense-in-depth) from downstream lifecycle errors. The `*_for_owner` methods remain public for tests and lower-level callers.
 - **`me_api` handlers no longer re-implement principal extraction.** The 15-line `match owner_from_principal(&principal)` boilerplate in each of `create_token`, `list_tokens`, `revoke_token` is gone; handlers are now ~10 lines each.
 - **`PatLifecycle` is injected via Axum `Extension`** instead of being constructed per-request in three handlers. Matches the existing `IpamOps` wiring pattern.
