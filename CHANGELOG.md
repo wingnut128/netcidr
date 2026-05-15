@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Idempotency lives in `IpamOps`, not the HTTP layer.** New `allocate_specific_idempotent`, `allocate_auto_idempotent`, and `batch_allocate_idempotent` methods accept an `Idempotency-Key` and return `IdempotentOutcome<T> { Fresh(T) | Replayed(T) }`. The HTTP API now calls these; the old HTTP-layer `idempotent_post` wrapper is gone. The cache became wire-format-agnostic — operations serialize domain values via serde_json — so CLI and MCP callers can use the same replay protection by forwarding a key. HTTP behaviour is bit-for-bit preserved (replay status, `Idempotent-Replay: true` header, 409 on same-key-different-body, 24h TTL, 64KB body cap, identical scope strings). New `NetcidrError::IdempotencyConflict { key, scope }` variant; the error presenter maps it to 409 with a fixed safe message (the caller-supplied key is never echoed back). Subtle improvement: the request hash now hashes the deserialized input via `serde_json` rather than raw request bytes, so two clients sending logically identical requests with different JSON formatting (whitespace, field order) both replay instead of one getting a spurious 409.
+
+- **`ipam_api`: HTTP body → domain-model field shuffles collapsed.** `AllocateSpecificRequest` and `AutoAllocateBody` each gain an `into_*` method that combines the body with the path-supplied `cidr_block_id`. The handlers' two 12-line field-by-field copies become one-liners; the knowledge of how to translate an HTTP body into a domain input now sits next to the body struct.
+
+- **`PatLifecycle` now owns the principal-to-owner translation it was already documented as owning.** New `mint_for_principal` / `list_for_principal` / `revoke_for_principal` methods take `&AuthenticatedPrincipal` directly; failure modes are reported via a new `MintForPrincipalError` enum that distinguishes "no verified email" (403, defense-in-depth) from downstream lifecycle errors. The `*_for_owner` methods remain public for tests and lower-level callers.
+- **`me_api` handlers no longer re-implement principal extraction.** The 15-line `match owner_from_principal(&principal)` boilerplate in each of `create_token`, `list_tokens`, `revoke_token` is gone; handlers are now ~10 lines each.
+- **`PatLifecycle` is injected via Axum `Extension`** instead of being constructed per-request in three handlers. Matches the existing `IpamOps` wiring pattern.
+- **Removed the duplicate `PatLifecycle::verify_bearer_token` method.** It delegated to the standalone `pat_lifecycle::verify_bearer_token` function used by `auth.rs::verify_pat`. Tests now call the free function directly.
+
+### Added
+
+- **ADR-0001 (`docs/adr/0001-tenancy-via-explicit-parameter.md`).** Formalises the existing multi-tenant isolation design decision: every `IpamOps` and `IpamStore` method that touches tenant-scoped data takes `tenant_id: &str` as an explicit parameter; no task-local context. Records the rejected alternative (task-local tenancy mirroring `audit_context`) and the conditions under which to revisit. Establishes `docs/adr/` as the location for future architectural decisions.
+
+- **`Tenant::LOCAL` constant** on the existing `Tenant` newtype, naming the `"local"` tenant id used by single-tenant frontends. Replaces the duplicated `CLI_TENANT_ID` in `src/ipam_cli.rs` and `MCP_LOCAL_TENANT_ID` in `src/mcp.rs` so they can't drift.
+
+- **Error presenter seam (`src/error_presenter.rs`).** A single `present(&NetcidrError) → PresentedError { status, client_msg, log_level }` is now the only place `NetcidrError` becomes a caller-visible response. IPAM HTTP API, `/me/tokens` HTTP API, and MCP tool results all call it; classification, scrubbing, and the "log this at error" decision live in one place. Table-driven unit tests assert every variant against `(status, message, log_level)`; the match has no catch-all, so adding a new variant produces a compile error rather than a silent 500. Added `Error Presenter` and `Presented Error` to `CONTEXT.md`.
+
+- **`NetcidrError::Upstream { status, message }`** for HTTP-client adapters. Replaces the previous flattening of upstream HTTP non-2xx responses to `DatabaseError(body)`, which lost the status code and overloaded a name that should mean "the SQL backend failed."
+
+- **OpenAPI coverage for auth endpoints.** `/me`, `/admin/allowlist`, `/me/tokens` (GET/POST), `/me/tokens/{id}` (DELETE), and `/features` are now annotated with `utoipa::path` and registered in the `ApiDoc`. A new `bearerAuth` security scheme (HTTP Bearer; accepts OIDC JWT, PAT, or static bearer) is declared via a `SecurityAddon` modifier and attached to every protected handler — `/ipam/*` plus the new `/me/*` and `/admin/*` paths — so Swagger UI's "Authorize" button now works. Added an `auth` tag for the identity/allowlist/PAT endpoints and exposed `MeResponse`, `AllowlistResponse`, `FeaturesResponse`, `CreateTokenRequest`, `CreateTokenResponse`, `TokenListResponse`, and `PersonalAccessTokenSummary` as schemas.
+
+### Fixed
+
+- **MCP no longer leaks SQL backend text.** Before, MCP tool errors used `format!("Error: {e}")` directly on `NetcidrError`, so a `DatabaseError` would expose raw SQL driver messages (table names, file paths, constraint names) to the MCP client. The MCP frontend now goes through the error presenter and surfaces `"Error: internal server error"` plus a server-side `tracing::error!`.
+
+- **`mcp_client.rs` and `token_cli.rs` preserve upstream status.** Both used to flatten every non-2xx upstream HTTP response (incl. 401/403/404/409/422) to `DatabaseError(body)`, which the IPAM frontend then mapped back to 500. They now emit `NetcidrError::Upstream { status, message }`, so a 409 from the upstream stays a 409 at the MCP boundary, and a 401 stays a 401 at the CLI.
+
+### Changed
+
+- **Dropped substring-based `DatabaseError` classification in `ipam_api`.** The legacy shim mapped `DatabaseError(msg)` containing `"overlap"`/`"conflict"`/`"not found"` to 409/404. Verified vestigial — overlap rejection has gone through the typed `AllocationConflict` variant since well before this change. All `DatabaseError` now collapses to 500. If a future SQL backend error needs a non-500 status, classify it at the source (in `operations.rs` or the store adapter), not by sniffing strings at the response boundary.
+
+- **`PatNotFound` is canonicalised to `"token not found"` across all HTTP paths.** Previously this was only enforced in the `/me/tokens` mapper; PAT lookups via `/ipam/*` paths fell through to 500. Both surfaces now agree, and the caller-supplied id is never echoed back.
+
 ## [0.24.2](https://github.com/wingnut128/netcidr/compare/v0.24.1...v0.24.2) - 2026-05-11
 
 ### Other

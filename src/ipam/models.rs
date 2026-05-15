@@ -100,7 +100,7 @@ pub struct Allocation {
     pub expires_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateAllocation {
     pub cidr_block_id: String,
     pub cidr: String,
@@ -117,7 +117,7 @@ pub struct CreateAllocation {
     pub ttl_seconds: Option<u64>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutoAllocateRequest {
     pub cidr_block_id: String,
     pub prefix_length: u8,
@@ -492,6 +492,7 @@ pub struct CreatePersonalAccessToken {
 
 /// Public-safe view of a PAT — no plaintext, no hash. Used by `GET /me/tokens`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct PersonalAccessTokenSummary {
     pub id: String,
     pub name: String,
