@@ -62,7 +62,7 @@ async fn main() -> Result<(), Error> {
     let s3_syncer: Option<Arc<S3Syncer>> = if let Ok(bucket) = std::env::var("NETCIDR_S3_BUCKET") {
         let key = env_or("NETCIDR_S3_KEY", "netcidr/netcidr.db");
         let db_path = env_or("NETCIDR_DB", "/tmp/netcidr.db");
-        let syncer = S3Syncer::new(bucket, key, db_path).await;
+        let syncer = S3Syncer::new(bucket, key, db_path);
         syncer.pull().await?;
         Some(Arc::new(syncer))
     } else {
@@ -145,7 +145,9 @@ async fn main() -> Result<(), Error> {
                 async move {
                     let method = req.method().clone();
                     let response = next.run(req).await;
-                    if is_write_method(&method) && let Err(e) = syncer.push().await {
+                    if is_write_method(&method)
+                        && let Err(e) = syncer.push().await
+                    {
                         tracing::error!(error = %e, "S3 push failed after write");
                     }
                     response
