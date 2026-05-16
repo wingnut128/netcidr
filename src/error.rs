@@ -90,6 +90,21 @@ pub enum NetcidrError {
 
     #[error("Personal access token not found: {0}")]
     PatNotFound(String),
+
+    /// An idempotency key was reused with a different request body for
+    /// the same operation scope. The key is bound to the *first* payload
+    /// it saw; reusing it for a new payload is almost always a client
+    /// bug. Maps to HTTP 409 via the error presenter.
+    #[error("idempotency key reused with a different request body")]
+    IdempotencyConflict { key: String, scope: String },
+
+    /// A response from an upstream HTTP API (e.g. the MCP server's
+    /// remote-API backend, or the `netcidr token` CLI talking to a
+    /// remote `netcidr serve`). Carries the status code and a message
+    /// the upstream chose to expose; both have already passed through
+    /// that upstream's own error presenter.
+    #[error("upstream error (HTTP {status}): {message}")]
+    Upstream { status: u16, message: String },
 }
 
 pub type Result<T> = std::result::Result<T, NetcidrError>;

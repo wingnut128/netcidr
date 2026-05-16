@@ -19,7 +19,10 @@ use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{info, instrument, warn};
 #[cfg(feature = "swagger")]
-use utoipa::{IntoParams, OpenApi, ToSchema};
+use utoipa::{
+    IntoParams, Modify, OpenApi, ToSchema,
+    openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme},
+};
 #[cfg(feature = "swagger")]
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -53,6 +56,37 @@ use crate::ipam::models::{
 #[cfg(feature = "swagger")]
 use crate::ipam_api::{AllocateSpecificRequest, AutoAllocateBody, IpamErrorResponse, TagsBody};
 
+/// Registers the `bearerAuth` security scheme used by `/ipam/*`, `/me/*`,
+/// and `/admin/*`. Accepts an OIDC JWT, a personal access token
+/// (`ncdr_pat_…`), or a configured static bearer — the server decides
+/// which by inspecting the token shape (see `auth.rs`). `/me/tokens`
+/// additionally rejects PATs at the handler layer (OIDC-only).
+#[cfg(feature = "swagger")]
+pub struct SecurityAddon;
+
+#[cfg(feature = "swagger")]
+impl Modify for SecurityAddon {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        let components = openapi
+            .components
+            .get_or_insert_with(utoipa::openapi::Components::new);
+        components.add_security_scheme(
+            "bearerAuth",
+            SecurityScheme::Http(
+                HttpBuilder::new()
+                    .scheme(HttpAuthScheme::Bearer)
+                    .bearer_format("JWT or ncdr_pat_… personal access token")
+                    .description(Some(
+                        "Bearer token. Accepts an OIDC JWT, a personal access token \
+                         (`ncdr_pat_…`), or a configured static bearer. `/me/tokens*` \
+                         rejects PAT and static-bearer auth and requires an OIDC JWT.",
+                    ))
+                    .build(),
+            ),
+        );
+    }
+}
+
 #[cfg(feature = "swagger")]
 #[derive(OpenApi)]
 #[openapi(
@@ -70,6 +104,12 @@ use crate::ipam_api::{AllocateSpecificRequest, AutoAllocateBody, IpamErrorRespon
         from_range_ipv4_handler,
         from_range_ipv6_handler,
         batch_handler,
+        features_handler,
+        me_handler,
+        allowlist_handler,
+        crate::me_api::create_token,
+        crate::me_api::list_tokens,
+        crate::me_api::revoke_token,
         crate::ipam_api::ipam_create_cidr_block,
         crate::ipam_api::ipam_list_cidr_blocks,
         crate::ipam_api::ipam_get_cidr_block,
@@ -93,15 +133,21 @@ use crate::ipam_api::{AllocateSpecificRequest, AutoAllocateBody, IpamErrorRespon
             ContainsResult, Ipv4SummaryResult, Ipv6SummaryResult, Ipv4FromRangeResult,
             Ipv6FromRangeResult, SubnetQuery, SplitQuery, ContainsQuery, SummarizeQuery,
             FromRangeQuery, BatchRequest, BatchResult, ErrorResponse, VersionResponse,
+            FeaturesResponse, MeResponse, AllowlistResponse,
+            crate::me_api::CreateTokenRequest, crate::me_api::CreateTokenResponse,
+            crate::me_api::TokenListResponse,
+            crate::ipam::models::PersonalAccessTokenSummary,
             CidrBlock, CidrBlockList, CreateCidrBlock, Allocation, AllocationList,
             AllocationStatus, Tag, UpdateAllocation, AllocateSpecificRequest,
             AutoAllocateBody, TagsBody, AuditEntry, AuditList, UtilizationReport,
             FreeBlock, FreeBlocksReport, IpamErrorResponse,
         )
     ),
+    modifiers(&SecurityAddon),
     tags(
         (name = "netcidr", description = "IP subnet calculator API"),
         (name = "ipam", description = "IP Address Management API"),
+        (name = "auth", description = "Identity, allowlist, and personal access token management"),
     ),
     info(
         title = "netcidr API",
@@ -395,9 +441,12 @@ pub fn create_router(config: RouterConfig) -> Router {
         // OIDC, PAT, and bearer.
         if let Some(pepper) = config.pat_pepper.as_ref() {
             let me_auth = auth_config.clone();
+            let lifecycle = Arc::new(crate::pat_lifecycle::PatLifecycle::new(
+                ops.store_arc(),
+                Arc::clone(pepper),
+            ));
             let me_router = crate::me_api::create_me_router()
-                .layer(Extension(Arc::clone(&ops)))
-                .layer(Extension(Arc::clone(pepper)))
+                .layer(Extension(lifecycle))
                 .layer(middleware::from_fn(move |request, next| {
                     let auth_config = me_auth.clone();
                     async move { require_auth(auth_config, request, next).await }
@@ -420,10 +469,9 @@ pub fn create_router(config: RouterConfig) -> Router {
         ipam: ipam_enabled,
         swagger: swagger_enabled,
     };
-    let router = router.route(
-        "/features",
-        get(move || async move { Json(features.clone()) }),
-    );
+    let router = router
+        .route("/features", get(features_handler))
+        .layer(Extension(features));
 
     // /me + admin allowlist read endpoint. Both are auth-aware but live
     // outside the /ipam middleware (so an unallowlisted user can hit /me
@@ -1035,12 +1083,16 @@ async fn batch_handler(
 }
 
 #[derive(Clone, Serialize)]
+#[cfg_attr(feature = "swagger", derive(ToSchema))]
 struct FeaturesResponse {
+    /// Whether the IPAM subsystem is enabled on this server.
     ipam: bool,
+    /// Whether Swagger UI / OpenAPI docs are exposed.
     swagger: bool,
 }
 
 #[derive(Serialize)]
+#[cfg_attr(feature = "swagger", derive(ToSchema))]
 struct MeResponse {
     /// Verified email of the signed-in principal (may be null for bearer tokens).
     email: Option<String>,
@@ -1054,6 +1106,7 @@ struct MeResponse {
 }
 
 #[derive(Serialize)]
+#[cfg_attr(feature = "swagger", derive(ToSchema))]
 struct AllowlistResponse {
     /// Email addresses authorized to call /ipam/*.
     emails: Vec<String>,
@@ -1066,6 +1119,16 @@ struct AllowlistResponse {
     management: &'static str,
 }
 
+#[cfg_attr(feature = "swagger", utoipa::path(
+    get,
+    path = "/me",
+    responses(
+        (status = 200, description = "Authenticated principal identity and allowlist status", body = MeResponse),
+        (status = 401, description = "Missing or invalid bearer token"),
+    ),
+    security(("bearerAuth" = [])),
+    tag = "auth"
+))]
 async fn me_handler(
     Extension(auth_config): Extension<crate::auth::AuthConfig>,
     request: axum::extract::Request,
@@ -1089,6 +1152,17 @@ async fn me_handler(
     .into_response()
 }
 
+#[cfg_attr(feature = "swagger", utoipa::path(
+    get,
+    path = "/admin/allowlist",
+    responses(
+        (status = 200, description = "Current allowlist + admin list", body = AllowlistResponse),
+        (status = 401, description = "Missing or invalid bearer token"),
+        (status = 403, description = "Caller is not an admin"),
+    ),
+    security(("bearerAuth" = [])),
+    tag = "auth"
+))]
 async fn allowlist_handler(
     Extension(auth_config): Extension<crate::auth::AuthConfig>,
     request: axum::extract::Request,
@@ -1106,6 +1180,20 @@ async fn allowlist_handler(
         management: "env",
     })
     .into_response()
+}
+
+#[cfg_attr(feature = "swagger", utoipa::path(
+    get,
+    path = "/features",
+    responses(
+        (status = 200, description = "Capability flags advertised by this server", body = FeaturesResponse),
+    ),
+    tag = "netcidr"
+))]
+async fn features_handler(
+    Extension(features): Extension<FeaturesResponse>,
+) -> Json<FeaturesResponse> {
+    Json(features)
 }
 
 #[cfg(feature = "dashboard")]

@@ -20,25 +20,28 @@ jobs:
     outputs:
       code: ${{ steps.filter.outputs.code }}
     steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450 # v2.19.1
-        with:
-          egress-policy: audit
-
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - uses: step-security/paths-filter@5c5241b8233e77b55b9046daf88f1cb7560281de # v4.0.1
-        id: filter
         with:
-          filters: |
-            code:
-              - "src/**"
-              - "tests/**"
-              - "dashboard/**"
-              - "Cargo.toml"
-              - "Cargo.lock"
-              - "justfile"
-              - "Dockerfile"
-              - ".github/workflows/**"
+          fetch-depth: 0
+      - name: Detect code changes
+        id: filter
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          else
+            base="${{ github.event.before }}"
+          fi
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "$base" "$GITHUB_SHA" | grep -Eq '^(src/|tests/|dashboard/|Cargo\.toml$|Cargo\.lock$|justfile$|Dockerfile$|\.github/workflows/)'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
 
   verify:
     name: Format, Lint & Test
@@ -46,11 +49,6 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450 # v2.19.1
-        with:
-          egress-policy: audit
-
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Free runner disk space
         run: |
@@ -69,7 +67,7 @@ jobs:
             target/
           key: verify-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: verify-${{ runner.os }}-
-      - uses: step-security/setup-bun@c2c3ca3b28b446447c25a2a39061f4bd64b729c8 # v2.1.2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - name: Build dashboard
         run: cd dashboard && bun install --frozen-lockfile && bun run build
       - name: Audit dashboard npm deps
@@ -78,7 +76,7 @@ jobs:
       - name: Check lockfile for known-compromised packages
         working-directory: dashboard
         env:
-          # StepSecurity supply-chain advisory denylist. Add new entries as advisories arrive.
+          # Known-compromised package denylist. Add new entries as advisories arrive.
           DENYLIST: '"mbt" "@cap-js/sqlite"'
         run: |
           eval "set -- $DENYLIST"
@@ -100,11 +98,6 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450 # v2.19.1
-        with:
-          egress-policy: audit
-
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: taiki-e/install-action@dfd6a81ff1efc1c100332d760e0c9edfe2ae0a51 # cargo-audit
         with:
@@ -117,11 +110,6 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450 # v2.19.1
-        with:
-          egress-policy: audit
-
       - name: Aggregate required job results
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}

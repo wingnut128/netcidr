@@ -13,164 +13,62 @@ use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::error::NetcidrError;
+use crate::error_presenter::{LogLevel, present};
 use crate::ipam::idempotency;
 use crate::ipam::models::*;
-use crate::ipam::operations::IpamOps;
+use crate::ipam::operations::{IdempotentOutcome, IpamOps};
 
 // ---------------------------------------------------------------------------
-// Error mapping
+// Error mapping — thin adapter over `error_presenter::present`. All
+// classification, scrubbing, and log-policy lives there.
 // ---------------------------------------------------------------------------
 
 pub(crate) fn error_to_status_value(err: NetcidrError) -> (StatusCode, serde_json::Value) {
-    let (status, client_msg) = error_to_parts(&err);
-    (status, serde_json::json!({ "error": client_msg }))
+    let p = present(&err);
+    if p.log_level == LogLevel::Error {
+        tracing::error!(error = %err, "ipam request failed");
+    }
+    let status = StatusCode::from_u16(p.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    (status, serde_json::json!({ "error": p.client_msg }))
 }
 
 fn ipam_error_response(err: NetcidrError) -> Response {
-    let (status, client_msg) = error_to_parts(&err);
-    let body = serde_json::json!({ "error": client_msg });
+    let (status, body) = error_to_status_value(err);
     (status, Json(body)).into_response()
 }
 
-fn error_to_parts(err: &NetcidrError) -> (StatusCode, String) {
-    match err {
-        NetcidrError::InvalidCidr(_)
-        | NetcidrError::InvalidPrefixLength { .. }
-        | NetcidrError::InvalidInput(_)
-        | NetcidrError::InvalidSubnetSplit { .. }
-        | NetcidrError::InvalidIpv4Address(_)
-        | NetcidrError::InvalidIpv6Address(_) => (StatusCode::BAD_REQUEST, err.to_string()),
+// ---------------------------------------------------------------------------
+// Idempotent-outcome → HTTP response. Replayed outcomes carry the same
+// success status as fresh, plus an `Idempotent-Replay: true` header so the
+// caller can tell whether their request was actually executed.
+// ---------------------------------------------------------------------------
 
-        NetcidrError::CidrBlockNotFound(_) | NetcidrError::AllocationNotFound(_) => {
-            (StatusCode::NOT_FOUND, err.to_string())
-        }
-
-        NetcidrError::AllocationConflict { .. }
-        | NetcidrError::CidrBlockHasActiveAllocations(_) => (StatusCode::CONFLICT, err.to_string()),
-
-        NetcidrError::NoFreeSpace { .. } => (StatusCode::UNPROCESSABLE_ENTITY, err.to_string()),
-
-        // DatabaseError: classify by content for status code, but never expose
-        // raw DB messages (table names, file paths, constraint names) to clients.
-        NetcidrError::DatabaseError(msg)
-            if msg.contains("not found") || msg.contains("No cidr_block") =>
-        {
-            tracing::error!(error = %err, "database error");
-            (StatusCode::NOT_FOUND, "not found".to_string())
-        }
-
-        NetcidrError::DatabaseError(msg) if msg.contains("overlap") || msg.contains("conflict") => {
-            tracing::error!(error = %err, "database error");
-            (StatusCode::CONFLICT, "allocation conflict".to_string())
-        }
-
-        NetcidrError::DatabaseError(_) => {
-            tracing::error!(error = %err, "database error");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal server error".to_string(),
-            )
-        }
-
-        _ => {
-            tracing::error!(error = %err, "unexpected error");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal server error".to_string(),
-            )
-        }
+fn outcome_response<T: serde::Serialize>(
+    outcome: IdempotentOutcome<T>,
+    status_on_success: StatusCode,
+) -> Response {
+    let is_replay = outcome.is_replayed();
+    let value = outcome.into_inner();
+    let body = serde_json::to_string(&value).unwrap_or_else(|_| "null".to_string());
+    let mut builder = Response::builder()
+        .status(status_on_success)
+        .header("Content-Type", "application/json");
+    if is_replay {
+        builder = builder.header("Idempotent-Replay", "true");
     }
+    builder
+        .body(body.into())
+        .expect("static headers always valid")
 }
 
-// ---------------------------------------------------------------------------
-// Idempotency wrapper for allocation handlers
-// ---------------------------------------------------------------------------
-
-/// Wrap a JSON-in/JSON-out POST allocation handler with `Idempotency-Key`
-/// semantics. Behavior:
-/// * Same key + same body → replay cached response (sets `Idempotent-Replay: true`).
-/// * Same key + different body → 409 Conflict.
-/// * No key → behave normally (no cache write).
-///
-/// Successful 2xx responses are cached. Error responses are not cached so a
-/// retry with the same key can still succeed once the underlying issue clears.
-async fn idempotent_post<T, F, Fut>(
-    ops: Arc<IpamOps>,
-    tenant_id: String,
-    headers: HeaderMap,
-    body: Bytes,
-    scope: String,
-    handler: F,
-) -> Response
-where
-    T: serde::de::DeserializeOwned,
-    F: FnOnce(Arc<IpamOps>, String, T) -> Fut,
-    Fut: std::future::Future<
-            Output = std::result::Result<(StatusCode, serde_json::Value), NetcidrError>,
-        >,
-{
-    let outcome = if body.len() <= idempotency::MAX_BODY_BYTES {
-        match idempotency::check(ops.store(), &tenant_id, &headers, &scope, &body).await {
-            Ok(o) => o,
-            Err(e) => return ipam_error_response(e),
-        }
-    } else {
-        idempotency::Outcome::NoKey
-    };
-
-    if let idempotency::Outcome::Replay {
-        status,
-        body: cached,
-    } = &outcome
-    {
-        return Response::builder()
-            .status(StatusCode::from_u16(*status).unwrap_or(StatusCode::OK))
-            .header("Content-Type", "application/json")
-            .header("Idempotent-Replay", "true")
-            .body(cached.clone().into())
-            .expect("static headers always valid");
+/// Look up an `Idempotency-Key` only when the body is small enough to be
+/// safely cached. Oversized requests skip idempotency entirely (the
+/// caller's retry will re-execute), matching the pre-refactor behaviour.
+fn idempotency_key(headers: &HeaderMap, body_len: usize) -> Option<String> {
+    if body_len > idempotency::MAX_BODY_BYTES {
+        return None;
     }
-
-    if matches!(outcome, idempotency::Outcome::Conflict) {
-        return (
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({
-                "error": "Idempotency-Key reused with a different request body",
-            })),
-        )
-            .into_response();
-    }
-
-    let parsed: T = match serde_json::from_slice(&body) {
-        Ok(v) => v,
-        Err(e) => return ipam_error_response(NetcidrError::InvalidInput(e.to_string())),
-    };
-
-    let (status, value) = match handler(ops.clone(), tenant_id.clone(), parsed).await {
-        Ok(pair) => pair,
-        Err(e) => error_to_status_value(e),
-    };
-
-    if status.is_success()
-        && let idempotency::Outcome::Proceed { key, request_hash } = outcome
-    {
-        let cached_body = value.to_string();
-        if let Err(e) = idempotency::record(
-            ops.store(),
-            &tenant_id,
-            &key,
-            &scope,
-            &request_hash,
-            status.as_u16(),
-            &cached_body,
-        )
-        .await
-        {
-            tracing::warn!(error = %e, "failed to record idempotency key");
-        }
-    }
-
-    (status, Json(value)).into_response()
+    idempotency::key_from_headers(headers)
 }
 
 // ---------------------------------------------------------------------------
@@ -215,6 +113,27 @@ pub struct AllocateSpecificRequest {
     pub ttl_seconds: Option<u64>,
 }
 
+impl AllocateSpecificRequest {
+    /// Combine the body with the path-supplied cidr_block_id. The id can
+    /// only come from the path so the body can't override it.
+    pub fn into_create_allocation(self, cidr_block_id: String) -> CreateAllocation {
+        CreateAllocation {
+            cidr_block_id,
+            cidr: self.cidr,
+            status: self.status,
+            resource_id: self.resource_id,
+            resource_type: self.resource_type,
+            name: self.name,
+            description: self.description,
+            environment: self.environment,
+            owner: self.owner,
+            parent_allocation_id: self.parent_allocation_id,
+            tags: self.tags,
+            ttl_seconds: self.ttl_seconds,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "swagger", derive(ToSchema))]
 pub struct AutoAllocateBody {
@@ -242,6 +161,28 @@ pub struct AutoAllocateBody {
     pub tags: Option<Vec<Tag>>,
     /// TTL in seconds (reservation expires after this duration)
     pub ttl_seconds: Option<u64>,
+}
+
+impl AutoAllocateBody {
+    /// Combine the body with the path-supplied cidr_block_id. The id can
+    /// only come from the path so the body can't override it.
+    pub fn into_auto_allocate_request(self, cidr_block_id: String) -> AutoAllocateRequest {
+        AutoAllocateRequest {
+            cidr_block_id,
+            prefix_length: self.prefix_length,
+            count: self.count,
+            status: self.status,
+            resource_id: self.resource_id,
+            resource_type: self.resource_type,
+            name: self.name,
+            description: self.description,
+            environment: self.environment,
+            owner: self.owner,
+            parent_allocation_id: self.parent_allocation_id,
+            tags: self.tags,
+            ttl_seconds: self.ttl_seconds,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -345,6 +286,7 @@ pub fn create_ipam_router() -> Router {
         (status = 400, description = "Invalid CIDR", body = IpamErrorResponse),
         (status = 409, description = "Overlapping cidr_block", body = IpamErrorResponse),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_create_cidr_block(
@@ -364,6 +306,7 @@ async fn ipam_create_cidr_block(
     responses(
         (status = 200, description = "List of cidr_blocks", body = CidrBlockList),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_list_cidr_blocks(
@@ -392,6 +335,7 @@ async fn ipam_list_cidr_blocks(
         (status = 200, description = "CIDR block details", body = CidrBlock),
         (status = 404, description = "CIDR block not found", body = IpamErrorResponse),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_get_cidr_block(
@@ -416,6 +360,7 @@ async fn ipam_get_cidr_block(
         (status = 404, description = "CIDR block not found", body = IpamErrorResponse),
         (status = 409, description = "CIDR block has active allocations", body = IpamErrorResponse),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_delete_cidr_block(
@@ -442,6 +387,7 @@ async fn ipam_delete_cidr_block(
         (status = 404, description = "CIDR block not found", body = IpamErrorResponse),
         (status = 409, description = "Overlapping allocation", body = IpamErrorResponse),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_allocate_specific(
@@ -451,39 +397,26 @@ async fn ipam_allocate_specific(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let scope = format!("allocate-specific:{cidr_block_id}");
-    idempotent_post::<AllocateSpecificRequest, _, _>(
-        ops,
-        tenant.0,
-        headers,
-        body,
-        scope,
-        move |ops, tenant_id, parsed: AllocateSpecificRequest| {
-            let cidr_block_id = cidr_block_id.clone();
-            async move {
-                let input = CreateAllocation {
-                    cidr_block_id,
-                    cidr: parsed.cidr,
-                    status: parsed.status,
-                    resource_id: parsed.resource_id,
-                    resource_type: parsed.resource_type,
-                    name: parsed.name,
-                    description: parsed.description,
-                    environment: parsed.environment,
-                    owner: parsed.owner,
-                    parent_allocation_id: parsed.parent_allocation_id,
-                    tags: parsed.tags,
-                    ttl_seconds: parsed.ttl_seconds,
-                };
-                let allocation = ops.allocate_specific(&tenant_id, &input).await?;
-                Ok((
-                    StatusCode::CREATED,
-                    serde_json::to_value(&allocation).unwrap_or(serde_json::Value::Null),
-                ))
-            }
+    let key = idempotency_key(&headers, body.len());
+    let parsed: AllocateSpecificRequest = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => return ipam_error_response(NetcidrError::InvalidInput(e.to_string())),
+    };
+    let input = parsed.into_create_allocation(cidr_block_id);
+
+    match key {
+        Some(k) => match ops
+            .allocate_specific_idempotent(tenant.as_str(), &input, &k)
+            .await
+        {
+            Ok(outcome) => outcome_response(outcome, StatusCode::CREATED),
+            Err(e) => ipam_error_response(e),
         },
-    )
-    .await
+        None => match ops.allocate_specific(tenant.as_str(), &input).await {
+            Ok(allocation) => (StatusCode::CREATED, Json(allocation)).into_response(),
+            Err(e) => ipam_error_response(e),
+        },
+    }
 }
 
 #[cfg_attr(feature = "swagger", utoipa::path(
@@ -498,6 +431,7 @@ async fn ipam_allocate_specific(
         (status = 404, description = "CIDR block not found", body = IpamErrorResponse),
         (status = 422, description = "No free space available", body = IpamErrorResponse),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_auto_allocate(
@@ -507,44 +441,38 @@ async fn ipam_auto_allocate(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let scope = format!("auto-allocate:{cidr_block_id}");
-    idempotent_post::<AutoAllocateBody, _, _>(
-        ops,
-        tenant.0,
-        headers,
-        body,
-        scope,
-        move |ops, tenant_id, parsed: AutoAllocateBody| {
-            let cidr_block_id = cidr_block_id.clone();
-            async move {
-                let request = AutoAllocateRequest {
-                    cidr_block_id,
-                    prefix_length: parsed.prefix_length,
-                    count: parsed.count,
-                    status: parsed.status,
-                    resource_id: parsed.resource_id,
-                    resource_type: parsed.resource_type,
-                    name: parsed.name,
-                    description: parsed.description,
-                    environment: parsed.environment,
-                    owner: parsed.owner,
-                    parent_allocation_id: parsed.parent_allocation_id,
-                    tags: parsed.tags,
-                    ttl_seconds: parsed.ttl_seconds,
-                };
-                let allocations = ops.allocate_auto(&tenant_id, &request).await?;
+    let key = idempotency_key(&headers, body.len());
+    let parsed: AutoAllocateBody = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => return ipam_error_response(NetcidrError::InvalidInput(e.to_string())),
+    };
+    let request = parsed.into_auto_allocate_request(cidr_block_id);
+
+    match key {
+        Some(k) => match ops
+            .allocate_auto_idempotent(tenant.as_str(), &request, &k)
+            .await
+        {
+            Ok(outcome) => {
+                let wrapped = outcome.map(|allocations| AllocationList {
+                    count: allocations.len(),
+                    allocations,
+                });
+                outcome_response(wrapped, StatusCode::CREATED)
+            }
+            Err(e) => ipam_error_response(e),
+        },
+        None => match ops.allocate_auto(tenant.as_str(), &request).await {
+            Ok(allocations) => {
                 let list = AllocationList {
                     count: allocations.len(),
                     allocations,
                 };
-                Ok((
-                    StatusCode::CREATED,
-                    serde_json::to_value(&list).unwrap_or(serde_json::Value::Null),
-                ))
+                (StatusCode::CREATED, Json(list)).into_response()
             }
+            Err(e) => ipam_error_response(e),
         },
-    )
-    .await
+    }
 }
 
 #[cfg_attr(feature = "swagger", utoipa::path(
@@ -558,6 +486,7 @@ async fn ipam_auto_allocate(
         (status = 200, description = "List of allocations", body = AllocationList),
         (status = 404, description = "CIDR block not found", body = IpamErrorResponse),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_list_cidr_block_allocations(
@@ -598,6 +527,7 @@ async fn ipam_list_cidr_block_allocations(
         (status = 200, description = "Free blocks report", body = FreeBlocksReport),
         (status = 404, description = "CIDR block not found", body = IpamErrorResponse),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_free_blocks(
@@ -625,6 +555,7 @@ async fn ipam_free_blocks(
         (status = 200, description = "Utilization report", body = UtilizationReport),
         (status = 404, description = "CIDR block not found", body = IpamErrorResponse),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_utilization(
@@ -648,6 +579,7 @@ async fn ipam_utilization(
         (status = 200, description = "Allocation details", body = Allocation),
         (status = 404, description = "Allocation not found", body = IpamErrorResponse),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_get_allocation(
@@ -672,6 +604,7 @@ async fn ipam_get_allocation(
         (status = 200, description = "Allocation updated", body = Allocation),
         (status = 404, description = "Allocation not found", body = IpamErrorResponse),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_update_allocation(
@@ -696,6 +629,7 @@ async fn ipam_update_allocation(
         (status = 200, description = "Allocation released", body = Allocation),
         (status = 404, description = "Allocation not found", body = IpamErrorResponse),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_release_allocation(
@@ -718,6 +652,7 @@ async fn ipam_release_allocation(
     responses(
         (status = 200, description = "Matching allocations", body = AllocationList),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_find_ip(
@@ -746,6 +681,7 @@ async fn ipam_find_ip(
     responses(
         (status = 200, description = "Matching allocations", body = AllocationList),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_find_resource(
@@ -772,6 +708,7 @@ async fn ipam_find_resource(
     responses(
         (status = 200, description = "Audit log entries", body = AuditList),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_query_audit(
@@ -808,6 +745,7 @@ async fn ipam_query_audit(
         (status = 200, description = "Tags updated, returns allocation", body = Allocation),
         (status = 404, description = "Allocation not found", body = IpamErrorResponse),
     ),
+    security(("bearerAuth" = [])),
     tag = "ipam"
 ))]
 async fn ipam_set_tags(
@@ -835,22 +773,25 @@ async fn ipam_batch_allocate(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let scope = "batch-allocate".to_string();
-    idempotent_post::<Vec<BatchAllocateItem>, _, _>(
-        ops,
-        tenant.0,
-        headers,
-        body,
-        scope,
-        |ops, tenant_id, items: Vec<BatchAllocateItem>| async move {
-            let result = ops.batch_allocate(&tenant_id, &items).await?;
-            Ok((
-                StatusCode::OK,
-                serde_json::to_value(&result).unwrap_or(serde_json::Value::Null),
-            ))
+    let key = idempotency_key(&headers, body.len());
+    let items: Vec<BatchAllocateItem> = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => return ipam_error_response(NetcidrError::InvalidInput(e.to_string())),
+    };
+
+    match key {
+        Some(k) => match ops
+            .batch_allocate_idempotent(tenant.as_str(), &items, &k)
+            .await
+        {
+            Ok(outcome) => outcome_response(outcome, StatusCode::OK),
+            Err(e) => ipam_error_response(e),
         },
-    )
-    .await
+        None => match ops.batch_allocate(tenant.as_str(), &items).await {
+            Ok(result) => (StatusCode::OK, Json(result)).into_response(),
+            Err(e) => ipam_error_response(e),
+        },
+    }
 }
 
 async fn ipam_batch_release(

@@ -38,22 +38,33 @@ use tracing::{info, instrument, warn};
 
 use crate::auth::{AuthMethod, AuthenticatedPrincipal};
 use crate::error::NetcidrError;
+use crate::error_presenter::{LogLevel, present};
 use crate::ipam::models::PersonalAccessTokenSummary;
-use crate::ipam::operations::IpamOps;
-use crate::pat::PatPepper;
-use crate::pat_lifecycle::{CreatePatRequest, PatLifecycle, PatOwner};
+use crate::pat_lifecycle::{CreatePatRequest, MintForPrincipalError, PatLifecycle};
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct CreateTokenRequest {
+    /// Human-readable label for the token (shown in the UI / list response).
     pub name: String,
     /// Number of days from now until the token expires. `None` defaults
     /// to the lifecycle default; values outside `1..=365` are 400.
     pub expires_in_days: Option<u32>,
 }
 
+impl From<CreateTokenRequest> for CreatePatRequest {
+    fn from(r: CreateTokenRequest) -> Self {
+        Self {
+            name: r.name,
+            expires_in_days: r.expires_in_days,
+        }
+    }
+}
+
 /// One-time response to a successful mint. The `token` field is the
 /// plaintext secret — surfaced exactly once and never again.
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct CreateTokenResponse {
     pub id: String,
     pub name: String,
@@ -68,12 +79,14 @@ pub struct CreateTokenResponse {
 /// `GET /me/tokens` envelope. Mirrors the `CidrBlockList` shape used by
 /// `/ipam/cidr-blocks` — `{ tokens: [...], count: N }`.
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct TokenListResponse {
     pub tokens: Vec<PersonalAccessTokenSummary>,
     pub count: usize,
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 struct ErrorBody {
     error: String,
 }
@@ -126,42 +139,28 @@ pub fn create_me_router() -> Router {
         .layer(middleware::from_fn(require_oidc))
 }
 
+#[cfg_attr(feature = "swagger", utoipa::path(
+    post,
+    path = "/me/tokens",
+    request_body = CreateTokenRequest,
+    responses(
+        (status = 201, description = "PAT minted. The plaintext `token` is returned exactly once.", body = CreateTokenResponse),
+        (status = 400, description = "Invalid request body"),
+        (status = 401, description = "Missing or invalid bearer token"),
+        (status = 403, description = "OIDC authentication required (PAT and static-bearer auth are rejected here)"),
+    ),
+    security(("bearerAuth" = [])),
+    tag = "auth"
+))]
 #[instrument(skip_all, fields(owner_email = %principal.email.as_deref().unwrap_or("<none>")))]
-async fn create_token(
-    Extension(ops): Extension<Arc<IpamOps>>,
-    Extension(pepper): Extension<Arc<PatPepper>>,
+pub(crate) async fn create_token(
+    Extension(lifecycle): Extension<Arc<PatLifecycle>>,
     Extension(principal): Extension<AuthenticatedPrincipal>,
     Json(body): Json<CreateTokenRequest>,
 ) -> Response {
-    // 1. Pull required identity fields off the principal. OIDC requires
-    //    a verified email; the require_auth layer already enforces this
-    //    for OIDC mode, but defend in depth.
-    let owner = match owner_from_principal(&principal) {
-        Some(owner) => owner,
-        None => {
-            return error_response(
-                StatusCode::FORBIDDEN,
-                "OIDC principal has no verified email; cannot mint tokens",
-            );
-        }
-    };
-
-    let lifecycle = PatLifecycle::new(ops.store_arc(), pepper);
-    let minted = match lifecycle
-        .mint_for_owner(
-            &owner,
-            CreatePatRequest {
-                name: body.name,
-                expires_in_days: body.expires_in_days,
-            },
-        )
-        .await
-    {
+    let minted = match lifecycle.mint_for_principal(&principal, body.into()).await {
         Ok(minted) => minted,
-        Err(e) => {
-            warn!(error = %e, "PAT mint failed");
-            return map_pat_error(e);
-        }
+        Err(e) => return map_principal_error(e, "mint token"),
     };
 
     info!(pat_id = %minted.summary.id, "PAT minted");
@@ -177,96 +176,89 @@ async fn create_token(
     (StatusCode::CREATED, Json(resp)).into_response()
 }
 
+#[cfg_attr(feature = "swagger", utoipa::path(
+    get,
+    path = "/me/tokens",
+    responses(
+        (status = 200, description = "All PATs (including revoked) owned by the caller", body = TokenListResponse),
+        (status = 401, description = "Missing or invalid bearer token"),
+        (status = 403, description = "OIDC authentication required"),
+    ),
+    security(("bearerAuth" = [])),
+    tag = "auth"
+))]
 #[instrument(skip_all, fields(owner_email = %principal.email.as_deref().unwrap_or("<none>")))]
-async fn list_tokens(
-    Extension(ops): Extension<Arc<IpamOps>>,
-    Extension(pepper): Extension<Arc<PatPepper>>,
+pub(crate) async fn list_tokens(
+    Extension(lifecycle): Extension<Arc<PatLifecycle>>,
     Extension(principal): Extension<AuthenticatedPrincipal>,
 ) -> Response {
-    let owner = match owner_from_principal(&principal) {
-        Some(owner) => owner,
-        None => {
-            return error_response(
-                StatusCode::FORBIDDEN,
-                "OIDC principal has no verified email",
-            );
-        }
-    };
-
-    let lifecycle = PatLifecycle::new(ops.store_arc(), pepper);
-    match lifecycle.list_for_owner(&owner).await {
+    match lifecycle.list_for_principal(&principal).await {
         Ok(tokens) => {
             // Soft-delete contract: revoked rows stay visible to their
             // owner with `revoked_at` set. Don't filter them out here.
             let count = tokens.len();
             Json(TokenListResponse { tokens, count }).into_response()
         }
-        Err(e) => {
-            warn!(error = %e, "pat_list_for_owner failed");
-            map_pat_error(e)
-        }
+        Err(e) => map_principal_error(e, "list tokens"),
     }
 }
 
+#[cfg_attr(feature = "swagger", utoipa::path(
+    delete,
+    path = "/me/tokens/{id}",
+    params(
+        ("id" = String, Path, description = "PAT id (from the create/list response)"),
+    ),
+    responses(
+        (status = 204, description = "Token revoked (idempotent — already-revoked tokens also return 204)"),
+        (status = 401, description = "Missing or invalid bearer token"),
+        (status = 403, description = "OIDC authentication required"),
+        (status = 404, description = "Token id not found in the caller's bucket"),
+    ),
+    security(("bearerAuth" = [])),
+    tag = "auth"
+))]
 #[instrument(skip_all, fields(pat_id = %id, owner_email = %principal.email.as_deref().unwrap_or("<none>")))]
-async fn revoke_token(
-    Extension(ops): Extension<Arc<IpamOps>>,
-    Extension(pepper): Extension<Arc<PatPepper>>,
+pub(crate) async fn revoke_token(
+    Extension(lifecycle): Extension<Arc<PatLifecycle>>,
     Extension(principal): Extension<AuthenticatedPrincipal>,
     Path(id): Path<String>,
 ) -> Response {
-    let owner = match owner_from_principal(&principal) {
-        Some(owner) => owner,
-        None => {
-            return error_response(
-                StatusCode::FORBIDDEN,
-                "OIDC principal has no verified email",
-            );
-        }
-    };
-
-    let lifecycle = PatLifecycle::new(ops.store_arc(), pepper);
-    match lifecycle.revoke_for_owner(&owner, &id).await {
-        // pat_revoke is idempotent on already-revoked rows by contract,
-        // so a successful Ok(_) covers both first-revoke and re-revoke.
+    // pat_revoke is idempotent on already-revoked rows by contract,
+    // so a successful Ok(_) covers both first-revoke and re-revoke.
+    // PatNotFound (including cross-tenant ids by spec) flows through
+    // map_pat_error → presenter → 404 "token not found" without
+    // echoing the id; never 403.
+    match lifecycle.revoke_for_principal(&principal, &id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        // Per spec: cross-tenant or unknown id → 404, never 403. Don't
-        // leak whether the id exists in another user's bucket.
-        Err(NetcidrError::PatNotFound(_)) => {
-            error_response(StatusCode::NOT_FOUND, "token not found")
-        }
-        Err(e) => {
-            warn!(error = %e, "pat_revoke failed");
+        Err(e) => map_principal_error(e, "revoke token"),
+    }
+}
+
+/// Map a `MintForPrincipalError` to an HTTP response. NoVerifiedEmail
+/// surfaces as 403 (the auth layer should have caught it, but the
+/// lifecycle defends in depth). Lifecycle errors go through the shared
+/// presenter and inherit its scrubbing.
+fn map_principal_error(err: MintForPrincipalError, action: &str) -> Response {
+    match err {
+        MintForPrincipalError::NoVerifiedEmail => error_response(
+            StatusCode::FORBIDDEN,
+            format!("OIDC principal has no verified email; cannot {action}"),
+        ),
+        MintForPrincipalError::Lifecycle(e) => {
+            warn!(error = %e, action = %action, "pat operation failed");
             map_pat_error(e)
         }
     }
 }
 
-fn owner_from_principal(principal: &AuthenticatedPrincipal) -> Option<PatOwner> {
-    let email = principal.email.clone()?;
-    Some(PatOwner {
-        tenant_id: email.clone(),
-        subject: principal.subject.clone(),
-        email,
-    })
-}
-
-/// Map storage-layer errors to HTTP. Mirrors the conservative pattern in
-/// `ipam_api`: never echo raw DB messages, and treat anything we don't
-/// explicitly recognize as 500.
+/// Map storage-layer errors to HTTP via the shared error presenter.
+/// Identical classification, scrubbing, and log policy as `ipam_api`.
 fn map_pat_error(err: NetcidrError) -> Response {
-    match err {
-        NetcidrError::InvalidInput(msg) | NetcidrError::InvalidCidr(msg) => {
-            error_response(StatusCode::BAD_REQUEST, msg)
-        }
-        NetcidrError::PatNotFound(_) => error_response(StatusCode::NOT_FOUND, "token not found"),
-        NetcidrError::DatabaseError(_) => {
-            tracing::error!(error = %err, "database error in /me/tokens");
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal server error")
-        }
-        _ => {
-            tracing::error!(error = %err, "unexpected error in /me/tokens");
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal server error")
-        }
+    let p = present(&err);
+    if p.log_level == LogLevel::Error {
+        tracing::error!(error = %err, "error in /me/tokens");
     }
+    let status = StatusCode::from_u16(p.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    error_response(status, p.client_msg)
 }

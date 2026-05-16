@@ -368,12 +368,19 @@ pub enum IpamCommands {
     },
 
     /// Export all IPAM data to JSON
-    Dump,
+    Dump {
+        /// Tenant ID to export (default: "local" for CLI; set to your email for API-written data)
+        #[arg(long, default_value = "local")]
+        tenant: String,
+    },
 
     /// Import IPAM data from JSON (stdin or file)
     Load {
         /// Path to JSON file (reads from stdin if omitted)
         file: Option<String>,
+        /// Tenant ID to import data under (default: "local")
+        #[arg(long, default_value = "local")]
+        tenant: String,
     },
 }
 

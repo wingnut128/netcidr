@@ -34,26 +34,20 @@ impl HttpIpamClient {
         format!("{}/ipam{}", self.base_url, path)
     }
 
-    /// Map a non-success HTTP response to an `NetcidrError`.
+    /// Map a non-success HTTP response from the upstream API to a
+    /// `NetcidrError::Upstream`. The upstream's `error_presenter`
+    /// already scrubbed the body and chose the status, so this side
+    /// just forwards both; the MCP presenter then renders the upstream
+    /// status to the MCP caller exactly as if the request had been
+    /// served locally.
     async fn map_error(resp: reqwest::Response) -> NetcidrError {
         let status = resp.status().as_u16();
-        let body = resp
+        let message = resp
             .json::<ApiError>()
             .await
             .map(|e| e.error)
             .unwrap_or_else(|_| format!("HTTP {status}"));
-        match status {
-            404 => {
-                if body.contains("upernet") {
-                    NetcidrError::CidrBlockNotFound(body)
-                } else {
-                    NetcidrError::AllocationNotFound(body)
-                }
-            }
-            409 => NetcidrError::InvalidInput(body),
-            422 => NetcidrError::InvalidInput(body),
-            _ => NetcidrError::DatabaseError(body),
-        }
+        NetcidrError::Upstream { status, message }
     }
 
     // -----------------------------------------------------------------------

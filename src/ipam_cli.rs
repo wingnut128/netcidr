@@ -4,13 +4,13 @@ use netcidr::ipam::config::IpamConfig;
 use netcidr::ipam::models::*;
 use netcidr::ipam::operations::IpamOps;
 use netcidr::output::{CsvOutput, OutputWriter, TextOutput};
+use netcidr::tenant::Tenant;
 use netcidr::validation;
 use serde::Serialize;
 
 use crate::print_stdout;
 
-/// CLI uses local SQLite, single-tenant by definition.
-const CLI_TENANT_ID: &str = "local";
+// CLI uses local SQLite, single-tenant by definition. Pass `Tenant::LOCAL`.
 
 fn output_result<T: Serialize + TextOutput + CsvOutput>(
     writer: &OutputWriter,
@@ -70,7 +70,7 @@ pub async fn handle_ipam_command(
             } => {
                 let sn = ops
                     .create_cidr_block(
-                        CLI_TENANT_ID,
+                        Tenant::LOCAL,
                         &CreateCidrBlock {
                             cidr,
                             name,
@@ -81,7 +81,7 @@ pub async fn handle_ipam_command(
                 output_result(writer, output_file, &sn);
             }
             CidrBlockCommands::List => {
-                let list = ops.list_cidr_blocks(CLI_TENANT_ID).await?;
+                let list = ops.list_cidr_blocks(Tenant::LOCAL).await?;
                 let result = CidrBlockList {
                     count: list.len(),
                     cidr_blocks: list,
@@ -89,11 +89,11 @@ pub async fn handle_ipam_command(
                 output_result(writer, output_file, &result);
             }
             CidrBlockCommands::Get { id } => {
-                let sn = ops.get_cidr_block(CLI_TENANT_ID, &id).await?;
+                let sn = ops.get_cidr_block(Tenant::LOCAL, &id).await?;
                 output_result(writer, output_file, &sn);
             }
             CidrBlockCommands::Delete { id } => {
-                ops.delete_cidr_block(CLI_TENANT_ID, &id).await?;
+                ops.delete_cidr_block(Tenant::LOCAL, &id).await?;
                 eprintln!("CIDR block {} deleted", id);
             }
         },
@@ -114,7 +114,7 @@ pub async fn handle_ipam_command(
             let status = parse_status(&status)?;
             let alloc = ops
                 .allocate_specific(
-                    CLI_TENANT_ID,
+                    Tenant::LOCAL,
                     &CreateAllocation {
                         cidr_block_id,
                         cidr,
@@ -151,7 +151,7 @@ pub async fn handle_ipam_command(
             let status = parse_status(&status)?;
             let allocs = ops
                 .allocate_auto(
-                    CLI_TENANT_ID,
+                    Tenant::LOCAL,
                     &AutoAllocateRequest {
                         cidr_block_id,
                         prefix_length: prefix,
@@ -178,7 +178,7 @@ pub async fn handle_ipam_command(
 
         IpamCommands::Allocation { command } => match command {
             AllocationCommands::Get { id } => {
-                let alloc = ops.get_allocation(CLI_TENANT_ID, &id).await?;
+                let alloc = ops.get_allocation(Tenant::LOCAL, &id).await?;
                 output_result(writer, output_file, &alloc);
             }
             AllocationCommands::List {
@@ -192,7 +192,7 @@ pub async fn handle_ipam_command(
                 let status = parse_status(&status)?;
                 let allocs = ops
                     .list_allocations(
-                        CLI_TENANT_ID,
+                        Tenant::LOCAL,
                         &AllocationFilter {
                             cidr_block_id,
                             status,
@@ -222,7 +222,7 @@ pub async fn handle_ipam_command(
                 let status = parse_status(&status)?;
                 let alloc = ops
                     .update_allocation(
-                        CLI_TENANT_ID,
+                        Tenant::LOCAL,
                         &id,
                         &UpdateAllocation {
                             name,
@@ -240,12 +240,12 @@ pub async fn handle_ipam_command(
         },
 
         IpamCommands::Release { id } => {
-            let alloc = ops.release_allocation(CLI_TENANT_ID, &id).await?;
+            let alloc = ops.release_allocation(Tenant::LOCAL, &id).await?;
             output_result(writer, output_file, &alloc);
         }
 
         IpamCommands::Utilization { cidr_block_id } => {
-            let report = ops.utilization(CLI_TENANT_ID, &cidr_block_id).await?;
+            let report = ops.utilization(Tenant::LOCAL, &cidr_block_id).await?;
             output_result(writer, output_file, &report);
         }
 
@@ -254,13 +254,13 @@ pub async fn handle_ipam_command(
             prefix,
         } => {
             let report = ops
-                .free_blocks(CLI_TENANT_ID, &cidr_block_id, prefix)
+                .free_blocks(Tenant::LOCAL, &cidr_block_id, prefix)
                 .await?;
             output_result(writer, output_file, &report);
         }
 
         IpamCommands::FindIp { address } => {
-            let allocs = ops.find_by_ip(CLI_TENANT_ID, &address).await?;
+            let allocs = ops.find_by_ip(Tenant::LOCAL, &address).await?;
             let result = AllocationList {
                 count: allocs.len(),
                 allocations: allocs,
@@ -269,7 +269,7 @@ pub async fn handle_ipam_command(
         }
 
         IpamCommands::FindResource { resource_id } => {
-            let allocs = ops.find_by_resource(CLI_TENANT_ID, &resource_id).await?;
+            let allocs = ops.find_by_resource(Tenant::LOCAL, &resource_id).await?;
             let result = AllocationList {
                 count: allocs.len(),
                 allocations: allocs,
@@ -285,7 +285,7 @@ pub async fn handle_ipam_command(
         } => {
             let entries = ops
                 .query_audit(
-                    CLI_TENANT_ID,
+                    Tenant::LOCAL,
                     &AuditFilter {
                         entity_type,
                         entity_id,
@@ -301,15 +301,15 @@ pub async fn handle_ipam_command(
             output_result(writer, output_file, &result);
         }
 
-        IpamCommands::Dump => {
-            let dump = ops.dump(CLI_TENANT_ID).await?;
+        IpamCommands::Dump { tenant } => {
+            let dump = ops.dump(&tenant).await?;
             let json = serde_json::to_string_pretty(&dump).expect("Failed to serialize dump");
             if output_file.is_none() {
                 print_stdout(&json);
             }
         }
 
-        IpamCommands::Load { file } => {
+        IpamCommands::Load { file, tenant } => {
             let json = match file {
                 Some(path) => std::fs::read_to_string(&path).map_err(|e| {
                     netcidr::error::NetcidrError::InvalidInput(format!(
@@ -335,7 +335,7 @@ pub async fn handle_ipam_command(
                     netcidr::error::NetcidrError::InvalidInput(format!("invalid JSON: {}", e))
                 })?;
 
-            let (sn_count, alloc_count) = ops.load(CLI_TENANT_ID, &dump).await?;
+            let (sn_count, alloc_count) = ops.load(&tenant, &dump).await?;
             eprintln!(
                 "Imported {} CIDR blocks and {} allocations",
                 sn_count, alloc_count
@@ -344,7 +344,7 @@ pub async fn handle_ipam_command(
 
         IpamCommands::Tags { command } => match command {
             TagCommands::Get { allocation_id } => {
-                let alloc = ops.get_allocation(CLI_TENANT_ID, &allocation_id).await?;
+                let alloc = ops.get_allocation(Tenant::LOCAL, &allocation_id).await?;
                 output_result(writer, output_file, &alloc);
             }
             TagCommands::Set {
@@ -352,9 +352,9 @@ pub async fn handle_ipam_command(
                 tags,
             } => {
                 let parsed_tags = parse_tags(&tags)?;
-                ops.set_tags(CLI_TENANT_ID, &allocation_id, &parsed_tags)
+                ops.set_tags(Tenant::LOCAL, &allocation_id, &parsed_tags)
                     .await?;
-                let alloc = ops.get_allocation(CLI_TENANT_ID, &allocation_id).await?;
+                let alloc = ops.get_allocation(Tenant::LOCAL, &allocation_id).await?;
                 output_result(writer, output_file, &alloc);
             }
         },

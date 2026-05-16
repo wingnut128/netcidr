@@ -6,9 +6,45 @@ use chrono::Utc;
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::error::{NetcidrError, Result};
+use crate::ipam::idempotency;
 use crate::ipam::models::*;
 use crate::ipam::store::IpamStore;
 use crate::validation;
+
+/// Outcome of an idempotency-aware operation. Carries the produced
+/// value and whether it was freshly computed or replayed from the
+/// idempotency cache. Frontends use the variant to decide whether to
+/// signal replay to their caller (e.g. the HTTP API sets the
+/// `Idempotent-Replay: true` response header on `Replayed`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IdempotentOutcome<T> {
+    Fresh(T),
+    Replayed(T),
+}
+
+impl<T> IdempotentOutcome<T> {
+    /// Discard the replay/fresh distinction; just return the inner value.
+    /// Use when the caller doesn't need to signal replay (e.g., CLI).
+    pub fn into_inner(self) -> T {
+        match self {
+            Self::Fresh(v) | Self::Replayed(v) => v,
+        }
+    }
+
+    pub fn is_replayed(&self) -> bool {
+        matches!(self, Self::Replayed(_))
+    }
+
+    /// Transform the inner value while preserving the Fresh/Replayed
+    /// variant. Used by frontends that wrap the domain value before
+    /// serializing (e.g. HTTP `Vec<Allocation>` → `AllocationList`).
+    pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> IdempotentOutcome<U> {
+        match self {
+            Self::Fresh(v) => IdempotentOutcome::Fresh(f(v)),
+            Self::Replayed(v) => IdempotentOutcome::Replayed(f(v)),
+        }
+    }
+}
 
 /// High-level IPAM operations that sit above the store trait.
 /// All conflict detection and free-space logic lives here, keeping
@@ -1303,6 +1339,134 @@ fn split_cidr_to_prefix(cidr: &str, target_prefix: u8, is_v4: bool) -> Vec<Strin
     }
 
     results
+}
+
+// ---------------------------------------------------------------------------
+// Idempotency-aware variants
+//
+// Each `*_idempotent` method wraps the corresponding base operation with
+// the wire-format-agnostic idempotency helpers in `idempotency.rs`. The
+// scope strings match the legacy HTTP-layer scopes so cached entries
+// remain valid across the deploy that introduces these methods.
+// ---------------------------------------------------------------------------
+
+impl IpamOps {
+    /// Idempotency-aware variant of [`Self::allocate_specific`].
+    /// Scope: `allocate-specific:{cidr_block_id}`.
+    pub async fn allocate_specific_idempotent(
+        &self,
+        tenant_id: &str,
+        input: &CreateAllocation,
+        idempotency_key: &str,
+    ) -> Result<IdempotentOutcome<Allocation>> {
+        let scope = format!("allocate-specific:{}", input.cidr_block_id);
+        let hash = idempotency::input_hash(input)?;
+
+        if let Some(replay) = idempotency::try_replay::<Allocation>(
+            self.store(),
+            tenant_id,
+            idempotency_key,
+            &scope,
+            &hash,
+        )
+        .await?
+        {
+            return Ok(IdempotentOutcome::Replayed(replay));
+        }
+
+        let allocation = self.allocate_specific(tenant_id, input).await?;
+        if let Err(e) = idempotency::record_output(
+            self.store(),
+            tenant_id,
+            idempotency_key,
+            &scope,
+            &hash,
+            &allocation,
+        )
+        .await
+        {
+            tracing::warn!(error = %e, "failed to record idempotency key");
+        }
+        Ok(IdempotentOutcome::Fresh(allocation))
+    }
+
+    /// Idempotency-aware variant of [`Self::allocate_auto`].
+    /// Scope: `auto-allocate:{cidr_block_id}`.
+    pub async fn allocate_auto_idempotent(
+        &self,
+        tenant_id: &str,
+        request: &AutoAllocateRequest,
+        idempotency_key: &str,
+    ) -> Result<IdempotentOutcome<Vec<Allocation>>> {
+        let scope = format!("auto-allocate:{}", request.cidr_block_id);
+        let hash = idempotency::input_hash(request)?;
+
+        if let Some(replay) = idempotency::try_replay::<Vec<Allocation>>(
+            self.store(),
+            tenant_id,
+            idempotency_key,
+            &scope,
+            &hash,
+        )
+        .await?
+        {
+            return Ok(IdempotentOutcome::Replayed(replay));
+        }
+
+        let allocations = self.allocate_auto(tenant_id, request).await?;
+        if let Err(e) = idempotency::record_output(
+            self.store(),
+            tenant_id,
+            idempotency_key,
+            &scope,
+            &hash,
+            &allocations,
+        )
+        .await
+        {
+            tracing::warn!(error = %e, "failed to record idempotency key");
+        }
+        Ok(IdempotentOutcome::Fresh(allocations))
+    }
+
+    /// Idempotency-aware variant of [`Self::batch_allocate`].
+    /// Scope: `batch-allocate`.
+    pub async fn batch_allocate_idempotent(
+        &self,
+        tenant_id: &str,
+        items: &[BatchAllocateItem],
+        idempotency_key: &str,
+    ) -> Result<IdempotentOutcome<BatchAllocateResult>> {
+        let scope = "batch-allocate".to_string();
+        let hash = idempotency::input_hash(items)?;
+
+        if let Some(replay) = idempotency::try_replay::<BatchAllocateResult>(
+            self.store(),
+            tenant_id,
+            idempotency_key,
+            &scope,
+            &hash,
+        )
+        .await?
+        {
+            return Ok(IdempotentOutcome::Replayed(replay));
+        }
+
+        let result = self.batch_allocate(tenant_id, items).await?;
+        if let Err(e) = idempotency::record_output(
+            self.store(),
+            tenant_id,
+            idempotency_key,
+            &scope,
+            &hash,
+            &result,
+        )
+        .await
+        {
+            tracing::warn!(error = %e, "failed to record idempotency key");
+        }
+        Ok(IdempotentOutcome::Fresh(result))
+    }
 }
 
 #[cfg(test)]
@@ -3484,5 +3648,164 @@ mod tests {
             .await
             .unwrap();
         assert!(entries.is_empty());
+    }
+
+    // ── Idempotency-aware variants ─────────────────────────────────────
+
+    async fn idempotent_test_cidr_block(ops: &IpamOps) -> CidrBlock {
+        ops.create_cidr_block(
+            TEST_TENANT,
+            &CreateCidrBlock {
+                cidr: "10.0.0.0/8".to_string(),
+                name: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap()
+    }
+
+    fn allocate_specific_input(sn_id: &str, cidr: &str) -> CreateAllocation {
+        CreateAllocation {
+            cidr_block_id: sn_id.to_string(),
+            cidr: cidr.to_string(),
+            status: None,
+            resource_id: None,
+            resource_type: None,
+            name: None,
+            description: None,
+            environment: None,
+            owner: None,
+            parent_allocation_id: None,
+            tags: None,
+            ttl_seconds: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn idempotent_allocate_specific_fresh_then_replay() {
+        let ops = test_ops().await;
+        let sn = idempotent_test_cidr_block(&ops).await;
+        let input = allocate_specific_input(&sn.id, "10.0.0.0/24");
+
+        let first = ops
+            .allocate_specific_idempotent(TEST_TENANT, &input, "key-1")
+            .await
+            .unwrap();
+        assert!(matches!(first, IdempotentOutcome::Fresh(_)));
+        let first_id = match &first {
+            IdempotentOutcome::Fresh(a) => a.id.clone(),
+            _ => unreachable!(),
+        };
+
+        // Same key + same input → replay returns the same allocation.
+        let second = ops
+            .allocate_specific_idempotent(TEST_TENANT, &input, "key-1")
+            .await
+            .unwrap();
+        assert!(matches!(second, IdempotentOutcome::Replayed(_)));
+        let second_id = second.into_inner().id;
+        assert_eq!(second_id, first_id, "replay returns the cached allocation");
+    }
+
+    #[tokio::test]
+    async fn idempotent_allocate_specific_conflict_on_different_body() {
+        let ops = test_ops().await;
+        let sn = idempotent_test_cidr_block(&ops).await;
+
+        ops.allocate_specific_idempotent(
+            TEST_TENANT,
+            &allocate_specific_input(&sn.id, "10.0.0.0/24"),
+            "key-2",
+        )
+        .await
+        .unwrap();
+
+        // Same key + different input → IdempotencyConflict.
+        let err = ops
+            .allocate_specific_idempotent(
+                TEST_TENANT,
+                &allocate_specific_input(&sn.id, "10.0.1.0/24"),
+                "key-2",
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, NetcidrError::IdempotencyConflict { .. }));
+    }
+
+    #[tokio::test]
+    async fn idempotent_allocate_auto_fresh_then_replay() {
+        let ops = test_ops().await;
+        let sn = idempotent_test_cidr_block(&ops).await;
+        let req = AutoAllocateRequest {
+            cidr_block_id: sn.id.clone(),
+            prefix_length: 24,
+            count: Some(2),
+            status: None,
+            resource_id: None,
+            resource_type: None,
+            name: None,
+            description: None,
+            environment: None,
+            owner: None,
+            parent_allocation_id: None,
+            tags: None,
+            ttl_seconds: None,
+        };
+
+        let first = ops
+            .allocate_auto_idempotent(TEST_TENANT, &req, "key-auto")
+            .await
+            .unwrap();
+        let first_ids: Vec<_> = match &first {
+            IdempotentOutcome::Fresh(v) => v.iter().map(|a| a.id.clone()).collect(),
+            _ => unreachable!("first call must be Fresh"),
+        };
+
+        let second = ops
+            .allocate_auto_idempotent(TEST_TENANT, &req, "key-auto")
+            .await
+            .unwrap();
+        assert!(matches!(second, IdempotentOutcome::Replayed(_)));
+        let second_ids: Vec<_> = second.into_inner().into_iter().map(|a| a.id).collect();
+        assert_eq!(second_ids, first_ids);
+    }
+
+    #[tokio::test]
+    async fn idempotent_scope_is_per_cidr_block() {
+        // Same key reused across different cidr_blocks must NOT conflict —
+        // the scope is `allocate-specific:{cidr_block_id}`.
+        let ops = test_ops().await;
+        let sn_a = idempotent_test_cidr_block(&ops).await;
+        let sn_b = ops
+            .create_cidr_block(
+                TEST_TENANT,
+                &CreateCidrBlock {
+                    cidr: "192.168.0.0/16".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        ops.allocate_specific_idempotent(
+            TEST_TENANT,
+            &allocate_specific_input(&sn_a.id, "10.0.0.0/24"),
+            "shared-key",
+        )
+        .await
+        .unwrap();
+
+        // Different cidr_block, same key, different input — fresh, no conflict.
+        let outcome = ops
+            .allocate_specific_idempotent(
+                TEST_TENANT,
+                &allocate_specific_input(&sn_b.id, "192.168.1.0/24"),
+                "shared-key",
+            )
+            .await
+            .unwrap();
+        assert!(matches!(outcome, IdempotentOutcome::Fresh(_)));
     }
 }
