@@ -696,7 +696,11 @@ export NETCIDR_READER_EMAILS="auditor@example.com"
 
 **Precedence:** admin > allocator > reader (an email listed in `NETCIDR_ADMIN_EMAILS` is always Admin even if also in the others).
 
-**Back-compat default:** any authenticated principal whose email is *not* in any role list is treated as `Admin`. This keeps existing single-operator and small-team deployments working unchanged; tighten by adding explicit `NETCIDR_READER_EMAILS` / `NETCIDR_ALLOCATOR_EMAILS` lines. A follow-on release will flip the default to `Reader` once the role model is in wide use.
+**Default policy: least privilege.** Any authenticated OIDC user whose email is *not* in any role list resolves to `Reader` (read-only). Operators must explicitly grant write or admin privileges by adding emails to `NETCIDR_ALLOCATOR_EMAILS` or `NETCIDR_ADMIN_EMAILS`.
+
+**Bearer-token mode keeps Admin.** Static `Bearer` auth (`NETCIDR_AUTH_MODE=bearer`) carries no identity beyond the shared `NETCIDR_API_TOKEN`. A bearer-authed caller resolves to `Admin` regardless of the role lists. The bearer token is treated as an operator-owned service credential. If you need a read-only service token, use OIDC + a reader-role email instead.
+
+**Migrating from a pre-RBAC release.** Earlier releases granted every authenticated user full access. After upgrading, list every user who needs write access in `NETCIDR_ALLOCATOR_EMAILS` (or `NETCIDR_ADMIN_EMAILS` for full admin) *before* restarting the server, otherwise they will hit 403 on the next write call. Bearer-mode automation needs no change.
 
 **403 contract:** denied requests get `{"error":"Forbidden"}` with HTTP 403. The required and actual roles are *not* returned to the client; they're written to the server log at WARN with the actor's email so an operator can correlate denials without exposing the access matrix to callers.
 

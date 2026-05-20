@@ -55,17 +55,19 @@ impl AuthMethod {
 /// derived [`Ord`] lets call sites compare with `principal.role >= required`
 /// without a per-role match.
 ///
-/// **Default is [`Role::Admin`].** This is a deliberate back-compat choice
-/// for the first RBAC PR: every existing deployment continues to grant full
-/// access until operators explicitly add lower-tier emails via the
-/// `NETCIDR_ALLOCATOR_EMAILS` / `NETCIDR_READER_EMAILS` env vars. A follow-on
-/// PR (#102 phase 2) flips the default to [`Role::Reader`] once every route
-/// has an explicit gate and every production allowlist has been migrated.
+/// **Default is [`Role::Reader`]** — least privilege. An authenticated OIDC
+/// user whose email is not in any of the per-role lists
+/// (`NETCIDR_ADMIN_EMAILS`, `NETCIDR_ALLOCATOR_EMAILS`,
+/// `NETCIDR_READER_EMAILS`) gets read-only access by default; operators
+/// must explicitly grant write or admin privileges. See ADR-0002.
+///
+/// **Bearer-token mode is the documented exception** — see
+/// [`AuthConfig::role_for_email`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum Role {
+    #[default]
     Reader,
     Allocator,
-    #[default]
     Admin,
 }
 
@@ -212,14 +214,24 @@ impl AuthConfig {
 
     /// Resolve a principal's role from the configured per-role email maps.
     ///
-    /// Precedence: admin > allocator > reader > [`Role::default`].
-    /// Email match is case-insensitive (lists are pre-lowercased by the
-    /// builders); `None` always returns the default. Static bearer-token
-    /// principals (no email) therefore stay [`Role::Admin`] by default,
-    /// preserving the existing single-operator deploy model.
+    /// Precedence (when an email is present): admin > allocator > reader >
+    /// [`Role::default`] (which is [`Role::Reader`] — least privilege).
+    /// Email match is case-insensitive; lists are pre-lowercased by the
+    /// builders.
+    ///
+    /// **Bearer-token mode is the documented exception.** Static
+    /// bearer-token principals carry `email = None` and resolve to
+    /// [`Role::Admin`] unconditionally. Rationale: bearer mode is the
+    /// single-operator service-token model — the operator who provisioned
+    /// `NETCIDR_API_TOKEN` owns the token and is expected to have full
+    /// access. Silently dropping bearer-mode callers to Reader on the
+    /// PR2 default-flip would break every existing service-to-service
+    /// write call without warning, with no per-token override available
+    /// (bearer tokens carry no identity beyond the shared secret). See
+    /// ADR-0002 for the design discussion.
     pub fn role_for_email(&self, email: Option<&str>) -> Role {
         let Some(email) = email else {
-            return Role::default();
+            return Role::Admin;
         };
         let needle = email.to_ascii_lowercase();
         if self.admin_emails.iter().any(|e| e == &needle) {
@@ -1071,11 +1083,12 @@ mod tests {
     }
 
     #[test]
-    fn role_default_is_admin_for_backcompat() {
-        // PR1 of #102 keeps existing deployments at full access. Flipping
-        // this default to Reader is a follow-on PR after every route has
-        // an explicit gate and operators have configured per-role lists.
-        assert_eq!(Role::default(), Role::Admin);
+    fn role_default_is_reader_least_privilege() {
+        // PR2 of #102 flipped this from Admin to Reader. Authenticated
+        // OIDC principals not in any per-role list resolve to read-only
+        // access; operators must explicitly grant write/admin via the
+        // NETCIDR_ALLOCATOR_EMAILS / NETCIDR_ADMIN_EMAILS env vars.
+        assert_eq!(Role::default(), Role::Reader);
     }
 
     #[test]
@@ -1100,17 +1113,32 @@ mod tests {
         assert_eq!(config.role_for_email(Some("readonly@x")), Role::Reader);
         // Case-insensitive: lists are pre-lowercased; caller email is lowercased on lookup.
         assert_eq!(config.role_for_email(Some("DEV@X")), Role::Allocator);
-        // Unknown email → default (Admin in PR1).
-        assert_eq!(config.role_for_email(Some("unknown@x")), Role::default());
-        // None email → default. Static bearer-token principals (no email)
-        // therefore inherit Role::Admin, preserving single-operator deploy.
-        assert_eq!(config.role_for_email(None), Role::default());
+        // Unknown OIDC email → Role::default() (Reader as of PR2).
+        assert_eq!(config.role_for_email(Some("unknown@x")), Role::Reader);
+        // None email → Admin. Static bearer-token principals (no email)
+        // are the documented carve-out — see the role_for_email doc + ADR-0002.
+        assert_eq!(config.role_for_email(None), Role::Admin);
     }
 
     #[test]
-    fn role_for_email_falls_through_to_default_when_no_lists_set() {
+    fn role_for_email_falls_through_to_reader_when_no_lists_set() {
+        // PR2 default: unknown OIDC user → Reader. Bearer-token (None)
+        // stays Admin even with no lists configured.
         let config = AuthConfig::oidc(Some("aud".to_string()));
-        assert_eq!(config.role_for_email(Some("anyone@x")), Role::Admin);
+        assert_eq!(config.role_for_email(Some("anyone@x")), Role::Reader);
+        assert_eq!(config.role_for_email(None), Role::Admin);
+    }
+
+    #[test]
+    fn role_for_email_bearer_mode_always_returns_admin() {
+        // Explicit assertion of the bearer-token carve-out documented on
+        // role_for_email and ADR-0002. Bearer principals carry email=None;
+        // they must keep Admin regardless of which lists are configured,
+        // including the "everything is locked down" deployment shape.
+        let config = AuthConfig::oidc(Some("aud".to_string()))
+            .with_admin_emails(vec!["specific-admin@x".to_string()])
+            .with_allocator_emails(vec!["alice@x".to_string()])
+            .with_reader_emails(vec!["bob@x".to_string()]);
         assert_eq!(config.role_for_email(None), Role::Admin);
     }
 
