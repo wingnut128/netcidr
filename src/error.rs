@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::auth::Role;
+
 #[derive(Error, Debug)]
 pub enum NetcidrError {
     #[error("Invalid IPv4 address: {0}")]
@@ -105,6 +107,14 @@ pub enum NetcidrError {
     /// that upstream's own error presenter.
     #[error("upstream error (HTTP {status}): {message}")]
     Upstream { status: u16, message: String },
+
+    /// Caller is authenticated but lacks the role required by the
+    /// requested endpoint. Maps to HTTP 403 via the error presenter
+    /// with a fixed-safe `"Forbidden"` message; the `required` and
+    /// `actual` values are *not* echoed to the client (they go to the
+    /// server log at WARN level for the operator to correlate).
+    #[error("Forbidden: required {required:?}, got {actual:?}")]
+    Forbidden { required: Role, actual: Role },
 }
 
 pub type Result<T> = std::result::Result<T, NetcidrError>;
