@@ -62,6 +62,12 @@ fn json_error(status: StatusCode, msg: &str) -> Response {
 /// [`Response`] on failure. Missing-principal yields 500 (it implies
 /// [`crate::auth::require_auth`] did not run upstream — a wiring bug, not
 /// a caller error); insufficient role yields 403 via the error presenter.
+///
+/// `result_large_err` is allowed because the `Err` is constructed only at
+/// the deny boundary and is immediately consumed by the extractor's
+/// `Rejection = Response` — there is no further propagation that would
+/// pay back a heap allocation.
+#[allow(clippy::result_large_err)]
 fn check_role(parts: &Parts, required: Role) -> Result<AuthenticatedPrincipal, Response> {
     let Some(principal) = parts.extensions.get::<AuthenticatedPrincipal>().cloned() else {
         // The auth middleware should have stashed the principal. If it
@@ -176,7 +182,10 @@ mod tests {
     async fn body_text(resp: Response) -> (StatusCode, String) {
         let status = resp.status();
         let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        (status, String::from_utf8(bytes.to_vec()).unwrap_or_default())
+        (
+            status,
+            String::from_utf8(bytes.to_vec()).unwrap_or_default(),
+        )
     }
 
     #[tokio::test]
@@ -196,7 +205,9 @@ mod tests {
     async fn allocator_extractor_rejects_reader_with_403_forbidden() {
         let mut parts = parts_with_principal(Some(principal_with(Role::Reader))).await;
         let result = RequireAllocator::from_request_parts(&mut parts, &()).await;
-        let err = result.err().expect("reader should be denied by RequireAllocator");
+        let err = result
+            .err()
+            .expect("reader should be denied by RequireAllocator");
         let (status, body) = body_text(err).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
         // Body MUST be the fixed "Forbidden" string — required/actual
@@ -250,11 +261,15 @@ mod tests {
         // a 401 (which would suggest the caller can retry with a token).
         let mut parts = parts_with_principal(None).await;
         for extractor_result in [
-            RequireReader::from_request_parts(&mut parts, &()).await.err(),
+            RequireReader::from_request_parts(&mut parts, &())
+                .await
+                .err(),
             RequireAllocator::from_request_parts(&mut parts, &())
                 .await
                 .err(),
-            RequireAdmin::from_request_parts(&mut parts, &()).await.err(),
+            RequireAdmin::from_request_parts(&mut parts, &())
+                .await
+                .err(),
         ] {
             let resp = extractor_result.expect("missing principal should fail");
             let (status, body) = body_text(resp).await;

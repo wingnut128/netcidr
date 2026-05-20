@@ -61,17 +61,12 @@ impl AuthMethod {
 /// `NETCIDR_ALLOCATOR_EMAILS` / `NETCIDR_READER_EMAILS` env vars. A follow-on
 /// PR (#102 phase 2) flips the default to [`Role::Reader`] once every route
 /// has an explicit gate and every production allowlist has been migrated.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum Role {
     Reader,
     Allocator,
+    #[default]
     Admin,
-}
-
-impl Default for Role {
-    fn default() -> Self {
-        Self::Admin
-    }
 }
 
 impl Role {
@@ -1106,10 +1101,7 @@ mod tests {
         // Case-insensitive: lists are pre-lowercased; caller email is lowercased on lookup.
         assert_eq!(config.role_for_email(Some("DEV@X")), Role::Allocator);
         // Unknown email → default (Admin in PR1).
-        assert_eq!(
-            config.role_for_email(Some("unknown@x")),
-            Role::default()
-        );
+        assert_eq!(config.role_for_email(Some("unknown@x")), Role::default());
         // None email → default. Static bearer-token principals (no email)
         // therefore inherit Role::Admin, preserving single-operator deploy.
         assert_eq!(config.role_for_email(None), Role::default());

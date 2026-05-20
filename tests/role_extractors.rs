@@ -67,7 +67,10 @@ async fn send_as(
     let resp = app.clone().oneshot(req).await.unwrap();
     let status = resp.status();
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (status, String::from_utf8(bytes.to_vec()).unwrap_or_default())
+    (
+        status,
+        String::from_utf8(bytes.to_vec()).unwrap_or_default(),
+    )
 }
 
 #[tokio::test]
@@ -127,11 +130,10 @@ async fn reader_denied_allocating_with_403() {
     )
     .await;
     assert_eq!(create_status, StatusCode::CREATED, "bootstrap: {body}");
-    let cidr_block_id: String =
-        serde_json::from_str::<serde_json::Value>(&body).unwrap()["id"]
-            .as_str()
-            .unwrap()
-            .to_string();
+    let cidr_block_id: String = serde_json::from_str::<serde_json::Value>(&body).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     let (status, _body) = send_as(
         &app,
@@ -156,11 +158,10 @@ async fn allocator_can_allocate() {
     )
     .await;
     assert_eq!(create_status, StatusCode::CREATED, "bootstrap: {body}");
-    let cidr_block_id: String =
-        serde_json::from_str::<serde_json::Value>(&body).unwrap()["id"]
-            .as_str()
-            .unwrap()
-            .to_string();
+    let cidr_block_id: String = serde_json::from_str::<serde_json::Value>(&body).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     let (status, body) = send_as(
         &app,

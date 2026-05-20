@@ -356,9 +356,7 @@ impl ServerConfig {
 /// Shared by `oidc_allowed_emails`, `admin_emails`, `allocator_emails`, and
 /// `reader_emails` so the parsing rules can't drift.
 fn resolve_email_list(env_var: &str, fallback: &[String]) -> Vec<String> {
-    let from_env = std::env::var(env_var)
-        .ok()
-        .filter(|s| !s.trim().is_empty());
+    let from_env = std::env::var(env_var).ok().filter(|s| !s.trim().is_empty());
     let raw: Vec<String> = match from_env {
         Some(v) => v
             .split(',')
