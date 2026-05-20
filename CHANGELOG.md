@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.0](https://github.com/wingnut128/netcidr/compare/v0.24.3...v0.25.0) - 2026-05-20
+
+### Added
+
+- [**breaking**] RBAC default-Reader policy (#102 PR2 of 3) ([#187](https://github.com/wingnut128/netcidr/pull/187))
+- RBAC role plumbing (#102 PR1 of 3) ([#186](https://github.com/wingnut128/netcidr/pull/186))
+- S3-backed SQLite sync for Lambda deployments ([#177](https://github.com/wingnut128/netcidr/pull/177))
+
+### Other
+
+- remove stale IAP references ([#185](https://github.com/wingnut128/netcidr/pull/185))
+- *(deps)* bump release-plz/action from 0.5.128 to 0.5.129 ([#181](https://github.com/wingnut128/netcidr/pull/181))
+- *(deps)* bump github/codeql-action from 4.35.3 to 4.35.5 ([#180](https://github.com/wingnut128/netcidr/pull/180))
+- *(deps)* bump EmbarkStudios/cargo-deny-action from 2.0.17 to 2.0.18 ([#179](https://github.com/wingnut128/netcidr/pull/179))
+
 ### Added
 
 - S3-backed SQLite sync for Lambda deployments (`NETCIDR_S3_BUCKET` env var). Setting this variable switches the Lambda binary from Postgres to SQLite, pulling the database from S3 on cold start and pushing it back after every mutating request. Eliminates the need for an RDS instance (~$0.01/mo in S3 costs vs ~$15/mo for RDS). Requires `reserved_concurrency = 1` on the Lambda function to prevent split-brain from concurrent containers.
