@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - S3-backed SQLite sync for Lambda deployments (`NETCIDR_S3_BUCKET` env var). Setting this variable switches the Lambda binary from Postgres to SQLite, pulling the database from S3 on cold start and pushing it back after every mutating request. Eliminates the need for an RDS instance (~$0.01/mo in S3 costs vs ~$15/mo for RDS). Requires `reserved_concurrency = 1` on the Lambda function to prevent split-brain from concurrent containers.
 
+### Changed
+
+- Removed stale Google IAP references — `AuthMode::Oidc` doc comment in `src/config.rs` no longer says "intended for Cloud Run behind Google IAP" (deployment-environment-agnostic phrasing), and the `.gitleaks.toml` allowlist no longer carries a dedicated entry for the long-gone `tests/fixtures/iap-test-private.pem` fixture (the `tests/fixtures/*.pem` catch-all already covers all test fixtures). Tracking issue [#110](https://github.com/wingnut128/netcidr/issues/110) closed as superseded — the IAP-specific JWT path was removed earlier (see v0.x.x history), and the tenancy mechanism it asked for is already in place via ADR-0001 + the multi-tenant isolation spec.
+
 ## [0.24.3](https://github.com/wingnut128/netcidr/compare/v0.24.2...v0.24.3) - 2026-05-12
 
 ### Other

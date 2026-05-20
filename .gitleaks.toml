@@ -4,7 +4,6 @@ useDefault = true
 [allowlist]
 description = "Allowlist for known test fixtures and intentionally-fake credentials"
 paths = [
-  '''tests/fixtures/iap-test-private\.pem''',
   '''tests/fixtures/.*\.pem''',
 ]
 

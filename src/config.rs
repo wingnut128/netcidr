@@ -22,7 +22,8 @@ pub enum AuthMode {
     None,
     /// Static bearer-token authentication for service-to-service/API usage.
     Bearer,
-    /// OIDC/JWT authentication, intended for Cloud Run behind Google IAP.
+    /// OIDC/JWT authentication. Validates Google OIDC ID tokens from
+    /// `Authorization: Bearer`; deployment-environment-agnostic.
     Oidc,
 }
 
