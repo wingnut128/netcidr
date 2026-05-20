@@ -116,25 +116,30 @@ async fn allocator_denied_creating_cidr_block_with_403() {
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
-#[tokio::test]
-async fn reader_denied_allocating_with_403() {
-    // POST /ipam/cidr-blocks/{id}/allocate is Allocator-gated.
-    // Bootstrap the cidr_block as admin so the test focuses on the deny path.
-    let app = app().await;
-    let (create_status, body) = send_as(
-        &app,
+/// Create a `/8` cidr_block as admin and return its id. Several tests
+/// need an existing cidr_block to exercise allocation-tier endpoints
+/// without their own bootstrap noise.
+async fn bootstrap_cidr_block(app: &axum::Router) -> String {
+    let (status, body) = send_as(
+        app,
         "POST",
         "/ipam/cidr-blocks",
         Some("admin"),
         Some(r#"{"cidr":"10.0.0.0/8"}"#),
     )
     .await;
-    assert_eq!(create_status, StatusCode::CREATED, "bootstrap: {body}");
-    let cidr_block_id: String = serde_json::from_str::<serde_json::Value>(&body).unwrap()["id"]
+    assert_eq!(status, StatusCode::CREATED, "bootstrap: {body}");
+    serde_json::from_str::<serde_json::Value>(&body).unwrap()["id"]
         .as_str()
         .unwrap()
-        .to_string();
+        .to_string()
+}
 
+#[tokio::test]
+async fn reader_denied_allocating_with_403() {
+    // POST /ipam/cidr-blocks/{id}/allocate-specific is Allocator-gated.
+    let app = app().await;
+    let cidr_block_id = bootstrap_cidr_block(&app).await;
     let (status, _body) = send_as(
         &app,
         "POST",
@@ -149,20 +154,7 @@ async fn reader_denied_allocating_with_403() {
 #[tokio::test]
 async fn allocator_can_allocate() {
     let app = app().await;
-    let (create_status, body) = send_as(
-        &app,
-        "POST",
-        "/ipam/cidr-blocks",
-        Some("admin"),
-        Some(r#"{"cidr":"10.0.0.0/8"}"#),
-    )
-    .await;
-    assert_eq!(create_status, StatusCode::CREATED, "bootstrap: {body}");
-    let cidr_block_id: String = serde_json::from_str::<serde_json::Value>(&body).unwrap()["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
+    let cidr_block_id = bootstrap_cidr_block(&app).await;
     let (status, body) = send_as(
         &app,
         "POST",
