@@ -676,6 +676,30 @@ The `--api-url` flag overrides `NETCIDR_API_URL` per-invocation. Output respects
 
 **Authentication for `netcidr token` itself is OIDC-only** — PATs cannot mint or revoke other PATs (closes the privilege-escalation path). Once a PAT exists, you can use it as `NETCIDR_API_TOKEN` against `/ipam/*` endpoints elsewhere; the server distinguishes PAT-authed vs OIDC-authed operations in `audit_log` (`auth_method` + `pat_id` columns).
 
+### Roles and Authorization
+
+Every IPAM endpoint declares a minimum role tier — `Reader`, `Allocator`, or `Admin` (ordered low → high). The role is derived from the authenticated principal's email at request time and checked at the handler boundary.
+
+| Role | Permitted IPAM actions |
+|------|------------------------|
+| `Reader` | List/get CIDR blocks and allocations, free-blocks report, utilization, find-ip, find-resource, batch summary |
+| `Allocator` | All `Reader` actions + allocate/release/update allocations, set tags, batch allocate/release |
+| `Admin` | All `Allocator` actions + create/delete CIDR blocks, query audit log |
+
+Configure role membership via env vars (comma-separated emails) or the matching `oidc_*_emails` keys in `netcidr.toml`:
+
+```bash
+export NETCIDR_ADMIN_EMAILS="ops@example.com,security@example.com"
+export NETCIDR_ALLOCATOR_EMAILS="dev@example.com,ci-bot@example.com"
+export NETCIDR_READER_EMAILS="auditor@example.com"
+```
+
+**Precedence:** admin > allocator > reader (an email listed in `NETCIDR_ADMIN_EMAILS` is always Admin even if also in the others).
+
+**Back-compat default:** any authenticated principal whose email is *not* in any role list is treated as `Admin`. This keeps existing single-operator and small-team deployments working unchanged; tighten by adding explicit `NETCIDR_READER_EMAILS` / `NETCIDR_ALLOCATOR_EMAILS` lines. A follow-on release will flip the default to `Reader` once the role model is in wide use.
+
+**403 contract:** denied requests get `{"error":"Forbidden"}` with HTTP 403. The required and actual roles are *not* returned to the client; they're written to the server log at WARN with the actor's email so an operator can correlate denials without exposing the access matrix to callers.
+
 ### Fuzz Testing
 
 Fuzz tests use [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz) with libFuzzer to verify that all parsing functions return `Result` errors (never panic) on arbitrary input.
