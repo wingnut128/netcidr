@@ -1,11 +1,21 @@
 # RBAC: roles come from per-user email config; extractors are per-handler
 
 **Status:** Accepted
-**Date:** 2026-05-20
+**Date:** 2026-05-20 (PR1) — amended 2026-05-20 (PR2)
 **Issue:** [#102](https://github.com/wingnut128/netcidr/issues/102)
 **Related:** [[ADR-0001 — Tenancy via explicit parameter]](./0001-tenancy-via-explicit-parameter.md)
 
-## Decision
+## Status update (PR2)
+
+The default-Admin policy described below was a transitional PR1
+decision. PR2 flipped the default to `Role::Reader` (least privilege)
+for OIDC principals not in any role list, with one documented exception:
+**static bearer-token mode (`AuthMode::Bearer`) keeps `Role::Admin`**.
+The full rationale for the carve-out is in the "Bearer-mode carve-out"
+section below; the original PR1 decision is preserved further down as
+historical context.
+
+## Decision (current)
 
 Role-based authorization for the IPAM HTTP API is gated at the handler
 boundary by three explicit Axum extractors — `RequireReader`,
@@ -16,11 +26,11 @@ role is derived once at authentication time from per-user email lists in
 admin > allocator > reader > Default precedence) and stamped onto the
 `AuthenticatedPrincipal` extension by `AuthConfig::finalize_principal`.
 
-For PR1 the resolution defaults to `Role::Admin` when the principal's
-email is in none of the lists, so existing deployments retain full
-access until operators explicitly downgrade users. A follow-on PR will
-flip the default to `Role::Reader` once every IPAM route has shipped
-with an explicit gate and the production allowlist has been migrated.
+`Role::default()` is `Role::Reader`. An authenticated OIDC user whose
+email is in none of the lists gets read-only access; operators must
+explicitly grant write or admin privileges. Static bearer-token
+principals (which carry no email) resolve to `Role::Admin`
+unconditionally — see the carve-out section.
 
 ## Why per-handler, not per-router-group
 
@@ -65,7 +75,45 @@ only. Per-PAT role downgrade is the explicit subject of PR3 (with the
 resolution rule `effective_role = min(user_role, pat_role)` — PATs can
 narrow privileges but never widen them).
 
-## Why default-Admin for PR1, not default-Reader
+## Bearer-mode carve-out (PR2)
+
+`Role::default()` is `Reader` and the OIDC resolution path falls
+through to it for unknown emails. The `None`-email path — taken by
+static bearer-token principals — explicitly returns `Role::Admin`
+instead. The asymmetry is deliberate:
+
+- **No identity to grant.** Bearer principals carry no email
+  (`PrincipalKind::BearerToken`, `subject = "bearer-token"`). The
+  per-role email lists physically cannot name them, so no operator
+  config could restore Admin access if the default-Reader path
+  applied. There would be no escape valve.
+- **Documented as a single-operator credential.** `NETCIDR_AUTH_MODE=bearer`
+  is the documented service-to-service / single-operator mode (see
+  README "Personal Access Tokens" section — bearer is the
+  non-OIDC fallback). The shared `NETCIDR_API_TOKEN` is provisioned
+  by the same operator who controls server config; treating its
+  bearer as Admin matches the operator's mental model.
+- **Silent breakage is the worst outcome.** A bearer-mode
+  service-to-service write (a CI bot allocating a CIDR, a deployment
+  script reserving a block) that suddenly 403s after a `cargo update`
+  is exactly the kind of "upgrade ate my automation" incident this
+  ADR series exists to avoid. The PR2 default-Reader flip was
+  explicitly designed to make operators *opt in* their human users
+  to higher tiers; making bearer auth a side-effect victim of that
+  policy goes against the goal.
+- **Read-only bearer is achievable via OIDC.** Operators who need
+  read-only service automation should use OIDC + a reader-role
+  email. That path is more secure (per-service identity, audit
+  trail, individual revocation) than a shared bearer token anyway.
+
+Trade-off: a stolen bearer token grants Admin, full stop. That risk
+existed before PR2 — bearer mode has always been "whoever holds the
+token has whatever access the server grants" — and the carve-out does
+not make it worse. The mitigation is the same as before: don't expose
+bearer tokens, prefer OIDC + PATs where individual revocation is
+possible.
+
+## Why we shipped default-Admin in PR1 first (historical)
 
 The strictly-correct security default is `Reader` — least privilege,
 deny unless explicitly granted. Shipping that in the same PR that
@@ -76,11 +124,14 @@ deploy (the common case) that means setting both
 `NETCIDR_READER_EMAILS` in the same maintenance window, with no
 warning.
 
-PR1 ships the seam with `Default::default() = Admin` so the upgrade is
-a no-op. PR2 (separately reviewable, ~one-line code change plus
-deploy-config migration) flips the default. Splitting the change makes
-the *policy* flip independently rollback-able from the *mechanism*
-introduction.
+PR1 shipped the seam with `Default::default() = Admin` so the *types
+and extractor wiring* could land separately from the *policy flip*.
+PR2 (this amendment) made the policy change with the bearer carve-out
+above. Splitting the change kept the mechanism introduction
+independently rollback-able from the policy change — though in
+practice both PRs landed under the same `[Unreleased]` and ship to
+end-users as one release-boundary change (flagged BREAKING in the
+CHANGELOG).
 
 ## Why a fixed-safe 403 body
 
@@ -133,6 +184,13 @@ Revisit if any of the following becomes true:
 4. **An external policy engine** (OPA, Cedar) is introduced. Then
    `Require*` extractors become thin adapters that delegate to it; the
    per-user email config gets retired in favour of policy bundles.
+5. **The bearer-Admin carve-out becomes the wrong default** — e.g. a
+   deployment surfaces where multiple parties hold the bearer token
+   and an operator wants read-only bearer access without switching to
+   OIDC. The fix would be an opt-in `NETCIDR_BEARER_ROLE` env var
+   (default `admin`, settable to `reader`/`allocator`) rather than
+   changing the global default; the carve-out's "no escape valve"
+   argument doesn't apply once a knob exists.
 
 Marginal ergonomic improvements (e.g. "the macro defining the three
 extractors is too clever") are not reasons to revisit on their own.
