@@ -120,6 +120,17 @@ pub fn present(err: &NetcidrError) -> PresentedError {
             },
         },
 
+        // 403 — authenticated but unauthorised. The required/actual
+        // roles are not echoed; the caller learns only that they're
+        // forbidden. Operator-side correlation happens via the WARN
+        // log emitted by the extractor before it constructs this
+        // variant (LogLevel::None keeps the presenter from re-logging).
+        Forbidden { .. } => PresentedError {
+            status: 403,
+            client_msg: "Forbidden".to_string(),
+            log_level: LogLevel::None,
+        },
+
         // 500 — never expose raw text. DB driver messages, IO/serde
         // failures, and anything we forgot to classify all collapse here.
         DatabaseError(_) | Io(_) | Json(_) | Csv(_) | Yaml(_) | ConfigParse(_) => PresentedError {
@@ -319,6 +330,32 @@ mod tests {
             },
             409,
             "Idempotency-Key reused with a different request body",
+            LogLevel::None,
+        );
+    }
+
+    #[test]
+    fn forbidden_is_403_with_fixed_message_and_no_log() {
+        // The caller MUST NOT see the required/actual roles. The fixed
+        // "Forbidden" string and LogLevel::None (the extractor logs
+        // server-side before constructing this) are the contract.
+        use crate::auth::Role;
+        case(
+            NetcidrError::Forbidden {
+                required: Role::Admin,
+                actual: Role::Reader,
+            },
+            403,
+            "Forbidden",
+            LogLevel::None,
+        );
+        case(
+            NetcidrError::Forbidden {
+                required: Role::Allocator,
+                actual: Role::Reader,
+            },
+            403,
+            "Forbidden",
             LogLevel::None,
         );
     }

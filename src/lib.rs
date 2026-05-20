@@ -17,6 +17,7 @@ pub mod summarize;
 pub mod api;
 pub mod audit_context;
 pub mod auth;
+pub mod authorization;
 pub mod cli;
 pub mod ipam_api;
 pub mod me_api;
