@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.0](https://github.com/wingnut128/netcidr/compare/v0.24.3...v0.25.0) - 2026-05-20
+
+### Added
+
+- S3-backed SQLite sync for Lambda deployments (`NETCIDR_S3_BUCKET` env var). Setting this variable switches the Lambda binary from Postgres to SQLite, pulling the database from S3 on cold start and pushing it back after every mutating request. Eliminates the need for an RDS instance (~$0.01/mo in S3 costs vs ~$15/mo for RDS). Requires `reserved_concurrency = 1` on the Lambda function to prevent split-brain from concurrent containers.
+
+- **Role-based authorization for the IPAM API ([#102](https://github.com/wingnut128/netcidr/issues/102), shipped across PR1+PR2).** New `Role` enum (`Reader < Allocator < Admin`, `Ord`-derived) carried on `AuthenticatedPrincipal`; resolved from `AuthConfig` via the precedence admin > allocator > reader > Default. Two new env vars `NETCIDR_ALLOCATOR_EMAILS` / `NETCIDR_READER_EMAILS` (comma-separated) plus matching `oidc_allocator_emails` / `oidc_reader_emails` config-file fields. New `NetcidrError::Forbidden { required, actual }` variant; the error presenter maps it to 403 with a fixed-safe `"Forbidden"` string (required/actual roles are never echoed to the client — they go to the WARN log the extractor emits). New `src/authorization.rs` exporting `RequireReader`, `RequireAllocator`, `RequireAdmin` Axum extractors, applied per-handler across every IPAM route so adding a future endpoint without a role gate is a compile error. **⚠️ BREAKING (default-Reader policy).** Any authenticated OIDC user whose email is not in `NETCIDR_ADMIN_EMAILS`, `NETCIDR_ALLOCATOR_EMAILS`, or `NETCIDR_READER_EMAILS` resolves to `Role::Reader` (read-only) and will receive 403 on every write or admin endpoint. To preserve the pre-release behaviour for a user, add their email to `NETCIDR_ADMIN_EMAILS`. Static bearer-token mode (`NETCIDR_AUTH_MODE=bearer`) is the documented carve-out — bearer principals carry no email, so they continue to resolve to `Role::Admin` as before; if you need read-only service-to-service automation, use OIDC + a reader-role email. New [ADR-0002](docs/adr/0002-rbac-role-config-and-per-handler-extractors.md) records the per-handler-extractor + per-user-config + default-Reader + bearer-carve-out decisions and the rejected alternatives.
+
+### Changed
+
+- Removed stale Google IAP references — `AuthMode::Oidc` doc comment in `src/config.rs` no longer says "intended for Cloud Run behind Google IAP" (deployment-environment-agnostic phrasing), and the `.gitleaks.toml` allowlist no longer carries a dedicated entry for the long-gone `tests/fixtures/iap-test-private.pem` fixture (the `tests/fixtures/*.pem` catch-all already covers all test fixtures). Tracking issue [#110](https://github.com/wingnut128/netcidr/issues/110) closed as superseded — the IAP-specific JWT path was removed earlier (see v0.x.x history), and the tenancy mechanism it asked for is already in place via ADR-0001 + the multi-tenant isolation spec.
+
+## [0.24.3](https://github.com/wingnut128/netcidr/compare/v0.24.2...v0.24.3) - 2026-05-12
+
+### Other
+
+- *(ipam)* move idempotency into IpamOps with wire-format-agnostic cache ([#176](https://github.com/wingnut128/netcidr/pull/176))
+- *(ipam_api)* collapse HTTP body → domain-model field shuffles ([#174](https://github.com/wingnut128/netcidr/pull/174))
+- *(pat)* deepen PatLifecycle to own principal-to-owner translation + tidy-ups ([#172](https://github.com/wingnut128/netcidr/pull/172))
+- ADR-0001 (tenancy-via-explicit-parameter) + consolidate Tenant::LOCAL ([#170](https://github.com/wingnut128/netcidr/pull/170))
+- extract single error-presentation seam across HTTP, /me, and MCP frontends ([#168](https://github.com/wingnut128/netcidr/pull/168))
+- *(api)* document auth endpoints + bearerAuth in OpenAPI ([#165](https://github.com/wingnut128/netcidr/pull/165))
+- *(deps)* bump the cargo-minor-and-patch group across 1 directory with 6 updates ([#161](https://github.com/wingnut128/netcidr/pull/161))
+
 ### Changed
 
 - **Idempotency lives in `IpamOps`, not the HTTP layer.** New `allocate_specific_idempotent`, `allocate_auto_idempotent`, and `batch_allocate_idempotent` methods accept an `Idempotency-Key` and return `IdempotentOutcome<T> { Fresh(T) | Replayed(T) }`. The HTTP API now calls these; the old HTTP-layer `idempotent_post` wrapper is gone. The cache became wire-format-agnostic — operations serialize domain values via serde_json — so CLI and MCP callers can use the same replay protection by forwarding a key. HTTP behaviour is bit-for-bit preserved (replay status, `Idempotent-Replay: true` header, 409 on same-key-different-body, 24h TTL, 64KB body cap, identical scope strings). New `NetcidrError::IdempotencyConflict { key, scope }` variant; the error presenter maps it to 409 with a fixed safe message (the caller-supplied key is never echoed back). Subtle improvement: the request hash now hashes the deserialized input via `serde_json` rather than raw request bytes, so two clients sending logically identical requests with different JSON formatting (whitespace, field order) both replay instead of one getting a spurious 409.

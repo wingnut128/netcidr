@@ -50,6 +50,37 @@ impl AuthMethod {
     }
 }
 
+/// Authorization tier carried on every [`AuthenticatedPrincipal`]. Ordered
+/// `Reader < Allocator < Admin` via the variant declaration order — the
+/// derived [`Ord`] lets call sites compare with `principal.role >= required`
+/// without a per-role match.
+///
+/// **Default is [`Role::Reader`]** — least privilege. An authenticated OIDC
+/// user whose email is not in any of the per-role lists
+/// (`NETCIDR_ADMIN_EMAILS`, `NETCIDR_ALLOCATOR_EMAILS`,
+/// `NETCIDR_READER_EMAILS`) gets read-only access by default; operators
+/// must explicitly grant write or admin privileges. See ADR-0002.
+///
+/// **Bearer-token mode is the documented exception** — see
+/// [`AuthConfig::role_for_email`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub enum Role {
+    #[default]
+    Reader,
+    Allocator,
+    Admin,
+}
+
+impl Role {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Role::Reader => "reader",
+            Role::Allocator => "allocator",
+            Role::Admin => "admin",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AuthenticatedPrincipal {
     pub kind: PrincipalKind,
@@ -59,6 +90,11 @@ pub struct AuthenticatedPrincipal {
     pub auth_method: AuthMethod,
     /// `Some(id)` only when `auth_method == AuthMethod::Pat`.
     pub pat_id: Option<String>,
+    /// Resolved role for this principal. Populated by
+    /// [`AuthConfig::finalize_principal`] after authentication succeeds;
+    /// the three lower-level constructors leave this as [`Role::default`]
+    /// so the resolution lives in exactly one place.
+    pub role: Role,
 }
 
 #[derive(Clone, Default)]
@@ -68,6 +104,8 @@ pub struct AuthConfig {
     oidc_audience: Option<String>,
     allowed_emails: Vec<String>,
     admin_emails: Vec<String>,
+    allocator_emails: Vec<String>,
+    reader_emails: Vec<String>,
     /// Optional store + pepper used by the PAT verifier. Both must be set
     /// for the `Bearer ncdr_pat_…` branch of `require_auth` to succeed;
     /// otherwise PAT-shaped tokens fall through to a generic 401.
@@ -83,6 +121,8 @@ impl std::fmt::Debug for AuthConfig {
             .field("oidc_audience", &self.oidc_audience)
             .field("allowed_emails", &self.allowed_emails)
             .field("admin_emails", &self.admin_emails)
+            .field("allocator_emails", &self.allocator_emails)
+            .field("reader_emails", &self.reader_emails)
             .field("pat_store", &self.pat_store.as_ref().map(|_| "<set>"))
             .field("pat_pepper", &self.pat_pepper.as_ref().map(|_| "<set>"))
             .finish()
@@ -105,6 +145,8 @@ impl AuthConfig {
                 .map(|e| e.to_ascii_lowercase())
                 .collect(),
             admin_emails: Vec::new(),
+            allocator_emails: Vec::new(),
+            reader_emails: Vec::new(),
             pat_store: None,
             pat_pepper: None,
         }
@@ -144,12 +186,74 @@ impl AuthConfig {
         self
     }
 
+    pub fn with_allocator_emails(mut self, emails: Vec<String>) -> Self {
+        self.allocator_emails = emails.into_iter().map(|e| e.to_ascii_lowercase()).collect();
+        self
+    }
+
+    pub fn with_reader_emails(mut self, emails: Vec<String>) -> Self {
+        self.reader_emails = emails.into_iter().map(|e| e.to_ascii_lowercase()).collect();
+        self
+    }
+
     pub fn allowed_emails(&self) -> &[String] {
         &self.allowed_emails
     }
 
     pub fn admin_emails(&self) -> &[String] {
         &self.admin_emails
+    }
+
+    pub fn allocator_emails(&self) -> &[String] {
+        &self.allocator_emails
+    }
+
+    pub fn reader_emails(&self) -> &[String] {
+        &self.reader_emails
+    }
+
+    /// Resolve a principal's role from the configured per-role email maps.
+    ///
+    /// Precedence (when an email is present): admin > allocator > reader >
+    /// [`Role::default`] (which is [`Role::Reader`] — least privilege).
+    /// Email match is case-insensitive; lists are pre-lowercased by the
+    /// builders.
+    ///
+    /// **Bearer-token mode is the documented exception.** Static
+    /// bearer-token principals carry `email = None` and resolve to
+    /// [`Role::Admin`] unconditionally. Rationale: bearer mode is the
+    /// single-operator service-token model — the operator who provisioned
+    /// `NETCIDR_API_TOKEN` owns the token and is expected to have full
+    /// access. Silently dropping bearer-mode callers to Reader on the
+    /// PR2 default-flip would break every existing service-to-service
+    /// write call without warning, with no per-token override available
+    /// (bearer tokens carry no identity beyond the shared secret). See
+    /// ADR-0002 for the design discussion.
+    pub fn role_for_email(&self, email: Option<&str>) -> Role {
+        let Some(email) = email else {
+            return Role::Admin;
+        };
+        let needle = email.to_ascii_lowercase();
+        if self.admin_emails.iter().any(|e| e == &needle) {
+            return Role::Admin;
+        }
+        if self.allocator_emails.iter().any(|e| e == &needle) {
+            return Role::Allocator;
+        }
+        if self.reader_emails.iter().any(|e| e == &needle) {
+            return Role::Reader;
+        }
+        Role::default()
+    }
+
+    /// Attach the resolved role to a principal whose identity has been
+    /// verified by one of the lower-level `authenticate_*` / `verify_pat`
+    /// constructors. Centralising this here keeps the resolution policy in
+    /// exactly one place — both `require_auth` and the public
+    /// [`AuthConfig::authenticate`] funnel through here.
+    fn finalize_principal(&self, principal: AuthenticatedPrincipal) -> AuthenticatedPrincipal {
+        let role = self.role_for_email(principal.email.as_deref());
+        AuthenticatedPrincipal { role, ..principal }
     }
 
     pub fn oidc_audience(&self) -> Option<&str> {
@@ -178,22 +282,25 @@ impl AuthConfig {
         // (which use this method outside the IPAM middleware) accept PATs
         // too. PAT verification needs the store + pepper configured; if
         // they're absent we silently skip the PAT branch.
-        if let Some(token) = bearer_token(headers.get(header::AUTHORIZATION))
+        let principal = if let Some(token) = bearer_token(headers.get(header::AUTHORIZATION))
             && token.starts_with("ncdr_pat_")
         {
             if let (Some(store), Some(pepper)) = (self.pat_store.as_ref(), self.pat_pepper.as_ref())
             {
-                return verify_pat(store, pepper.as_ref(), &self.allowed_emails, token)
+                verify_pat(store, pepper.as_ref(), &self.allowed_emails, token)
                     .await
-                    .ok();
+                    .ok()
+            } else {
+                None
             }
-            return None;
-        }
-        match self.mode {
-            AuthMode::None => None,
-            AuthMode::Bearer => authenticate_bearer(headers, self.bearer_token.as_deref()),
-            AuthMode::Oidc => authenticate_oidc(headers, self.oidc_audience.as_deref()).await,
-        }
+        } else {
+            match self.mode {
+                AuthMode::None => None,
+                AuthMode::Bearer => authenticate_bearer(headers, self.bearer_token.as_deref()),
+                AuthMode::Oidc => authenticate_oidc(headers, self.oidc_audience.as_deref()).await,
+            }
+        };
+        principal.map(|p| self.finalize_principal(p))
     }
 
     pub fn email_is_allowed(&self, email: Option<&str>) -> bool {
@@ -264,6 +371,12 @@ pub async fn require_auth(config: AuthConfig, mut request: Request, next: Next) 
     let Some(principal) = principal else {
         return unauthorized(config.mode);
     };
+
+    // Attach the resolved role *after* identity verification but *before*
+    // the allowlist check, so a downgraded admin who was just removed from
+    // the allowlist still gets a clean 403 from the email check below (not
+    // a confusing role-derivation surprise).
+    let principal = config.finalize_principal(principal);
 
     if !config.email_allowed(principal.email.as_deref()) {
         warn!(
@@ -345,6 +458,7 @@ pub(crate) async fn verify_pat(
         audience: None,
         auth_method: AuthMethod::Pat,
         pat_id: Some(verified.pat_id),
+        role: Role::default(),
     })
 }
 
@@ -369,6 +483,7 @@ fn authenticate_bearer(
         audience: None,
         auth_method: AuthMethod::Bearer,
         pat_id: None,
+        role: Role::default(),
     })
 }
 
@@ -390,6 +505,7 @@ async fn authenticate_oidc(
         audience: Some(claims.aud),
         auth_method: AuthMethod::Oidc,
         pat_id: None,
+        role: Role::default(),
     })
 }
 
@@ -956,5 +1072,90 @@ mod tests {
         let config = AuthConfig::oidc(Some("aud".to_string()));
         assert!(config.email_allowed(Some("anyone@example.com")));
         assert!(config.email_allowed(None));
+    }
+
+    #[test]
+    fn role_ordering_is_reader_lt_allocator_lt_admin() {
+        assert!(Role::Reader < Role::Allocator);
+        assert!(Role::Allocator < Role::Admin);
+        assert!(Role::Reader < Role::Admin);
+        assert_eq!(Role::Reader.max(Role::Admin), Role::Admin);
+    }
+
+    #[test]
+    fn role_default_is_reader_least_privilege() {
+        // PR2 of #102 flipped this from Admin to Reader. Authenticated
+        // OIDC principals not in any per-role list resolve to read-only
+        // access; operators must explicitly grant write/admin via the
+        // NETCIDR_ALLOCATOR_EMAILS / NETCIDR_ADMIN_EMAILS env vars.
+        assert_eq!(Role::default(), Role::Reader);
+    }
+
+    #[test]
+    fn role_as_str_matches_documented_values() {
+        assert_eq!(Role::Reader.as_str(), "reader");
+        assert_eq!(Role::Allocator.as_str(), "allocator");
+        assert_eq!(Role::Admin.as_str(), "admin");
+    }
+
+    #[test]
+    fn role_for_email_resolves_with_admin_allocator_reader_precedence() {
+        let config = AuthConfig::oidc(Some("aud".to_string()))
+            .with_admin_emails(vec!["root@x".to_string()])
+            .with_allocator_emails(vec!["dev@x".to_string(), "ROOT@X".to_string()])
+            .with_reader_emails(vec!["readonly@x".to_string(), "dev@x".to_string()]);
+
+        // Admin email is in all three lists; admin wins.
+        assert_eq!(config.role_for_email(Some("root@x")), Role::Admin);
+        // Allocator email is also in reader list; allocator wins.
+        assert_eq!(config.role_for_email(Some("dev@x")), Role::Allocator);
+        // Reader-only.
+        assert_eq!(config.role_for_email(Some("readonly@x")), Role::Reader);
+        // Case-insensitive: lists are pre-lowercased; caller email is lowercased on lookup.
+        assert_eq!(config.role_for_email(Some("DEV@X")), Role::Allocator);
+        // Unknown OIDC email → Role::default() (Reader as of PR2).
+        assert_eq!(config.role_for_email(Some("unknown@x")), Role::Reader);
+        // None email → Admin. Static bearer-token principals (no email)
+        // are the documented carve-out — see the role_for_email doc + ADR-0002.
+        assert_eq!(config.role_for_email(None), Role::Admin);
+    }
+
+    #[test]
+    fn role_for_email_falls_through_to_reader_when_no_lists_set() {
+        // PR2 default: unknown OIDC user → Reader. Bearer-token (None)
+        // stays Admin even with no lists configured.
+        let config = AuthConfig::oidc(Some("aud".to_string()));
+        assert_eq!(config.role_for_email(Some("anyone@x")), Role::Reader);
+        assert_eq!(config.role_for_email(None), Role::Admin);
+    }
+
+    #[test]
+    fn role_for_email_bearer_mode_always_returns_admin() {
+        // Explicit assertion of the bearer-token carve-out documented on
+        // role_for_email and ADR-0002. Bearer principals carry email=None;
+        // they must keep Admin regardless of which lists are configured,
+        // including the "everything is locked down" deployment shape.
+        let config = AuthConfig::oidc(Some("aud".to_string()))
+            .with_admin_emails(vec!["specific-admin@x".to_string()])
+            .with_allocator_emails(vec!["alice@x".to_string()])
+            .with_reader_emails(vec!["bob@x".to_string()]);
+        assert_eq!(config.role_for_email(None), Role::Admin);
+    }
+
+    #[test]
+    fn finalize_principal_overwrites_role_from_config() {
+        let config = AuthConfig::oidc(Some("aud".to_string()))
+            .with_reader_emails(vec!["readonly@x".to_string()]);
+        let principal = AuthenticatedPrincipal {
+            kind: PrincipalKind::Oidc,
+            subject: "sub".to_string(),
+            email: Some("readonly@x".to_string()),
+            audience: None,
+            auth_method: AuthMethod::Oidc,
+            pat_id: None,
+            role: Role::Admin, // pre-finalize value; lower-level constructors set this to Role::default()
+        };
+        let finalized = config.finalize_principal(principal);
+        assert_eq!(finalized.role, Role::Reader);
     }
 }

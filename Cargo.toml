@@ -1,6 +1,6 @@
 [package]
 name = "netcidr"
-version = "0.24.2"
+version = "0.25.0"
 edition = "2024"
 license = "MIT"
 description = "A fast IPv4 and IPv6 subnet calculator CLI and API"
@@ -27,14 +27,14 @@ csv = "1"
 serde-saphyr = "0.0"
 rusqlite = { version = "0.39", features = ["bundled"] }
 r2d2 = "0.8"
-r2d2_sqlite = "0.33"
+r2d2_sqlite = "0.34"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
 anyhow = "1"
 async-trait = "0.1"
 dirs = "6"
-rmcp = { version = "1.6", features = ["server", "transport-io", "transport-streamable-http-server", "macros"], optional = true }
+rmcp = { version = "1.7", features = ["server", "transport-io", "transport-streamable-http-server", "macros"], optional = true }
 daemonize-me = "2"
 tokio-util = { version = "0.7", features = ["rt"], optional = true }
 schemars = { version = "1", optional = true }
@@ -48,6 +48,7 @@ crossterm = { version = "0.29", optional = true }
 ipnet = { version = "2", optional = true }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "tls-rustls"], optional = true }
 lambda_http = { version = "1.2", optional = true }
+hmac = { version = "0.12", optional = true }
 
 # OpenAPI/Swagger dependencies
 utoipa = { version = "5", features = ["axum_extras"], optional = true }
@@ -69,7 +70,7 @@ swagger = ["dep:utoipa", "dep:utoipa-swagger-ui"]
 tui = ["dep:ratatui", "dep:crossterm", "dep:ipnet"]
 mcp = ["dep:rmcp", "dep:schemars", "dep:tokio-util"]
 ipam-postgres = ["dep:sqlx"]
-lambda = ["dep:lambda_http"]
+lambda = ["dep:lambda_http", "dep:hmac"]
 
 [[bin]]
 name = "lambda"

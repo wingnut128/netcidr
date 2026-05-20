@@ -301,15 +301,15 @@ pub async fn handle_ipam_command(
             output_result(writer, output_file, &result);
         }
 
-        IpamCommands::Dump => {
-            let dump = ops.dump(Tenant::LOCAL).await?;
+        IpamCommands::Dump { tenant } => {
+            let dump = ops.dump(&tenant).await?;
             let json = serde_json::to_string_pretty(&dump).expect("Failed to serialize dump");
             if output_file.is_none() {
                 print_stdout(&json);
             }
         }
 
-        IpamCommands::Load { file } => {
+        IpamCommands::Load { file, tenant } => {
             let json = match file {
                 Some(path) => std::fs::read_to_string(&path).map_err(|e| {
                     netcidr::error::NetcidrError::InvalidInput(format!(
@@ -335,7 +335,7 @@ pub async fn handle_ipam_command(
                     netcidr::error::NetcidrError::InvalidInput(format!("invalid JSON: {}", e))
                 })?;
 
-            let (sn_count, alloc_count) = ops.load(Tenant::LOCAL, &dump).await?;
+            let (sn_count, alloc_count) = ops.load(&tenant, &dump).await?;
             eprintln!(
                 "Imported {} CIDR blocks and {} allocations",
                 sn_count, alloc_count

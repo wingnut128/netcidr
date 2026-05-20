@@ -13,6 +13,8 @@ const AUTH_TOKEN_ENV: &str = "NETCIDR_API_TOKEN";
 const OIDC_AUDIENCE_ENV: &str = "NETCIDR_OIDC_AUDIENCE";
 const OIDC_ALLOWED_EMAILS_ENV: &str = "NETCIDR_OIDC_ALLOWED_EMAILS";
 const ADMIN_EMAILS_ENV: &str = "NETCIDR_ADMIN_EMAILS";
+const ALLOCATOR_EMAILS_ENV: &str = "NETCIDR_ALLOCATOR_EMAILS";
+const READER_EMAILS_ENV: &str = "NETCIDR_READER_EMAILS";
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
@@ -22,7 +24,8 @@ pub enum AuthMode {
     None,
     /// Static bearer-token authentication for service-to-service/API usage.
     Bearer,
-    /// OIDC/JWT authentication, intended for Cloud Run behind Google IAP.
+    /// OIDC/JWT authentication. Validates Google OIDC ID tokens from
+    /// `Authorization: Bearer`; deployment-environment-agnostic.
     Oidc,
 }
 
@@ -68,6 +71,17 @@ pub struct ServerConfig {
     /// Prefer NETCIDR_ADMIN_EMAILS (comma-separated) in production.
     #[serde(default)]
     pub admin_emails: Vec<String>,
+    /// Email addresses granted the `allocator` role (read + allocate/release/update).
+    /// Empty means no users default to allocator. See ADR-0002 for the role model
+    /// and the back-compat default-admin policy.
+    /// Prefer NETCIDR_ALLOCATOR_EMAILS (comma-separated) in production.
+    #[serde(default)]
+    pub oidc_allocator_emails: Vec<String>,
+    /// Email addresses granted the `reader` role (read-only).
+    /// Empty means no users default to reader.
+    /// Prefer NETCIDR_READER_EMAILS (comma-separated) in production.
+    #[serde(default)]
+    pub oidc_reader_emails: Vec<String>,
     /// Allow binding the HTTP API to a non-loopback address.
     pub allow_public_bind: bool,
     /// Require authentication when binding the HTTP API to a non-loopback address.
@@ -94,6 +108,8 @@ impl Default for ServerConfig {
             oidc_audience: None,
             oidc_allowed_emails: Vec::new(),
             admin_emails: Vec::new(),
+            oidc_allocator_emails: Vec::new(),
+            oidc_reader_emails: Vec::new(),
             allow_public_bind: false,
             require_auth_for_public_bind: true,
         }
@@ -279,43 +295,19 @@ impl ServerConfig {
     }
 
     pub fn oidc_allowed_emails(&self) -> Vec<String> {
-        let from_env = std::env::var(OIDC_ALLOWED_EMAILS_ENV)
-            .ok()
-            .filter(|s| !s.trim().is_empty());
-        let raw = match from_env {
-            Some(v) => v
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>(),
-            None => self
-                .oidc_allowed_emails
-                .iter()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>(),
-        };
-        raw.into_iter().map(|s| s.to_ascii_lowercase()).collect()
+        resolve_email_list(OIDC_ALLOWED_EMAILS_ENV, &self.oidc_allowed_emails)
     }
 
     pub fn admin_emails(&self) -> Vec<String> {
-        let from_env = std::env::var(ADMIN_EMAILS_ENV)
-            .ok()
-            .filter(|s| !s.trim().is_empty());
-        let raw = match from_env {
-            Some(v) => v
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>(),
-            None => self
-                .admin_emails
-                .iter()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>(),
-        };
-        raw.into_iter().map(|s| s.to_ascii_lowercase()).collect()
+        resolve_email_list(ADMIN_EMAILS_ENV, &self.admin_emails)
+    }
+
+    pub fn allocator_emails(&self) -> Vec<String> {
+        resolve_email_list(ALLOCATOR_EMAILS_ENV, &self.oidc_allocator_emails)
+    }
+
+    pub fn reader_emails(&self) -> Vec<String> {
+        resolve_email_list(READER_EMAILS_ENV, &self.oidc_reader_emails)
     }
 
     pub fn auth_config(&self) -> crate::auth::AuthConfig {
@@ -326,6 +318,8 @@ impl ServerConfig {
             self.oidc_allowed_emails(),
         )
         .with_admin_emails(self.admin_emails())
+        .with_allocator_emails(self.allocator_emails())
+        .with_reader_emails(self.reader_emails())
     }
 
     pub fn validate_deployment(&self, bind_address: &str) -> Result<()> {
@@ -355,6 +349,27 @@ impl ServerConfig {
 
         Ok(())
     }
+}
+
+/// Resolve a comma-separated email list with env-var taking precedence
+/// over the config-file field, then lower-cases and de-blanks the result.
+/// Shared by `oidc_allowed_emails`, `admin_emails`, `allocator_emails`, and
+/// `reader_emails` so the parsing rules can't drift.
+fn resolve_email_list(env_var: &str, fallback: &[String]) -> Vec<String> {
+    let from_env = std::env::var(env_var).ok().filter(|s| !s.trim().is_empty());
+    let raw: Vec<String> = match from_env {
+        Some(v) => v
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
+        None => fallback
+            .iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
+    };
+    raw.into_iter().map(|s| s.to_ascii_lowercase()).collect()
 }
 
 fn is_loopback_bind_address(bind_address: &str) -> Result<bool> {

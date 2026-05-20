@@ -12,6 +12,7 @@ use serde::Deserialize;
 #[cfg(feature = "swagger")]
 use utoipa::{IntoParams, ToSchema};
 
+use crate::authorization::{RequireAdmin, RequireAllocator, RequireReader};
 use crate::error::NetcidrError;
 use crate::error_presenter::{LogLevel, present};
 use crate::ipam::idempotency;
@@ -292,6 +293,7 @@ pub fn create_ipam_router() -> Router {
 async fn ipam_create_cidr_block(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
+    _: RequireAdmin,
     Json(body): Json<CreateCidrBlock>,
 ) -> impl IntoResponse {
     match ops.create_cidr_block(tenant.as_str(), &body).await {
@@ -312,6 +314,7 @@ async fn ipam_create_cidr_block(
 async fn ipam_list_cidr_blocks(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
+    _: RequireReader,
 ) -> impl IntoResponse {
     match ops.list_cidr_blocks(tenant.as_str()).await {
         Ok(cidr_blocks) => {
@@ -341,6 +344,7 @@ async fn ipam_list_cidr_blocks(
 async fn ipam_get_cidr_block(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
+    _: RequireReader,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match ops.get_cidr_block(tenant.as_str(), &id).await {
@@ -366,6 +370,7 @@ async fn ipam_get_cidr_block(
 async fn ipam_delete_cidr_block(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
+    _: RequireAdmin,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match ops.delete_cidr_block(tenant.as_str(), &id).await {
@@ -393,6 +398,7 @@ async fn ipam_delete_cidr_block(
 async fn ipam_allocate_specific(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
+    _: RequireAllocator,
     Path(cidr_block_id): Path<String>,
     headers: HeaderMap,
     body: Bytes,
@@ -437,6 +443,7 @@ async fn ipam_allocate_specific(
 async fn ipam_auto_allocate(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
+    _: RequireAllocator,
     Path(cidr_block_id): Path<String>,
     headers: HeaderMap,
     body: Bytes,
@@ -492,6 +499,7 @@ async fn ipam_auto_allocate(
 async fn ipam_list_cidr_block_allocations(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
+    _: RequireReader,
     Path(cidr_block_id): Path<String>,
     Query(query): Query<AllocationFilterQuery>,
 ) -> impl IntoResponse {
@@ -533,6 +541,7 @@ async fn ipam_list_cidr_block_allocations(
 async fn ipam_free_blocks(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
+    _: RequireReader,
     Path(cidr_block_id): Path<String>,
     Query(query): Query<FreeBlocksQuery>,
 ) -> impl IntoResponse {
@@ -561,6 +570,7 @@ async fn ipam_free_blocks(
 async fn ipam_utilization(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
+    _: RequireReader,
     Path(cidr_block_id): Path<String>,
 ) -> impl IntoResponse {
     match ops.utilization(tenant.as_str(), &cidr_block_id).await {
@@ -585,6 +595,7 @@ async fn ipam_utilization(
 async fn ipam_get_allocation(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
+    _: RequireReader,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match ops.get_allocation(tenant.as_str(), &id).await {
@@ -610,6 +621,7 @@ async fn ipam_get_allocation(
 async fn ipam_update_allocation(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
+    _: RequireAllocator,
     Path(id): Path<String>,
     Json(body): Json<UpdateAllocation>,
 ) -> impl IntoResponse {
@@ -635,6 +647,7 @@ async fn ipam_update_allocation(
 async fn ipam_release_allocation(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
+    _: RequireAllocator,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match ops.release_allocation(tenant.as_str(), &id).await {
@@ -658,6 +671,7 @@ async fn ipam_release_allocation(
 async fn ipam_find_ip(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
+    _: RequireReader,
     Path(address): Path<String>,
 ) -> impl IntoResponse {
     match ops.find_by_ip(tenant.as_str(), &address).await {
@@ -687,6 +701,7 @@ async fn ipam_find_ip(
 async fn ipam_find_resource(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
+    _: RequireReader,
     Path(resource_id): Path<String>,
 ) -> impl IntoResponse {
     match ops.find_by_resource(tenant.as_str(), &resource_id).await {
@@ -714,6 +729,7 @@ async fn ipam_find_resource(
 async fn ipam_query_audit(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
+    _: RequireAdmin,
     Query(query): Query<AuditQuery>,
 ) -> impl IntoResponse {
     let filter = AuditFilter {
@@ -751,6 +767,7 @@ async fn ipam_query_audit(
 async fn ipam_set_tags(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
+    _: RequireAllocator,
     Path(id): Path<String>,
     Json(body): Json<TagsBody>,
 ) -> impl IntoResponse {
@@ -770,6 +787,7 @@ async fn ipam_set_tags(
 async fn ipam_batch_allocate(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
+    _: RequireAllocator,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
@@ -797,6 +815,7 @@ async fn ipam_batch_allocate(
 async fn ipam_batch_release(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
+    _: RequireAllocator,
     Json(body): Json<BatchReleaseRequest>,
 ) -> impl IntoResponse {
     match ops.batch_release(tenant.as_str(), &body).await {
@@ -808,6 +827,7 @@ async fn ipam_batch_release(
 async fn ipam_batch_summary(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
+    _: RequireReader,
     Query(query): Query<SummaryQuery>,
 ) -> impl IntoResponse {
     match ops

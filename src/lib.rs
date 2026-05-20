@@ -17,6 +17,7 @@ pub mod summarize;
 pub mod api;
 pub mod audit_context;
 pub mod auth;
+pub mod authorization;
 pub mod cli;
 pub mod ipam_api;
 pub mod me_api;
@@ -46,6 +47,9 @@ pub mod tui;
 pub mod mcp;
 #[cfg(feature = "mcp")]
 pub mod mcp_client;
+
+#[cfg(feature = "lambda")]
+pub mod s3_sync;
 
 // Public API re-exports
 pub use batch::{BatchResult, process_batch, process_batch_with_limit};
