@@ -57,6 +57,7 @@ impl From<CreateTokenRequest> for CreatePatRequest {
         Self {
             name: r.name,
             expires_in_days: r.expires_in_days,
+            role: None,
         }
     }
 }

@@ -8,6 +8,7 @@ pub const MIGRATIONS: &[(u32, &str)] = &[
     (5, MIGRATION_005),
     (6, MIGRATION_006),
     (7, MIGRATION_007),
+    (8, MIGRATION_008),
 ];
 
 const MIGRATION_001: &str = r#"
@@ -253,6 +254,18 @@ ALTER TABLE audit_log ADD COLUMN auth_method TEXT NOT NULL DEFAULT 'oidc';
 ALTER TABLE audit_log ADD COLUMN pat_id TEXT;
 "#;
 
+/// Migration 008: per-PAT role downgrade. Adds the `role` column to
+/// `personal_access_tokens` so a high-privilege user can mint a narrower
+/// PAT for CI / automation. Default `'admin'` for existing rows preserves
+/// pre-feature behaviour (PATs were always evaluated at the owner's
+/// email-resolved role, which equals `min(owner_role, admin) = owner_role`).
+/// The CHECK constraint mirrors the `Role` enum's variants.
+const MIGRATION_008: &str = r#"
+ALTER TABLE personal_access_tokens
+    ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'
+    CHECK (role IN ('reader', 'allocator', 'admin'));
+"#;
+
 #[cfg(test)]
 mod tests {
     use crate::ipam::sqlite::SqliteStore;
@@ -387,6 +400,48 @@ mod tests {
             rusqlite::params![hash],
         );
         assert!(dup.is_err(), "duplicate token_hash must violate UNIQUE");
+    }
+
+    #[tokio::test]
+    async fn migration_008_pat_role_column_exists_with_admin_default() {
+        let store = SqliteStore::in_memory().unwrap();
+        store.initialize().await.unwrap();
+        store.migrate().await.unwrap();
+
+        let conn = store.pool().get().expect("pool checkout");
+
+        // Insert a PAT WITHOUT supplying the role column — DB default should kick in.
+        conn.execute(
+            r#"INSERT INTO personal_access_tokens
+               (id, tenant_id, owner_sub, owner_email, name, prefix, token_hash,
+                created_at, expires_at)
+               VALUES ('p1','a@x','sub-1','a@x','laptop','ncdr_pat_AAA',
+                       X'00',
+                       '2026-05-21T00:00:00Z','2099-01-01T00:00:00Z')"#,
+            [],
+        )
+        .expect("insert PAT without role column");
+
+        let role: String = conn
+            .query_row(
+                "SELECT role FROM personal_access_tokens WHERE id = 'p1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(role, "admin", "pre-feature rows must default to admin");
+
+        // CHECK constraint rejects unknown values.
+        let bad = conn.execute(
+            r#"INSERT INTO personal_access_tokens
+               (id, tenant_id, owner_sub, owner_email, name, prefix, token_hash,
+                role, created_at, expires_at)
+               VALUES ('p2','a@x','sub-1','a@x','bad','ncdr_pat_BAD',
+                       X'01','god',
+                       '2026-05-21T00:00:00Z','2099-01-01T00:00:00Z')"#,
+            [],
+        );
+        assert!(bad.is_err(), "CHECK constraint must reject unknown role");
     }
 
     #[tokio::test]

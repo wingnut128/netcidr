@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::auth::Role;
+
 // ---------------------------------------------------------------------------
 // CidrBlock
 // ---------------------------------------------------------------------------
@@ -470,6 +472,10 @@ pub struct PersonalAccessToken {
     /// `sha256(secret || pepper)` — 32 bytes. Never serialized.
     #[serde(skip)]
     pub token_hash: Vec<u8>,
+    /// Role granted by this PAT. Clamped at auth time to `min(owner_role, pat_role)`
+    /// so a PAT can narrow privileges (e.g. an admin mints a reader-only CI
+    /// token) but never widen them.
+    pub role: Role,
     pub created_at: String,
     /// RFC3339; never NULL — minted with a default if the user didn't pick one.
     pub expires_at: String,
@@ -487,6 +493,11 @@ pub struct CreatePersonalAccessToken {
     pub name: String,
     pub prefix: String,
     pub token_hash: Vec<u8>,
+    /// Role to stamp on the row. The lifecycle defaults this to the
+    /// minting principal's resolved role; verify-time clamps re-apply
+    /// `min(current_owner_role, stored_role)` on every use so a later
+    /// demotion of the owner narrows existing PATs automatically.
+    pub role: Role,
     pub expires_at: String,
 }
 
@@ -497,6 +508,7 @@ pub struct PersonalAccessTokenSummary {
     pub id: String,
     pub name: String,
     pub prefix: String,
+    pub role: Role,
     pub created_at: String,
     pub expires_at: String,
     pub last_used_at: Option<String>,
@@ -509,6 +521,7 @@ impl From<PersonalAccessToken> for PersonalAccessTokenSummary {
             id: t.id,
             name: t.name,
             prefix: t.prefix,
+            role: t.role,
             created_at: t.created_at,
             expires_at: t.expires_at,
             last_used_at: t.last_used_at,

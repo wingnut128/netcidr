@@ -865,8 +865,8 @@ impl IpamStore for SqliteStore {
         conn.execute(
             "INSERT INTO personal_access_tokens
                 (id, tenant_id, owner_sub, owner_email, name, prefix, token_hash,
-                 created_at, expires_at, last_used_at, revoked_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, NULL)",
+                 role, created_at, expires_at, last_used_at, revoked_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, NULL)",
             params![
                 id,
                 input.tenant_id,
@@ -875,6 +875,7 @@ impl IpamStore for SqliteStore {
                 input.name,
                 input.prefix,
                 input.token_hash,
+                input.role.as_str(),
                 now,
                 input.expires_at,
             ],
@@ -889,6 +890,7 @@ impl IpamStore for SqliteStore {
             name: input.name.clone(),
             prefix: input.prefix.clone(),
             token_hash: input.token_hash.clone(),
+            role: input.role,
             created_at: now,
             expires_at: input.expires_at.clone(),
             last_used_at: None,
@@ -905,7 +907,7 @@ impl IpamStore for SqliteStore {
         let mut stmt = conn
             .prepare(
                 "SELECT id, tenant_id, owner_sub, owner_email, name, prefix, token_hash, \
-                        created_at, expires_at, last_used_at, revoked_at \
+                        role, created_at, expires_at, last_used_at, revoked_at \
                  FROM personal_access_tokens \
                  WHERE token_hash = ?1 AND revoked_at IS NULL AND expires_at > ?2",
             )
@@ -934,7 +936,7 @@ impl IpamStore for SqliteStore {
         let mut stmt = conn
             .prepare(
                 "SELECT id, tenant_id, owner_sub, owner_email, name, prefix, token_hash, \
-                        created_at, expires_at, last_used_at, revoked_at \
+                        role, created_at, expires_at, last_used_at, revoked_at \
                  FROM personal_access_tokens \
                  WHERE tenant_id = ?1 AND owner_sub = ?2 \
                  ORDER BY created_at",
@@ -962,7 +964,7 @@ impl IpamStore for SqliteStore {
         let existing: Option<PersonalAccessToken> = conn
             .query_row(
                 "SELECT id, tenant_id, owner_sub, owner_email, name, prefix, token_hash, \
-                        created_at, expires_at, last_used_at, revoked_at \
+                        role, created_at, expires_at, last_used_at, revoked_at \
                  FROM personal_access_tokens \
                  WHERE id = ?1 AND tenant_id = ?2 AND owner_sub = ?3",
                 params![id, tenant_id, owner_sub],
@@ -1020,6 +1022,21 @@ impl IpamStore for SqliteStore {
 /// Map a `personal_access_tokens` row to the model. Free function (not a
 /// method) so it can be used directly with `query_map`.
 fn row_to_pat(row: &rusqlite::Row<'_>) -> rusqlite::Result<PersonalAccessToken> {
+    let role_str: String = row.get(7)?;
+    let role = role_str.parse::<crate::auth::Role>().map_err(|e| {
+        // CHECK constraint guarantees the column is one of the enum variants,
+        // so this should be unreachable in practice — surface as a column-type
+        // error rather than DatabaseError so the SqliteStore mapping layer
+        // converts it cleanly.
+        rusqlite::Error::FromSqlConversionFailure(
+            7,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                e.to_string(),
+            )),
+        )
+    })?;
     Ok(PersonalAccessToken {
         id: row.get(0)?,
         tenant_id: row.get(1)?,
@@ -1028,10 +1045,11 @@ fn row_to_pat(row: &rusqlite::Row<'_>) -> rusqlite::Result<PersonalAccessToken> 
         name: row.get(4)?,
         prefix: row.get(5)?,
         token_hash: row.get(6)?,
-        created_at: row.get(7)?,
-        expires_at: row.get(8)?,
-        last_used_at: row.get(9)?,
-        revoked_at: row.get(10)?,
+        role,
+        created_at: row.get(8)?,
+        expires_at: row.get(9)?,
+        last_used_at: row.get(10)?,
+        revoked_at: row.get(11)?,
     })
 }
 
@@ -1604,6 +1622,7 @@ mod tests {
             name: name.to_string(),
             prefix: format!("ncdr_pat_{name:>3.3}"),
             token_hash: vec![hash_byte; 32],
+            role: crate::auth::Role::Admin,
             expires_at: expires_at.to_string(),
         }
     }

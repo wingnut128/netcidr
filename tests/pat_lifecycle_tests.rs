@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use netcidr::auth::Role;
 use netcidr::ipam::sqlite::SqliteStore;
 use netcidr::ipam::store::IpamStore;
 use netcidr::pat::PatPepper;
@@ -36,9 +37,11 @@ async fn lifecycle_mints_lists_and_verifies_for_owner() {
     let minted = lifecycle
         .mint_for_owner(
             &owner(),
+            Role::Admin,
             CreatePatRequest {
                 name: "ci-runner".to_string(),
                 expires_in_days: Some(30),
+                role: None,
             },
         )
         .await
@@ -47,6 +50,7 @@ async fn lifecycle_mints_lists_and_verifies_for_owner() {
     assert!(minted.plaintext.starts_with("ncdr_pat_"));
     assert_eq!(minted.summary.name, "ci-runner");
     assert_eq!(minted.summary.prefix.len(), 12);
+    assert_eq!(minted.summary.role, Role::Admin);
 
     let listed = lifecycle.list_for_owner(&owner()).await.unwrap();
     assert_eq!(listed, vec![minted.summary.clone()]);
@@ -68,9 +72,11 @@ async fn lifecycle_rejects_invalid_create_policy_before_storage() {
         lifecycle
             .mint_for_owner(
                 &owner(),
+                Role::Admin,
                 CreatePatRequest {
                     name: " ".to_string(),
                     expires_in_days: Some(30),
+                    role: None,
                 },
             )
             .await
@@ -80,9 +86,11 @@ async fn lifecycle_rejects_invalid_create_policy_before_storage() {
         lifecycle
             .mint_for_owner(
                 &owner(),
+                Role::Admin,
                 CreatePatRequest {
                     name: "ok".to_string(),
                     expires_in_days: Some(0),
+                    role: None,
                 },
             )
             .await
@@ -92,9 +100,11 @@ async fn lifecycle_rejects_invalid_create_policy_before_storage() {
         lifecycle
             .mint_for_owner(
                 &owner(),
+                Role::Admin,
                 CreatePatRequest {
                     name: "ok".to_string(),
                     expires_in_days: Some(366),
+                    role: None,
                 },
             )
             .await
@@ -108,9 +118,11 @@ async fn lifecycle_verify_collapses_shape_miss_and_allowlist_failures() {
     let minted = lifecycle
         .mint_for_owner(
             &owner(),
+            Role::Admin,
             CreatePatRequest {
                 name: "ci-runner".to_string(),
                 expires_in_days: Some(30),
+                role: None,
             },
         )
         .await

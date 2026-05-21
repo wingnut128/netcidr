@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use tracing::warn;
 
-use crate::auth::AuthenticatedPrincipal;
+use crate::auth::{AuthenticatedPrincipal, Role};
 use crate::error::{NetcidrError, Result};
 use crate::ipam::models::{CreatePersonalAccessToken, PersonalAccessTokenSummary};
 use crate::ipam::store::IpamStore;
@@ -31,6 +31,11 @@ pub struct PatOwner {
 pub struct CreatePatRequest {
     pub name: String,
     pub expires_in_days: Option<u32>,
+    /// Caller-requested role for the new PAT. `None` defaults to the
+    /// minting principal's resolved role, which preserves pre-feature
+    /// behaviour (the verifier's clamp already enforces
+    /// `min(owner_role, pat_role)`, so the default can never widen privileges).
+    pub role: Option<Role>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,6 +69,7 @@ impl PatLifecycle {
     pub async fn mint_for_owner(
         &self,
         owner: &PatOwner,
+        role: Role,
         request: CreatePatRequest,
     ) -> Result<MintedPat> {
         let name = validate_name(&request.name)?;
@@ -81,6 +87,7 @@ impl PatLifecycle {
                 name,
                 prefix: minted.prefix,
                 token_hash: minted.hash.to_vec(),
+                role,
                 expires_at,
             })
             .await?;
@@ -121,7 +128,13 @@ impl PatLifecycle {
     ) -> std::result::Result<MintedPat, MintForPrincipalError> {
         let owner =
             owner_from_principal(principal).ok_or(MintForPrincipalError::NoVerifiedEmail)?;
-        self.mint_for_owner(&owner, request)
+        // Stamp the row with the caller's resolved role unless they asked
+        // for a narrower one. The verifier re-clamps `min(owner_role, pat_role)`
+        // on every use, so even an explicit `Role::Admin` from a non-admin
+        // caller cannot widen privileges — but storing it would be misleading,
+        // so we clamp at mint time too. Belt and suspenders.
+        let role = request.role.unwrap_or(principal.role).min(principal.role);
+        self.mint_for_owner(&owner, role, request)
             .await
             .map_err(MintForPrincipalError::Lifecycle)
     }

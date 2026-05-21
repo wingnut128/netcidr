@@ -8,6 +8,7 @@ pub const MIGRATIONS: &[(u32, &str)] = &[
     (5, MIGRATION_005),
     (6, MIGRATION_006),
     (7, MIGRATION_007),
+    (8, MIGRATION_008),
 ];
 
 const MIGRATION_001: &str = r#"
@@ -248,6 +249,16 @@ CREATE UNIQUE INDEX idx_pat_token_hash ON personal_access_tokens(token_hash);
 
 ALTER TABLE audit_log ADD COLUMN auth_method TEXT NOT NULL DEFAULT 'oidc';
 ALTER TABLE audit_log ADD COLUMN pat_id TEXT;
+"#;
+
+/// Migration 008: per-PAT role downgrade. Mirrors the SQLite migration —
+/// `role` column with a CHECK constraint and `'admin'` default to preserve
+/// pre-feature behaviour. See [`super::super::sqlite::migrations`] for the
+/// rationale.
+const MIGRATION_008: &str = r#"
+ALTER TABLE personal_access_tokens
+    ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'
+    CHECK (role IN ('reader', 'allocator', 'admin'));
 "#;
 
 #[cfg(all(test, feature = "ipam-postgres"))]

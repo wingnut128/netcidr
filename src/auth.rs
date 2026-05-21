@@ -63,7 +63,21 @@ impl AuthMethod {
 ///
 /// **Bearer-token mode is the documented exception** — see
 /// [`AuthConfig::role_for_email`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
+#[serde(rename_all = "lowercase")]
 pub enum Role {
     #[default]
     Reader,
@@ -77,6 +91,21 @@ impl Role {
             Role::Reader => "reader",
             Role::Allocator => "allocator",
             Role::Admin => "admin",
+        }
+    }
+}
+
+impl std::str::FromStr for Role {
+    type Err = crate::error::NetcidrError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "reader" => Ok(Role::Reader),
+            "allocator" => Ok(Role::Allocator),
+            "admin" => Ok(Role::Admin),
+            other => Err(crate::error::NetcidrError::InvalidInput(format!(
+                "invalid role {other:?}: expected one of reader|allocator|admin"
+            ))),
         }
     }
 }
