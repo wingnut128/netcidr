@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.1](https://github.com/wingnut128/netcidr/compare/v0.25.0...v0.25.1) - 2026-05-21
+
+### Other
+
+- *(deps)* bump actions/dependency-review-action from 4.9.0 to 5.0.0
+- *(deps)* bump the cargo-minor-and-patch group across 1 directory with 3 updates ([#189](https://github.com/wingnut128/netcidr/pull/189))
+- *(deps)* bump r2d2_sqlite from 0.33.0 to 0.34.0 ([#184](https://github.com/wingnut128/netcidr/pull/184))
+
 ## [0.25.0](https://github.com/wingnut128/netcidr/compare/v0.24.3...v0.25.0) - 2026-05-20
 
 ### Added
