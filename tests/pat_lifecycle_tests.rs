@@ -62,6 +62,34 @@ async fn lifecycle_mints_lists_and_verifies_for_owner() {
     assert_eq!(verified.owner.subject, OWNER_SUB);
     assert_eq!(verified.owner.email, OWNER_EMAIL);
     assert_eq!(verified.owner.tenant_id, OWNER_EMAIL);
+    assert_eq!(verified.role, Role::Admin);
+}
+
+#[tokio::test]
+async fn verify_bearer_token_surfaces_stored_role_for_clamp() {
+    // verify_pat stamps `verified.role` on the principal so
+    // finalize_principal can clamp it against the owner's current
+    // email-resolved role. Confirm the stored role round-trips through
+    // the verifier — not the role passed by the caller at verify time.
+    let (lifecycle, store, pepper) = lifecycle().await;
+
+    let minted = lifecycle
+        .mint_for_owner(
+            &owner(),
+            Role::Reader,
+            CreatePatRequest {
+                name: "ci-reader".to_string(),
+                expires_in_days: Some(30),
+                role: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    let verified = pat_lifecycle::verify_bearer_token(&store, &pepper, &[], &minted.plaintext)
+        .await
+        .unwrap();
+    assert_eq!(verified.role, Role::Reader);
 }
 
 #[tokio::test]

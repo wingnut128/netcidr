@@ -48,6 +48,11 @@ pub struct MintedPat {
 pub struct VerifiedPat {
     pub pat_id: String,
     pub owner: PatOwner,
+    /// Role stored on the PAT row at mint time, already clamped by the
+    /// minting principal's role. The auth path re-clamps against the
+    /// owner's current email-resolved role on every use, so a later
+    /// demotion of the owner narrows existing PATs automatically.
+    pub role: Role,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -217,6 +222,7 @@ pub async fn verify_bearer_token(
             subject: row.owner_sub.clone(),
             email: row.owner_email.clone(),
         },
+        role: row.role,
     };
 
     let touch_store = Arc::clone(store);
