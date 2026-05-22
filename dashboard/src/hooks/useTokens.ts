@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   type CreateTokenResponse,
+  type Role,
   type TokenSummary,
   createToken,
   listTokens,
@@ -32,12 +33,13 @@ export function useTokens() {
   }, [refresh]);
 
   const create = useCallback(
-    async (name: string, expiresInDays: number) => {
+    async (name: string, expiresInDays: number, role: Role) => {
       setBusy(true);
       try {
         const minted = await createToken({
           name,
           expires_in_days: expiresInDays,
+          role,
         });
         setCreateOpen(false);
         setMintedToken(minted);
