@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.0](https://github.com/wingnut128/netcidr/compare/v0.25.0...v0.26.0) - 2026-05-21
+
+### Added
+
+- **Per-PAT roles.** Personal access tokens now carry their own role, stored on `personal_access_tokens.role` (TEXT NOT NULL, CHECK constraint, default `admin` to preserve pre-feature semantics — for any PAT minted before this release, `min(owner_role, admin) == owner_role` so no behaviour changes). The minting flow exposes the role on every user-facing surface: CLI gains `netcidr token create --role reader|allocator|admin`, the HTTP API's `POST /me/tokens` accepts an optional `role` field and echoes the role actually stored on the response, and the `token list` / `token create` text + CSV views include a `ROLE` column. At mint time `mint_for_principal` clamps the requested role by the minting principal's resolved role (so an allocator asking for `admin` is silently stored as `allocator`); at auth time `AuthConfig::finalize_principal` re-clamps `min(email_resolved_role, stored_pat_role)` on every use, so a PAT can narrow the owner's privileges (e.g. an admin mints a reader-only CI token) but never widen them, and a later demotion of the owner's email automatically narrows every existing PAT without operator action. OIDC and static-bearer principals are unaffected — their email-resolved role remains authoritative.
+
 ## [0.25.0](https://github.com/wingnut128/netcidr/compare/v0.24.3...v0.25.0) - 2026-05-20
 
 ### Added

@@ -834,8 +834,8 @@ impl IpamStore for PostgresStore {
         sqlx::query(
             "INSERT INTO personal_access_tokens
                 (id, tenant_id, owner_sub, owner_email, name, prefix, token_hash,
-                 created_at, expires_at, last_used_at, revoked_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL, NULL)",
+                 role, created_at, expires_at, last_used_at, revoked_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL, NULL)",
         )
         .bind(&id)
         .bind(&input.tenant_id)
@@ -844,6 +844,7 @@ impl IpamStore for PostgresStore {
         .bind(&input.name)
         .bind(&input.prefix)
         .bind(&input.token_hash)
+        .bind(input.role.as_str())
         .bind(&now)
         .bind(&input.expires_at)
         .execute(&self.pool)
@@ -858,6 +859,7 @@ impl IpamStore for PostgresStore {
             name: input.name.clone(),
             prefix: input.prefix.clone(),
             token_hash: input.token_hash.clone(),
+            role: input.role,
             created_at: now,
             expires_at: input.expires_at.clone(),
             last_used_at: None,
@@ -872,7 +874,7 @@ impl IpamStore for PostgresStore {
     ) -> Result<Option<PersonalAccessToken>> {
         let row = sqlx::query(
             "SELECT id, tenant_id, owner_sub, owner_email, name, prefix, token_hash, \
-                    created_at, expires_at, last_used_at, revoked_at \
+                    role, created_at, expires_at, last_used_at, revoked_at \
              FROM personal_access_tokens \
              WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > $2",
         )
@@ -891,7 +893,7 @@ impl IpamStore for PostgresStore {
     ) -> Result<Vec<PersonalAccessToken>> {
         let rows = sqlx::query(
             "SELECT id, tenant_id, owner_sub, owner_email, name, prefix, token_hash, \
-                    created_at, expires_at, last_used_at, revoked_at \
+                    role, created_at, expires_at, last_used_at, revoked_at \
              FROM personal_access_tokens \
              WHERE tenant_id = $1 AND owner_sub = $2 \
              ORDER BY created_at",
@@ -913,7 +915,7 @@ impl IpamStore for PostgresStore {
     ) -> Result<PersonalAccessToken> {
         let existing = sqlx::query(
             "SELECT id, tenant_id, owner_sub, owner_email, name, prefix, token_hash, \
-                    created_at, expires_at, last_used_at, revoked_at \
+                    role, created_at, expires_at, last_used_at, revoked_at \
              FROM personal_access_tokens \
              WHERE id = $1 AND tenant_id = $2 AND owner_sub = $3",
         )
@@ -970,6 +972,13 @@ impl IpamStore for PostgresStore {
 }
 
 fn pg_row_to_pat(row: sqlx::postgres::PgRow) -> PersonalAccessToken {
+    // CHECK constraint guarantees the value is one of the enum variants.
+    // Treat a mismatch as a corrupted DB row and fall back to the most
+    // restrictive role (Reader) so a parse failure can never widen access.
+    let role_str: String = row.get("role");
+    let role = role_str
+        .parse::<crate::auth::Role>()
+        .unwrap_or(crate::auth::Role::Reader);
     PersonalAccessToken {
         id: row.get("id"),
         tenant_id: row.get("tenant_id"),
@@ -978,6 +987,7 @@ fn pg_row_to_pat(row: sqlx::postgres::PgRow) -> PersonalAccessToken {
         name: row.get("name"),
         prefix: row.get("prefix"),
         token_hash: row.get("token_hash"),
+        role,
         created_at: row.get("created_at"),
         expires_at: row.get("expires_at"),
         last_used_at: row.get("last_used_at"),

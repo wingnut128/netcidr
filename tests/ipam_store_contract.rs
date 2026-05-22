@@ -970,6 +970,7 @@ macro_rules! store_contract_tests {
                     name: "laptop".to_string(),
                     prefix: "ncdr_pat_AAA".to_string(),
                     token_hash: vec![0xAAu8; 32],
+                    role: netcidr::auth::Role::Admin,
                     expires_at: "2099-01-01T00:00:00Z".to_string(),
                 })
                 .await
@@ -995,6 +996,7 @@ macro_rules! store_contract_tests {
                     name: "expired".to_string(),
                     prefix: "ncdr_pat_EXP".to_string(),
                     token_hash: vec![0xBBu8; 32],
+                    role: netcidr::auth::Role::Admin,
                     expires_at: "2020-01-01T00:00:00Z".to_string(),
                 })
                 .await
@@ -1007,6 +1009,7 @@ macro_rules! store_contract_tests {
                     name: "revoked".to_string(),
                     prefix: "ncdr_pat_REV".to_string(),
                     token_hash: vec![0xCCu8; 32],
+                    role: netcidr::auth::Role::Admin,
                     expires_at: "2099-01-01T00:00:00Z".to_string(),
                 })
                 .await
@@ -1044,6 +1047,7 @@ macro_rules! store_contract_tests {
                     name: "a1".to_string(),
                     prefix: "ncdr_pat_A1".to_string(),
                     token_hash: vec![0x01u8; 32],
+                    role: netcidr::auth::Role::Admin,
                     expires_at: "2099-01-01T00:00:00Z".to_string(),
                 })
                 .await
@@ -1056,6 +1060,7 @@ macro_rules! store_contract_tests {
                     name: "a2".to_string(),
                     prefix: "ncdr_pat_A2".to_string(),
                     token_hash: vec![0x02u8; 32],
+                    role: netcidr::auth::Role::Admin,
                     expires_at: "2099-01-01T00:00:00Z".to_string(),
                 })
                 .await
@@ -1068,6 +1073,7 @@ macro_rules! store_contract_tests {
                     name: "b1".to_string(),
                     prefix: "ncdr_pat_B1".to_string(),
                     token_hash: vec![0x03u8; 32],
+                    role: netcidr::auth::Role::Admin,
                     expires_at: "2099-01-01T00:00:00Z".to_string(),
                 })
                 .await
@@ -1089,6 +1095,7 @@ macro_rules! store_contract_tests {
                     name: "tok".to_string(),
                     prefix: "ncdr_pat_TOK".to_string(),
                     token_hash: vec![0xD1u8; 32],
+                    role: netcidr::auth::Role::Admin,
                     expires_at: "2099-01-01T00:00:00Z".to_string(),
                 })
                 .await
@@ -1132,6 +1139,7 @@ macro_rules! store_contract_tests {
                         name: format!("t{i}"),
                         prefix: format!("ncdr_pat_{i:03}"),
                         token_hash: vec![0xE0u8 + i as u8; 32],
+                        role: netcidr::auth::Role::Admin,
                         expires_at: (*expires_at).to_string(),
                     })
                     .await

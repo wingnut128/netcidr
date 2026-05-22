@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use netcidr::auth::{AuthMethod, AuthenticatedPrincipal, PrincipalKind, Role};
 use netcidr::ipam::sqlite::SqliteStore;
 use netcidr::ipam::store::IpamStore;
 use netcidr::pat::PatPepper;
@@ -36,9 +37,11 @@ async fn lifecycle_mints_lists_and_verifies_for_owner() {
     let minted = lifecycle
         .mint_for_owner(
             &owner(),
+            Role::Admin,
             CreatePatRequest {
                 name: "ci-runner".to_string(),
                 expires_in_days: Some(30),
+                role: None,
             },
         )
         .await
@@ -47,6 +50,7 @@ async fn lifecycle_mints_lists_and_verifies_for_owner() {
     assert!(minted.plaintext.starts_with("ncdr_pat_"));
     assert_eq!(minted.summary.name, "ci-runner");
     assert_eq!(minted.summary.prefix.len(), 12);
+    assert_eq!(minted.summary.role, Role::Admin);
 
     let listed = lifecycle.list_for_owner(&owner()).await.unwrap();
     assert_eq!(listed, vec![minted.summary.clone()]);
@@ -58,6 +62,34 @@ async fn lifecycle_mints_lists_and_verifies_for_owner() {
     assert_eq!(verified.owner.subject, OWNER_SUB);
     assert_eq!(verified.owner.email, OWNER_EMAIL);
     assert_eq!(verified.owner.tenant_id, OWNER_EMAIL);
+    assert_eq!(verified.role, Role::Admin);
+}
+
+#[tokio::test]
+async fn verify_bearer_token_surfaces_stored_role_for_clamp() {
+    // verify_pat stamps `verified.role` on the principal so
+    // finalize_principal can clamp it against the owner's current
+    // email-resolved role. Confirm the stored role round-trips through
+    // the verifier — not the role passed by the caller at verify time.
+    let (lifecycle, store, pepper) = lifecycle().await;
+
+    let minted = lifecycle
+        .mint_for_owner(
+            &owner(),
+            Role::Reader,
+            CreatePatRequest {
+                name: "ci-reader".to_string(),
+                expires_in_days: Some(30),
+                role: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    let verified = pat_lifecycle::verify_bearer_token(&store, &pepper, &[], &minted.plaintext)
+        .await
+        .unwrap();
+    assert_eq!(verified.role, Role::Reader);
 }
 
 #[tokio::test]
@@ -68,9 +100,11 @@ async fn lifecycle_rejects_invalid_create_policy_before_storage() {
         lifecycle
             .mint_for_owner(
                 &owner(),
+                Role::Admin,
                 CreatePatRequest {
                     name: " ".to_string(),
                     expires_in_days: Some(30),
+                    role: None,
                 },
             )
             .await
@@ -80,9 +114,11 @@ async fn lifecycle_rejects_invalid_create_policy_before_storage() {
         lifecycle
             .mint_for_owner(
                 &owner(),
+                Role::Admin,
                 CreatePatRequest {
                     name: "ok".to_string(),
                     expires_in_days: Some(0),
+                    role: None,
                 },
             )
             .await
@@ -92,9 +128,11 @@ async fn lifecycle_rejects_invalid_create_policy_before_storage() {
         lifecycle
             .mint_for_owner(
                 &owner(),
+                Role::Admin,
                 CreatePatRequest {
                     name: "ok".to_string(),
                     expires_in_days: Some(366),
+                    role: None,
                 },
             )
             .await
@@ -108,9 +146,11 @@ async fn lifecycle_verify_collapses_shape_miss_and_allowlist_failures() {
     let minted = lifecycle
         .mint_for_owner(
             &owner(),
+            Role::Admin,
             CreatePatRequest {
                 name: "ci-runner".to_string(),
                 expires_in_days: Some(30),
+                role: None,
             },
         )
         .await
@@ -132,5 +172,74 @@ async fn lifecycle_verify_collapses_shape_miss_and_allowlist_failures() {
         .await
         .unwrap_err(),
         VerifyPatError::Unauthorized
+    );
+}
+
+fn principal_with_role(role: Role) -> AuthenticatedPrincipal {
+    AuthenticatedPrincipal {
+        kind: PrincipalKind::Oidc,
+        subject: OWNER_SUB.to_string(),
+        email: Some(OWNER_EMAIL.to_string()),
+        audience: None,
+        auth_method: AuthMethod::Oidc,
+        pat_id: None,
+        role,
+    }
+}
+
+#[tokio::test]
+async fn mint_for_principal_defaults_role_to_callers_role() {
+    let (lifecycle, _store, _pepper) = lifecycle().await;
+    let minted = lifecycle
+        .mint_for_principal(
+            &principal_with_role(Role::Allocator),
+            CreatePatRequest {
+                name: "ci".to_string(),
+                expires_in_days: Some(30),
+                role: None,
+            },
+        )
+        .await
+        .expect("mint should succeed");
+    assert_eq!(minted.summary.role, Role::Allocator);
+}
+
+#[tokio::test]
+async fn mint_for_principal_clamps_requested_role_to_callers_role() {
+    let (lifecycle, _store, _pepper) = lifecycle().await;
+    // Allocator asks for Admin → clamped to Allocator.
+    let minted = lifecycle
+        .mint_for_principal(
+            &principal_with_role(Role::Allocator),
+            CreatePatRequest {
+                name: "escalate?".to_string(),
+                expires_in_days: Some(30),
+                role: Some(Role::Admin),
+            },
+        )
+        .await
+        .expect("mint should succeed");
+    assert_eq!(
+        minted.summary.role,
+        Role::Allocator,
+        "allocator asking for admin must be clamped to allocator"
+    );
+
+    // Admin asks for Reader → honored (narrowing is allowed).
+    let narrowed = lifecycle
+        .mint_for_principal(
+            &principal_with_role(Role::Admin),
+            CreatePatRequest {
+                name: "narrow".to_string(),
+                expires_in_days: Some(30),
+                role: Some(Role::Reader),
+            },
+        )
+        .await
+        .expect("mint should succeed");
+    assert_eq!(
+        narrowed.summary.role,
+        Role::Reader,
+        "admin narrowing to reader must be honored"
     );
 }

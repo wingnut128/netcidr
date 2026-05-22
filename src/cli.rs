@@ -497,6 +497,13 @@ pub enum TokenCommands {
         /// Examples: 1d, 30d, 12w, 1y. Max 1y, default 90d.
         #[arg(long)]
         expires_in: Option<String>,
+        /// Role to grant. Defaults to the minting user's resolved role.
+        /// A PAT can narrow the user's privileges but never widen them —
+        /// e.g. an admin user can mint a `reader` PAT for a CI script, but
+        /// an `allocator` user requesting `--role admin` will be clamped
+        /// to `allocator` at mint time.
+        #[arg(long)]
+        role: Option<crate::auth::Role>,
     },
     /// Revoke a personal access token by id
     Revoke {

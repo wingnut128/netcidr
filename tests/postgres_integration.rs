@@ -418,6 +418,7 @@ async fn personal_access_tokens(store: &PostgresStore) {
             name: "smoke".to_string(),
             prefix: "ncdr_pat_SMK".to_string(),
             token_hash: vec![0xA1u8; 32],
+            role: netcidr::auth::Role::Admin,
             expires_at: "2099-01-01T00:00:00Z".to_string(),
         })
         .await
@@ -476,6 +477,7 @@ async fn personal_access_tokens(store: &PostgresStore) {
             name: "old".to_string(),
             prefix: "ncdr_pat_OLD".to_string(),
             token_hash: vec![0xA2u8; 32],
+            role: netcidr::auth::Role::Admin,
             expires_at: "2020-01-01T00:00:00Z".to_string(),
         })
         .await

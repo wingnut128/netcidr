@@ -663,9 +663,10 @@ export NETCIDR_API_URL="https://netcidr.example.com"
 export NETCIDR_API_TOKEN="<your-OIDC-id-token>"
 
 # Mint a token. --expires-in accepts <N>{d|w|y}: 30d, 12w, 1y, etc.
-netcidr token create --name ci-runner --expires-in 90d
+# --role accepts reader|allocator|admin; defaults to your own resolved role.
+netcidr token create --name ci-runner --expires-in 90d --role reader
 
-# List your tokens.
+# List your tokens (the table includes a ROLE column).
 netcidr token list
 
 # Revoke by id.
@@ -673,6 +674,8 @@ netcidr token revoke <id>
 ```
 
 The `--api-url` flag overrides `NETCIDR_API_URL` per-invocation. Output respects the global `--format json|text|csv|yaml`.
+
+**Per-token roles.** A PAT carries its own role independent of its owner's role. The minter can choose `--role reader|allocator|admin` to narrow what the token can do — handy for `--role reader` CI scripts that only need read access. The server clamps in two places: at mint time, the requested role is silently lowered to the minter's own role (an allocator asking for `admin` gets `allocator`); at every use, the auth path takes `min(email_resolved_role, stored_pat_role)`, so the token can never widen privileges and a later demotion of the owner's email automatically narrows every existing PAT.
 
 **Authentication for `netcidr token` itself is OIDC-only** — PATs cannot mint or revoke other PATs (closes the privilege-escalation path). Once a PAT exists, you can use it as `NETCIDR_API_TOKEN` against `/ipam/*` endpoints elsewhere; the server distinguishes PAT-authed vs OIDC-authed operations in `audit_log` (`auth_method` + `pat_id` columns).
 

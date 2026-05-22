@@ -8,6 +8,7 @@
 //! `/ipam/*` and never carries an `Authorization` header — adding one
 //! conditionally would muddy its single-purpose design.
 
+use netcidr::auth::Role;
 use netcidr::cli::TokenCommands;
 use netcidr::error::{NetcidrError, Result};
 use netcidr::ipam::models::PersonalAccessTokenSummary;
@@ -147,8 +148,8 @@ impl TextOutput for TokenListView {
         }
         let mut out = String::new();
         out.push_str(&format!(
-            "{:<36}  {:<12}  {:<24}  {:<25}  {:<25}  {}\n",
-            "ID", "PREFIX", "NAME", "CREATED", "EXPIRES", "STATUS"
+            "{:<36}  {:<12}  {:<24}  {:<10}  {:<25}  {:<25}  {}\n",
+            "ID", "PREFIX", "NAME", "ROLE", "CREATED", "EXPIRES", "STATUS"
         ));
         for t in &self.tokens {
             let status = if t.revoked_at.is_some() {
@@ -157,8 +158,14 @@ impl TextOutput for TokenListView {
                 "active"
             };
             out.push_str(&format!(
-                "{:<36}  {:<12}  {:<24}  {:<25}  {:<25}  {}\n",
-                t.id, t.prefix, t.name, t.created_at, t.expires_at, status
+                "{:<36}  {:<12}  {:<24}  {:<10}  {:<25}  {:<25}  {}\n",
+                t.id,
+                t.prefix,
+                t.name,
+                t.role.as_str(),
+                t.created_at,
+                t.expires_at,
+                status
             ));
         }
         out.push_str(&format!("\n{} token(s)\n", self.count));
@@ -168,13 +175,14 @@ impl TextOutput for TokenListView {
 
 impl CsvOutput for TokenListView {
     fn to_csv(&self) -> Result<String> {
-        let mut out = String::from("id,prefix,name,created_at,expires_at,revoked_at\n");
+        let mut out = String::from("id,prefix,name,role,created_at,expires_at,revoked_at\n");
         for t in &self.tokens {
             out.push_str(&format!(
-                "{},{},{},{},{},{}\n",
+                "{},{},{},{},{},{},{}\n",
                 t.id,
                 t.prefix,
                 csv_escape(&t.name),
+                t.role.as_str(),
                 t.created_at,
                 t.expires_at,
                 t.revoked_at.as_deref().unwrap_or("")
@@ -197,6 +205,7 @@ struct CreateTokenView {
     id: String,
     name: String,
     prefix: String,
+    role: Role,
     token: String,
     created_at: String,
     expires_at: String,
@@ -208,6 +217,7 @@ impl From<CreateTokenResponse> for CreateTokenView {
             id: r.id,
             name: r.name,
             prefix: r.prefix,
+            role: r.role,
             token: r.token,
             created_at: r.created_at,
             expires_at: r.expires_at,
@@ -218,9 +228,15 @@ impl From<CreateTokenResponse> for CreateTokenView {
 impl TextOutput for CreateTokenView {
     fn to_text(&self) -> String {
         format!(
-            "Token created.\n\n  id:         {}\n  name:       {}\n  prefix:     {}\n  created_at: {}\n  expires_at: {}\n\n\
+            "Token created.\n\n  id:         {}\n  name:       {}\n  prefix:     {}\n  role:       {}\n  created_at: {}\n  expires_at: {}\n\n\
              Save this token now — it will NOT be shown again:\n\n  {}\n",
-            self.id, self.name, self.prefix, self.created_at, self.expires_at, self.token
+            self.id,
+            self.name,
+            self.prefix,
+            self.role.as_str(),
+            self.created_at,
+            self.expires_at,
+            self.token
         )
     }
 }
@@ -228,10 +244,11 @@ impl TextOutput for CreateTokenView {
 impl CsvOutput for CreateTokenView {
     fn to_csv(&self) -> Result<String> {
         Ok(format!(
-            "id,name,prefix,created_at,expires_at,token\n{},{},{},{},{},{}\n",
+            "id,name,prefix,role,created_at,expires_at,token\n{},{},{},{},{},{},{}\n",
             self.id,
             csv_escape(&self.name),
             self.prefix,
+            self.role.as_str(),
             self.created_at,
             self.expires_at,
             self.token
@@ -311,7 +328,11 @@ pub async fn handle_token_command(
             let view: TokenListView = client.list().await?.into();
             write_view(writer, output_file, &view)
         }
-        TokenCommands::Create { name, expires_in } => {
+        TokenCommands::Create {
+            name,
+            expires_in,
+            role,
+        } => {
             let expires_in_days = match expires_in.as_deref() {
                 Some(s) => Some(parse_human_days(s)?),
                 None => None,
@@ -319,6 +340,7 @@ pub async fn handle_token_command(
             let req = CreateTokenRequest {
                 name,
                 expires_in_days,
+                role,
             };
             let view: CreateTokenView = client.create(&req).await?.into();
             write_view(writer, output_file, &view)

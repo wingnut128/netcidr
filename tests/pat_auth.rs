@@ -79,6 +79,7 @@ async fn mint_pat(
             name: "test token".to_string(),
             prefix: minted.prefix.clone(),
             token_hash: minted.hash.to_vec(),
+            role: netcidr::auth::Role::Admin,
             expires_at: expires_at.to_string(),
         })
         .await

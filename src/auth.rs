@@ -63,7 +63,23 @@ impl AuthMethod {
 ///
 /// **Bearer-token mode is the documented exception** — see
 /// [`AuthConfig::role_for_email`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    clap::ValueEnum,
+)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
+#[serde(rename_all = "lowercase")]
+#[clap(rename_all = "lowercase")]
 pub enum Role {
     #[default]
     Reader,
@@ -81,6 +97,21 @@ impl Role {
     }
 }
 
+impl std::str::FromStr for Role {
+    type Err = crate::error::NetcidrError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "reader" => Ok(Role::Reader),
+            "allocator" => Ok(Role::Allocator),
+            "admin" => Ok(Role::Admin),
+            other => Err(crate::error::NetcidrError::InvalidInput(format!(
+                "invalid role {other:?}: expected one of reader|allocator|admin"
+            ))),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AuthenticatedPrincipal {
     pub kind: PrincipalKind,
@@ -90,10 +121,13 @@ pub struct AuthenticatedPrincipal {
     pub auth_method: AuthMethod,
     /// `Some(id)` only when `auth_method == AuthMethod::Pat`.
     pub pat_id: Option<String>,
-    /// Resolved role for this principal. Populated by
-    /// [`AuthConfig::finalize_principal`] after authentication succeeds;
-    /// the three lower-level constructors leave this as [`Role::default`]
-    /// so the resolution lives in exactly one place.
+    /// Resolved role for this principal. The final value is set by
+    /// [`AuthConfig::finalize_principal`] after authentication succeeds.
+    /// The `authenticate_oidc` / `authenticate_bearer` constructors leave
+    /// this as [`Role::default`] because their role is fully derived from
+    /// the email-resolved role; `verify_pat` stamps the stored PAT role
+    /// here so `finalize_principal` can clamp it against the owner's
+    /// current email-resolved role on every use.
     pub role: Role,
 }
 
@@ -251,8 +285,19 @@ impl AuthConfig {
     /// constructors. Centralising this here keeps the resolution policy in
     /// exactly one place — both `require_auth` and the public
     /// [`AuthConfig::authenticate`] funnel through here.
+    ///
+    /// For OIDC and static-bearer principals the email-resolved role is
+    /// authoritative. For PAT principals it is a ceiling: the final role
+    /// is `min(email_resolved_role, stored_pat_role)`, so a PAT can narrow
+    /// the owner's current privileges (e.g. an admin mints a reader-only
+    /// CI token) but never widen them, and a later demotion of the owner's
+    /// email automatically narrows every existing PAT.
     fn finalize_principal(&self, principal: AuthenticatedPrincipal) -> AuthenticatedPrincipal {
-        let role = self.role_for_email(principal.email.as_deref());
+        let email_role = self.role_for_email(principal.email.as_deref());
+        let role = match principal.auth_method {
+            AuthMethod::Pat => email_role.min(principal.role),
+            AuthMethod::Oidc | AuthMethod::Bearer => email_role,
+        };
         AuthenticatedPrincipal { role, ..principal }
     }
 
@@ -458,7 +503,7 @@ pub(crate) async fn verify_pat(
         audience: None,
         auth_method: AuthMethod::Pat,
         pat_id: Some(verified.pat_id),
-        role: Role::default(),
+        role: verified.role,
     })
 }
 
@@ -1157,5 +1202,87 @@ mod tests {
         };
         let finalized = config.finalize_principal(principal);
         assert_eq!(finalized.role, Role::Reader);
+    }
+
+    fn pat_principal(email: &str, stored_role: Role) -> AuthenticatedPrincipal {
+        AuthenticatedPrincipal {
+            kind: PrincipalKind::Oidc,
+            subject: "sub".to_string(),
+            email: Some(email.to_string()),
+            audience: None,
+            auth_method: AuthMethod::Pat,
+            pat_id: Some("pat-id".to_string()),
+            role: stored_role,
+        }
+    }
+
+    #[test]
+    fn finalize_principal_pat_clamps_when_stored_role_is_narrower_than_email_role() {
+        // Admin user mints a reader-only PAT for a CI script.
+        // Final role must be Reader — the PAT cannot widen the user's
+        // privileges, and storing Reader narrows them on purpose.
+        let config =
+            AuthConfig::oidc(Some("aud".to_string())).with_admin_emails(vec!["root@x".to_string()]);
+        let finalized = config.finalize_principal(pat_principal("root@x", Role::Reader));
+        assert_eq!(finalized.role, Role::Reader);
+    }
+
+    #[test]
+    fn finalize_principal_pat_clamps_when_email_role_is_narrower_than_stored_role() {
+        // PAT was minted when the owner was Admin; the owner has since
+        // been demoted to Reader (removed from admin_emails, no longer
+        // listed). Final role must be Reader — every existing PAT
+        // narrows automatically without the operator having to revoke.
+        let config = AuthConfig::oidc(Some("aud".to_string()))
+            .with_reader_emails(vec!["former-admin@x".to_string()]);
+        let finalized = config.finalize_principal(pat_principal("former-admin@x", Role::Admin));
+        assert_eq!(finalized.role, Role::Reader);
+    }
+
+    #[test]
+    fn finalize_principal_pat_preserves_role_when_both_match() {
+        let config = AuthConfig::oidc(Some("aud".to_string()))
+            .with_allocator_emails(vec!["dev@x".to_string()]);
+        let finalized = config.finalize_principal(pat_principal("dev@x", Role::Allocator));
+        assert_eq!(finalized.role, Role::Allocator);
+    }
+
+    #[test]
+    fn finalize_principal_pat_picks_intermediate_role_when_stored_sits_below_email() {
+        // Admin email, stored=Allocator → Allocator (PAT narrows by one tier).
+        let config =
+            AuthConfig::oidc(Some("aud".to_string())).with_admin_emails(vec!["root@x".to_string()]);
+        let finalized = config.finalize_principal(pat_principal("root@x", Role::Allocator));
+        assert_eq!(finalized.role, Role::Allocator);
+    }
+
+    #[test]
+    fn finalize_principal_pat_clamps_to_reader_when_owner_falls_through_to_default() {
+        // PAT owner is not on any list — the email-resolved role is
+        // Role::default() (Reader as of PR2). Even an admin-stored PAT
+        // resolves to Reader.
+        let config = AuthConfig::oidc(Some("aud".to_string()));
+        let finalized = config.finalize_principal(pat_principal("nobody@x", Role::Admin));
+        assert_eq!(finalized.role, Role::Reader);
+    }
+
+    #[test]
+    fn finalize_principal_bearer_ignores_stored_role_field() {
+        // Static-bearer principals carry `email = None` and
+        // `auth_method = Bearer`. The bearer carve-out keeps them at
+        // Admin regardless of any pre-finalize role value (which should
+        // be Role::default() from authenticate_bearer anyway).
+        let config = AuthConfig::oidc(Some("aud".to_string()));
+        let principal = AuthenticatedPrincipal {
+            kind: PrincipalKind::BearerToken,
+            subject: "bearer-token".to_string(),
+            email: None,
+            audience: None,
+            auth_method: AuthMethod::Bearer,
+            pat_id: None,
+            role: Role::Reader,
+        };
+        let finalized = config.finalize_principal(principal);
+        assert_eq!(finalized.role, Role::Admin);
     }
 }
