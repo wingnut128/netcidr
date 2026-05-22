@@ -75,9 +75,11 @@ impl AuthMethod {
     Default,
     serde::Serialize,
     serde::Deserialize,
+    clap::ValueEnum,
 )]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
+#[clap(rename_all = "lowercase")]
 pub enum Role {
     #[default]
     Reader,

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use netcidr::auth::Role;
+use netcidr::auth::{AuthMethod, AuthenticatedPrincipal, PrincipalKind, Role};
 use netcidr::ipam::sqlite::SqliteStore;
 use netcidr::ipam::store::IpamStore;
 use netcidr::pat::PatPepper;
@@ -172,5 +172,74 @@ async fn lifecycle_verify_collapses_shape_miss_and_allowlist_failures() {
         .await
         .unwrap_err(),
         VerifyPatError::Unauthorized
+    );
+}
+
+fn principal_with_role(role: Role) -> AuthenticatedPrincipal {
+    AuthenticatedPrincipal {
+        kind: PrincipalKind::Oidc,
+        subject: OWNER_SUB.to_string(),
+        email: Some(OWNER_EMAIL.to_string()),
+        audience: None,
+        auth_method: AuthMethod::Oidc,
+        pat_id: None,
+        role,
+    }
+}
+
+#[tokio::test]
+async fn mint_for_principal_defaults_role_to_callers_role() {
+    let (lifecycle, _store, _pepper) = lifecycle().await;
+    let minted = lifecycle
+        .mint_for_principal(
+            &principal_with_role(Role::Allocator),
+            CreatePatRequest {
+                name: "ci".to_string(),
+                expires_in_days: Some(30),
+                role: None,
+            },
+        )
+        .await
+        .expect("mint should succeed");
+    assert_eq!(minted.summary.role, Role::Allocator);
+}
+
+#[tokio::test]
+async fn mint_for_principal_clamps_requested_role_to_callers_role() {
+    let (lifecycle, _store, _pepper) = lifecycle().await;
+    // Allocator asks for Admin → clamped to Allocator.
+    let minted = lifecycle
+        .mint_for_principal(
+            &principal_with_role(Role::Allocator),
+            CreatePatRequest {
+                name: "escalate?".to_string(),
+                expires_in_days: Some(30),
+                role: Some(Role::Admin),
+            },
+        )
+        .await
+        .expect("mint should succeed");
+    assert_eq!(
+        minted.summary.role,
+        Role::Allocator,
+        "allocator asking for admin must be clamped to allocator"
+    );
+
+    // Admin asks for Reader → honored (narrowing is allowed).
+    let narrowed = lifecycle
+        .mint_for_principal(
+            &principal_with_role(Role::Admin),
+            CreatePatRequest {
+                name: "narrow".to_string(),
+                expires_in_days: Some(30),
+                role: Some(Role::Reader),
+            },
+        )
+        .await
+        .expect("mint should succeed");
+    assert_eq!(
+        narrowed.summary.role,
+        Role::Reader,
+        "admin narrowing to reader must be honored"
     );
 }

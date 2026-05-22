@@ -36,7 +36,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tracing::{info, instrument, warn};
 
-use crate::auth::{AuthMethod, AuthenticatedPrincipal};
+use crate::auth::{AuthMethod, AuthenticatedPrincipal, Role};
 use crate::error::NetcidrError;
 use crate::error_presenter::{LogLevel, present};
 use crate::ipam::models::PersonalAccessTokenSummary;
@@ -50,6 +50,11 @@ pub struct CreateTokenRequest {
     /// Number of days from now until the token expires. `None` defaults
     /// to the lifecycle default; values outside `1..=365` are 400.
     pub expires_in_days: Option<u32>,
+    /// Role to grant. `None` defaults to the caller's resolved role. The
+    /// lifecycle clamps the value at mint time by the caller's role, and
+    /// the auth path clamps again on every use, so this can only narrow
+    /// privileges relative to the minter — never widen them.
+    pub role: Option<Role>,
 }
 
 impl From<CreateTokenRequest> for CreatePatRequest {
@@ -57,7 +62,7 @@ impl From<CreateTokenRequest> for CreatePatRequest {
         Self {
             name: r.name,
             expires_in_days: r.expires_in_days,
-            role: None,
+            role: r.role,
         }
     }
 }
@@ -70,6 +75,10 @@ pub struct CreateTokenResponse {
     pub id: String,
     pub name: String,
     pub prefix: String,
+    /// Role actually stored on the PAT after mint-time clamping. May be
+    /// narrower than the requested role if the caller asked for more than
+    /// their own resolved role.
+    pub role: Role,
     /// Plaintext `ncdr_pat_…` secret. Returned once on mint; never
     /// stored, never re-fetchable. Clients MUST persist this immediately.
     pub token: String,
@@ -170,6 +179,7 @@ pub(crate) async fn create_token(
         id: minted.summary.id,
         name: minted.summary.name,
         prefix: minted.summary.prefix,
+        role: minted.summary.role,
         token: minted.plaintext,
         expires_at: minted.summary.expires_at,
         created_at: minted.summary.created_at,
