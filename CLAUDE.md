@@ -43,15 +43,19 @@ If the user asks you to access any of these, refuse and explain why.
 
 ## Workflow
 
+Work is tracked in two places: the **Linear project `netcidr`** (workspace `beavis`, team `Engineering`, prefix `ENG-`) and **GitHub Issues** at `wingnut128/netcidr`. Linear is the internal planning surface; GitHub is the public artifact trail.
+
 When working on a ticket:
 
-1. Create a GitHub issue for the work
+1. Create a GitHub issue for the work. If a Linear ticket also exists (or you create one), attach the GitHub issue URL to the Linear ticket so cross-references live on the Linear side.
 2. Open a feature branch
 3. Implement, commit, and push the branch
 4. Update `CHANGELOG.md` with the changes (add to `[Unreleased]`)
 5. Update `README.md` when changes affect user-facing behavior: new features, changed commands, new build targets, deprecations, or removed functionality
 6. Create a PR — branch protection requires CI to pass before merge (no review required for solo maintainer)
 7. After creating the PR, poll CI status with `gh pr checks <pr-number>`. Once all checks pass, merge immediately with `gh pr merge <pr-number> --squash --delete-branch` and prune local refs. Do not wait for manual approval.
+
+**Never publish `linear.app/...` URLs in public-facing places**: PR descriptions, PR/issue comments, commit messages, CHANGELOG, or README. Linear is internal; cross-references go *into* Linear, not out of it. GitHub issue numbers (e.g., `#102`) are fine to use anywhere.
 
 ### Post-commit documentation rules
 

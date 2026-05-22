@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- **`CLAUDE.md` workflow now names both trackers.** The `Workflow` section opens by stating that work is tracked in the Linear project `netcidr` (workspace `beavis`, team `Engineering`, prefix `ENG-`) alongside GitHub Issues at `wingnut128/netcidr`, and step 1 explicitly says to attach the GitHub issue URL to the Linear ticket so cross-references live on the Linear side. Adds a guardrail: never publish `linear.app/...` URLs in public-facing places — PR descriptions, PR/issue comments, commit messages, CHANGELOG, or README. GitHub issue numbers (e.g., `#102`) remain freely usable everywhere.
+
 ## [0.26.1](https://github.com/wingnut128/netcidr/compare/v0.26.0...v0.26.1) - 2026-05-21
 
 ### Added
