@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.1](https://github.com/wingnut128/netcidr/compare/v0.26.0...v0.26.1) - 2026-05-21
+
+### Added
+
+- **Dashboard support for per-PAT roles.** Completes the 0.26.0 feature on the React side. The Create Token dialog now has a Role selector (reader / allocator / admin) defaulting to `admin` to match pre-feature semantics, with helper text explaining that the server clamps requested roles to the caller's role on mint. The Tokens list gains a Role column so existing tokens' roles are visible at a glance, and the post-mint reveal modal echoes the stored role on the prefix/expires summary line so users see immediately whether mint-time clamping took effect. The TypeScript interfaces (`PersonalAccessTokenSummary`, `CreateTokenResponse`, `CreateTokenRequest`) gain the `role` field, and a `Role` union + `ROLES` array are exported from `auth/tokens.ts`.
+
 ## [0.26.0](https://github.com/wingnut128/netcidr/compare/v0.25.0...v0.26.0) - 2026-05-21
 
 ### Added
