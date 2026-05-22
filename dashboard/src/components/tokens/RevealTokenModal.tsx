@@ -50,7 +50,8 @@ export function RevealTokenModal({
           {copied ? "Copied" : "Copy to clipboard"}
         </button>
         <span className="text-xs text-text-muted">
-          Prefix <code className="font-mono">{token.prefix}</code> · expires{" "}
+          Prefix <code className="font-mono">{token.prefix}</code> · role{" "}
+          <span className="capitalize">{token.role}</span> · expires{" "}
           {formatTokenDate(token.expires_at)}
         </span>
       </div>

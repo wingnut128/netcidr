@@ -40,6 +40,7 @@ export function TokenTable({
               <tr>
                 <th className={TABLE_HEADER}>Name</th>
                 <th className={TABLE_HEADER}>Prefix</th>
+                <th className={TABLE_HEADER}>Role</th>
                 <th className={TABLE_HEADER}>Created</th>
                 <th className={TABLE_HEADER}>Expires</th>
                 <th className={TABLE_HEADER}>Last used</th>
@@ -76,6 +77,7 @@ function TokenRow({
     <tr className="border-b border-border last:border-b-0 hover:bg-cyan/[0.03] transition-colors">
       <td className="px-3 py-2">{token.name}</td>
       <td className="px-3 py-2 font-mono">{token.prefix}...</td>
+      <td className="px-3 py-2 capitalize">{token.role}</td>
       <td className="px-3 py-2 font-mono">
         {formatTokenDate(token.created_at)}
       </td>
