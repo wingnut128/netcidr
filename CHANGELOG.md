@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`image-scan` workflow no longer masks upstream failures with a misleading SARIF error.** When the `Build image` step failed (e.g. the base-image registry returned a 500 on the HEAD request for the pinned distroless digest), the subsequent `Upload SARIF to code-scanning` step ran anyway because of `if: always()` and then errored with `Input required and not supplied: sarif_file`, burying the real cause. The guard is now `if: always() && steps.grype.outputs.sarif != ''`, so SARIF upload only runs when Grype actually produced output; transient registry hiccups now surface as the original `docker build` error instead of a confusing missing-input error.
+
 ### Added
 
 - **Startup log line naming the chosen IPAM backend ([#195](https://github.com/wingnut128/netcidr/issues/195)).** `ipam::create_store` now emits a single `tracing::info!` event when the store is constructed: `backend=sqlite path=...` or `backend=postgres host=... port=... database=...`. Both `netcidr serve` and the AWS Lambda entrypoint benefit — operators can grep CloudWatch / journald to confirm which backend a process is talking to, instead of inferring from env vars or the "data persists across cold starts" smell test. The Postgres branch parses the connection URL with `sqlx::postgres::PgConnectOptions::from_str` and emits only `get_host()` / `get_port()` / `get_database()`; the raw URL is never logged because it normally carries a password. A new unit test (`postgres_log_never_contains_credentials`) captures the log output via a `MakeWriter` buffer and asserts the password and username are absent — the test is the regression gate. In addition, the Lambda entrypoint logs the persistence-mode decision (`mode=s3-sqlite bucket=... key=... db_path=...` vs `mode=direct`) where `s3_syncer` is decided, so Lambda-specific routing is visible alongside the store-level log.
