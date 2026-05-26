@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Startup log line naming the chosen IPAM backend ([#195](https://github.com/wingnut128/netcidr/issues/195)).** `ipam::create_store` now emits a single `tracing::info!` event when the store is constructed: `backend=sqlite path=...` or `backend=postgres host=... port=... database=...`. Both `netcidr serve` and the AWS Lambda entrypoint benefit — operators can grep CloudWatch / journald to confirm which backend a process is talking to, instead of inferring from env vars or the "data persists across cold starts" smell test. The Postgres branch parses the connection URL with `sqlx::postgres::PgConnectOptions::from_str` and emits only `get_host()` / `get_port()` / `get_database()`; the raw URL is never logged because it normally carries a password. A new unit test (`postgres_log_never_contains_credentials`) captures the log output via a `MakeWriter` buffer and asserts the password and username are absent — the test is the regression gate. In addition, the Lambda entrypoint logs the persistence-mode decision (`mode=s3-sqlite bucket=... key=... db_path=...` vs `mode=direct`) where `s3_syncer` is decided, so Lambda-specific routing is visible alongside the store-level log.
+
 ### Documentation
 
 - **`CLAUDE.md` workflow now names both trackers.** The `Workflow` section opens by stating that work is tracked in the Linear project `netcidr` (workspace `beavis`, team `Engineering`, prefix `ENG-`) alongside GitHub Issues at `wingnut128/netcidr`, and step 1 explicitly says to attach the GitHub issue URL to the Linear ticket so cross-references live on the Linear side. Adds a guardrail: never publish `linear.app/...` URLs in public-facing places — PR descriptions, PR/issue comments, commit messages, CHANGELOG, or README. GitHub issue numbers (e.g., `#102`) remain freely usable everywhere.

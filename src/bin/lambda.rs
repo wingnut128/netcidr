@@ -62,10 +62,21 @@ async fn main() -> Result<(), Error> {
     let s3_syncer: Option<Arc<S3Syncer>> = if let Ok(bucket) = std::env::var("NETCIDR_S3_BUCKET") {
         let key = env_or("NETCIDR_S3_KEY", "netcidr/netcidr.db");
         let db_path = env_or("NETCIDR_DB", "/tmp/netcidr.db");
+        tracing::info!(
+            mode = "s3-sqlite",
+            bucket = %bucket,
+            key = %key,
+            db_path = %db_path,
+            "Lambda persistence mode selected",
+        );
         let syncer = S3Syncer::new(bucket, key, db_path);
         syncer.pull().await?;
         Some(Arc::new(syncer))
     } else {
+        tracing::info!(
+            mode = "direct",
+            "Lambda persistence mode selected; backend defers to NETCIDR_IPAM_BACKEND",
+        );
         None
     };
 
