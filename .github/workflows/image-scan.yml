@@ -67,7 +67,12 @@ jobs:
           output-format: sarif
 
       - name: Upload SARIF to code-scanning
-        if: always()
+        # Guard against Grype not producing output (e.g. earlier step failed
+        # before Grype ran, like a 500 from the base-image registry on the
+        # HEAD request). Without the empty-string check, this step errors
+        # with the misleading "Input required and not supplied: sarif_file"
+        # and masks the real upstream failure.
+        if: always() && steps.grype.outputs.sarif != ''
         uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
         with:
           sarif_file: ${{ steps.grype.outputs.sarif }}
