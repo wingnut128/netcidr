@@ -42,8 +42,12 @@ use crate::ipv4::Ipv4Subnet;
 use crate::ipv6::Ipv6Subnet;
 use crate::output::{CsvOutput, OutputFormat, TextOutput};
 #[cfg(feature = "swagger")]
-use crate::subnet_generator::{Ipv4SubnetList, Ipv6SubnetList, SplitSummary};
-use crate::subnet_generator::{count_subnets, generate_ipv4_subnets, generate_ipv6_subnets};
+use crate::subnet_generator::{
+    Ipv4SubnetList, Ipv4VlsmList, Ipv6SubnetList, Ipv6VlsmList, SplitSummary,
+};
+use crate::subnet_generator::{
+    count_subnets, generate_ipv4_subnets, generate_ipv6_subnets, vlsm_split_ipv4, vlsm_split_ipv6,
+};
 #[cfg(feature = "swagger")]
 use crate::summarize::{Ipv4SummaryResult, Ipv6SummaryResult};
 use crate::summarize::{summarize_ipv4_with_limit, summarize_ipv6_with_limit};
@@ -97,6 +101,8 @@ impl Modify for SecurityAddon {
         calculate_ipv6,
         split_ipv4,
         split_ipv6,
+        vlsm_ipv4,
+        vlsm_ipv6,
         contains_ipv4,
         contains_ipv6,
         summarize_ipv4_handler,
@@ -130,6 +136,7 @@ impl Modify for SecurityAddon {
     components(
         schemas(
             Ipv4Subnet, Ipv6Subnet, Ipv4SubnetList, Ipv6SubnetList, SplitSummary,
+            Ipv4VlsmList, Ipv6VlsmList, VlsmQuery,
             ContainsResult, Ipv4SummaryResult, Ipv6SummaryResult, Ipv4FromRangeResult,
             Ipv6FromRangeResult, SubnetQuery, SplitQuery, ContainsQuery, SummarizeQuery,
             FromRangeQuery, BatchRequest, BatchResult, ErrorResponse, VersionResponse,
@@ -195,6 +202,22 @@ pub struct SplitQuery {
     /// Show only the number of available subnets (no generation)
     #[serde(default, alias = "count-only")]
     count_only: bool,
+    /// Pretty print JSON output
+    #[serde(default)]
+    pretty: bool,
+    /// Output format (json, text, csv, yaml)
+    #[serde(default)]
+    format: ApiOutputFormat,
+}
+
+#[derive(Deserialize)]
+#[cfg_attr(feature = "swagger", derive(ToSchema, IntoParams))]
+pub struct VlsmQuery {
+    /// Supernet in CIDR notation (e.g., 192.168.0.0/24 or 2001:db8::/48)
+    cidr: String,
+    /// Comma-separated target prefix lengths, largest block first
+    /// (non-decreasing, e.g. 26,28,28)
+    prefixes: String,
     /// Pretty print JSON output
     #[serde(default)]
     pretty: bool,
@@ -407,6 +430,8 @@ pub fn create_router(config: RouterConfig) -> Router {
         .route("/v6", get(calculate_ipv6))
         .route("/v4/split", get(split_ipv4))
         .route("/v6/split", get(split_ipv6))
+        .route("/v4/vlsm", get(vlsm_ipv4))
+        .route("/v6/vlsm", get(vlsm_ipv6))
         .route("/v4/contains", get(contains_ipv4))
         .route("/v6/contains", get(contains_ipv6))
         .route("/v4/summarize", get(summarize_ipv4_handler))
@@ -871,6 +896,109 @@ async fn contains_ipv6(Query(params): Query<ContainsQuery>) -> impl IntoResponse
         }
         Err(e) => {
             warn!(error = %e, "IPv6 containment check failed");
+            json_response(
+                ErrorResponse {
+                    error: e.to_string(),
+                },
+                params.pretty,
+                StatusCode::BAD_REQUEST,
+            )
+        }
+    }
+}
+
+/// Parse a comma-separated prefix list (e.g. "26,28,28") into prefix lengths.
+/// Returns a descriptive error string on any non-numeric or out-of-range entry.
+fn parse_prefix_list(raw: &str) -> std::result::Result<Vec<u8>, String> {
+    raw.split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            s.parse::<u8>()
+                .map_err(|_| format!("invalid prefix length '{s}': expected a number 0-128"))
+        })
+        .collect()
+}
+
+#[cfg_attr(feature = "swagger", utoipa::path(
+    get,
+    path = "/v4/vlsm",
+    params(
+        VlsmQuery
+    ),
+    responses(
+        (status = 200, description = "VLSM IPv4 allocation", body = Ipv4VlsmList),
+        (status = 400, description = "Invalid parameters", body = ErrorResponse)
+    ),
+    tag = "netcidr"
+))]
+#[instrument(skip_all, fields(cidr = %params.cidr, prefixes = %params.prefixes))]
+async fn vlsm_ipv4(Query(params): Query<VlsmQuery>) -> impl IntoResponse {
+    info!("VLSM splitting IPv4 supernet");
+    let prefixes = match parse_prefix_list(&params.prefixes) {
+        Ok(p) => p,
+        Err(error) => {
+            warn!(%error, "IPv4 VLSM prefix parse failed");
+            return json_response(
+                ErrorResponse { error },
+                params.pretty,
+                StatusCode::BAD_REQUEST,
+            );
+        }
+    };
+
+    match vlsm_split_ipv4(&params.cidr, &prefixes) {
+        Ok(result) => {
+            info!(allocations = result.subnets.len(), "IPv4 VLSM successful");
+            format_response(result, params.format, params.pretty, StatusCode::OK)
+        }
+        Err(e) => {
+            warn!(error = %e, "IPv4 VLSM failed");
+            json_response(
+                ErrorResponse {
+                    error: e.to_string(),
+                },
+                params.pretty,
+                StatusCode::BAD_REQUEST,
+            )
+        }
+    }
+}
+
+#[cfg_attr(feature = "swagger", utoipa::path(
+    get,
+    path = "/v6/vlsm",
+    params(
+        VlsmQuery
+    ),
+    responses(
+        (status = 200, description = "VLSM IPv6 allocation", body = Ipv6VlsmList),
+        (status = 400, description = "Invalid parameters", body = ErrorResponse)
+    ),
+    tag = "netcidr"
+))]
+#[instrument(skip_all, fields(cidr = %params.cidr, prefixes = %params.prefixes))]
+async fn vlsm_ipv6(Query(params): Query<VlsmQuery>) -> impl IntoResponse {
+    info!("VLSM splitting IPv6 supernet");
+    let prefixes = match parse_prefix_list(&params.prefixes) {
+        Ok(p) => p,
+        Err(error) => {
+            warn!(%error, "IPv6 VLSM prefix parse failed");
+            return json_response(
+                ErrorResponse { error },
+                params.pretty,
+                StatusCode::BAD_REQUEST,
+            );
+        }
+    };
+
+    match vlsm_split_ipv6(&params.cidr, &prefixes) {
+        Ok(result) => {
+            info!(allocations = result.subnets.len(), "IPv6 VLSM successful");
+            format_response(result, params.format, params.pretty, StatusCode::OK)
+        }
+        Err(e) => {
+            warn!(error = %e, "IPv6 VLSM failed");
             json_response(
                 ErrorResponse {
                     error: e.to_string(),

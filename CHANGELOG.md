@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **VLSM (variable-length) subnet splitting.** `netcidr split <cidr> --vlsm 26,28,28` carves a supernet into differently-sized sub-allocations in one pass, allocating each prefix greedily from the network address forward (Red Hat `ipcalc --split` style). Prefixes must be ordered largest-block-first (non-decreasing prefix length); out-of-order lists and allocations that overflow the supernet are rejected with a clear error naming the offending entry and the space remaining. Works for IPv4 and IPv6, across all four output formats (json/text/csv/yaml), and is exposed over HTTP at `GET /v4/vlsm` and `GET /v6/vlsm` (`?cidr=…&prefixes=26,28,28`). First phase of [#205](https://github.com/wingnut128/netcidr/issues/205); hierarchical/recursive splitting (`--steps`) follows in a second PR.
+
 ## [0.26.3](https://github.com/wingnut128/netcidr/compare/v0.26.2...v0.26.3) - 2026-05-28
 
 ### Other

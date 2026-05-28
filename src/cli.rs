@@ -38,9 +38,9 @@ pub enum Commands {
         /// Network in CIDR notation (or prefix notation for IPv6)
         cidr: String,
 
-        /// New prefix length for subnets
-        #[arg(short = 'p', long)]
-        prefix: u8,
+        /// New prefix length for fixed-size subnets (required unless --vlsm is used)
+        #[arg(short = 'p', long, required_unless_present = "vlsm")]
+        prefix: Option<u8>,
 
         /// Number of subnets to generate (mutually exclusive with --max)
         #[arg(short = 'n', long, conflicts_with = "max")]
@@ -53,6 +53,11 @@ pub enum Commands {
         /// Show only the number of available subnets (no generation)
         #[arg(long, conflicts_with_all = ["count", "max"])]
         count_only: bool,
+
+        /// VLSM: comma-separated descending prefix lengths to carve greedily
+        /// from the block, largest block first (e.g. --vlsm 26,28,28)
+        #[arg(long, value_delimiter = ',', conflicts_with_all = ["prefix", "count", "max", "count_only"])]
+        vlsm: Option<Vec<u8>>,
     },
 
     /// Check if an IP address is contained in a subnet
