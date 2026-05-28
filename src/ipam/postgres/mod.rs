@@ -445,55 +445,40 @@ impl IpamStore for PostgresStore {
         tenant_id: &str,
         filter: &AllocationFilter,
     ) -> Result<Vec<Allocation>> {
-        let mut sql = String::from(
-            "SELECT id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE tenant_id = $1",
+        let mut builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+            "SELECT id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE tenant_id = ",
         );
-        let mut param_values: Vec<String> = Vec::new();
-        param_values.push(tenant_id.to_string());
-        let mut idx = 2;
+        builder.push_bind(tenant_id);
 
         if let Some(ref sid) = filter.cidr_block_id {
-            sql.push_str(&format!(" AND cidr_block_id = ${idx}"));
-            param_values.push(sid.clone());
-            idx += 1;
+            builder.push(" AND cidr_block_id = ");
+            builder.push_bind(sid.as_str());
         }
         if let Some(ref status) = filter.status {
-            sql.push_str(&format!(" AND status = ${idx}"));
-            param_values.push(status.to_string());
-            idx += 1;
+            builder.push(" AND status = ");
+            builder.push_bind(status.to_string());
         }
         if let Some(ref rid) = filter.resource_id {
-            sql.push_str(&format!(" AND resource_id = ${idx}"));
-            param_values.push(rid.clone());
-            idx += 1;
+            builder.push(" AND resource_id = ");
+            builder.push_bind(rid.as_str());
         }
         if let Some(ref rt) = filter.resource_type {
-            sql.push_str(&format!(" AND resource_type = ${idx}"));
-            param_values.push(rt.clone());
-            idx += 1;
+            builder.push(" AND resource_type = ");
+            builder.push_bind(rt.as_str());
         }
         if let Some(ref env) = filter.environment {
-            sql.push_str(&format!(" AND environment = ${idx}"));
-            param_values.push(env.clone());
-            idx += 1;
+            builder.push(" AND environment = ");
+            builder.push_bind(env.as_str());
         }
         if let Some(ref owner) = filter.owner {
-            sql.push_str(&format!(" AND owner = ${idx}"));
-            param_values.push(owner.clone());
-            #[allow(unused_assignments)]
-            {
-                idx += 1;
-            }
+            builder.push(" AND owner = ");
+            builder.push_bind(owner.as_str());
         }
 
-        sql.push_str(" ORDER BY created_at");
+        builder.push(" ORDER BY created_at");
 
-        let mut query = sqlx::query(&sql);
-        for val in &param_values {
-            query = query.bind(val);
-        }
-
-        let rows = query
+        let rows = builder
+            .build()
             .fetch_all(&self.pool)
             .await
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
@@ -516,51 +501,41 @@ impl IpamStore for PostgresStore {
         // Verify allocation exists in this tenant
         self.assert_allocation_in_tenant(tenant_id, id).await?;
 
-        let mut sets = vec!["updated_at = $1".to_string()];
-        let mut param_values: Vec<String> = vec![now];
-        let mut idx = 2;
+        let mut builder =
+            sqlx::QueryBuilder::<sqlx::Postgres>::new("UPDATE allocations SET updated_at = ");
+        builder.push_bind(now);
 
-        macro_rules! set_field {
-            ($field:ident, $col:expr) => {
+        macro_rules! push_set {
+            ($field:ident, $col:literal) => {
                 if let Some(ref val) = input.$field {
-                    sets.push(format!("{} = ${}", $col, idx));
-                    param_values.push(val.to_string());
-                    idx += 1;
+                    builder.push(concat!(", ", $col, " = "));
+                    builder.push_bind(val.to_string());
                 }
             };
         }
-        set_field!(name, "name");
-        set_field!(description, "description");
-        set_field!(resource_id, "resource_id");
-        set_field!(resource_type, "resource_type");
-        set_field!(environment, "environment");
-        set_field!(owner, "owner");
-        set_field!(status, "status");
+        push_set!(name, "name");
+        push_set!(description, "description");
+        push_set!(resource_id, "resource_id");
+        push_set!(resource_type, "resource_type");
+        push_set!(environment, "environment");
+        push_set!(owner, "owner");
+        push_set!(status, "status");
 
         // Clear released_at when reactivating (status changes to active/reserved)
         if let Some(ref status) = input.status {
             let s = status.to_string();
             if s == "active" || s == "reserved" {
-                sets.push("released_at = NULL".to_string());
+                builder.push(", released_at = NULL");
             }
         }
 
-        let id_idx = idx;
-        let tenant_idx = idx + 1;
-        let sql = format!(
-            "UPDATE allocations SET {} WHERE id = ${} AND tenant_id = ${}",
-            sets.join(", "),
-            id_idx,
-            tenant_idx,
-        );
-        param_values.push(id.to_string());
-        param_values.push(tenant_id.to_string());
+        builder.push(" WHERE id = ");
+        builder.push_bind(id);
+        builder.push(" AND tenant_id = ");
+        builder.push_bind(tenant_id);
 
-        let mut query = sqlx::query(&sql);
-        for val in &param_values {
-            query = query.bind(val);
-        }
-        query
+        builder
+            .build()
             .execute(&self.pool)
             .await
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
@@ -609,23 +584,23 @@ impl IpamStore for PostgresStore {
             return Ok(Vec::new());
         }
 
-        let mut placeholders = Vec::new();
-        // $1 = cidr_block_id, $2 = tenant_id, statuses start at $3.
-        for i in 0..statuses.len() {
-            placeholders.push(format!("${}", i + 3));
-        }
-
-        let sql = format!(
-            "SELECT id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE cidr_block_id = $1 AND tenant_id = $2 AND status IN ({}) ORDER BY network_address",
-            placeholders.join(", ")
+        let mut builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+            "SELECT id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE cidr_block_id = ",
         );
-
-        let mut query = sqlx::query(&sql).bind(cidr_block_id).bind(tenant_id);
-        for s in statuses {
-            query = query.bind(s.to_string());
+        builder.push_bind(cidr_block_id);
+        builder.push(" AND tenant_id = ");
+        builder.push_bind(tenant_id);
+        builder.push(" AND status IN (");
+        {
+            let mut sep = builder.separated(", ");
+            for s in statuses {
+                sep.push_bind(s.to_string());
+            }
         }
+        builder.push(") ORDER BY network_address");
 
-        let rows = query
+        let rows = builder
+            .build()
             .fetch_all(&self.pool)
             .await
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
@@ -694,47 +669,35 @@ impl IpamStore for PostgresStore {
     }
 
     async fn query_audit(&self, tenant_id: &str, filter: &AuditFilter) -> Result<Vec<AuditEntry>> {
-        let mut sql = String::from(
-            "SELECT id, tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id, auth_method, pat_id FROM audit_log WHERE tenant_id = $1",
+        let mut builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+            "SELECT id, tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id, auth_method, pat_id FROM audit_log WHERE tenant_id = ",
         );
-        let mut param_values: Vec<String> = Vec::new();
-        param_values.push(tenant_id.to_string());
-        let mut idx = 2;
+        builder.push_bind(tenant_id);
 
         if let Some(ref et) = filter.entity_type {
-            sql.push_str(&format!(" AND entity_type = ${idx}"));
-            param_values.push(et.clone());
-            idx += 1;
+            builder.push(" AND entity_type = ");
+            builder.push_bind(et.as_str());
         }
         if let Some(ref eid) = filter.entity_id {
-            sql.push_str(&format!(" AND entity_id = ${idx}"));
-            param_values.push(eid.clone());
-            idx += 1;
+            builder.push(" AND entity_id = ");
+            builder.push_bind(eid.as_str());
         }
         if let Some(ref action) = filter.action {
-            sql.push_str(&format!(" AND action = ${idx}"));
-            param_values.push(action.clone());
-            idx += 1;
+            builder.push(" AND action = ");
+            builder.push_bind(action.as_str());
         }
 
-        sql.push_str(" ORDER BY id DESC");
+        builder.push(" ORDER BY id DESC");
 
-        // Cap to prevent full-table-scan DoS. Applied after building the string
-        // params so the integer can be bound separately at the end.
+        // Cap to prevent full-table-scan DoS.
         let capped_limit: Option<i64> = filter.limit.map(|l| l.min(10_000) as i64);
-        if capped_limit.is_some() {
-            sql.push_str(&format!(" LIMIT ${idx}"));
-        }
-
-        let mut query = sqlx::query(&sql);
-        for val in &param_values {
-            query = query.bind(val);
-        }
         if let Some(lim) = capped_limit {
-            query = query.bind(lim);
+            builder.push(" LIMIT ");
+            builder.push_bind(lim);
         }
 
-        let rows = query
+        let rows = builder
+            .build()
             .fetch_all(&self.pool)
             .await
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
@@ -1046,9 +1009,10 @@ impl PostgresStore {
             }
             let c = bytes[i] as char;
             if c == ';' && !in_dollar {
-                let stmt = buf.trim();
+                let stmt = buf.trim().to_owned();
                 if !stmt.is_empty() {
-                    sqlx::query(stmt)
+                    // Migration SQL comes from hardcoded internal strings, not user input.
+                    sqlx::raw_sql(sqlx::AssertSqlSafe(stmt.as_str()))
                         .execute(pool)
                         .await
                         .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
@@ -1059,9 +1023,9 @@ impl PostgresStore {
             }
             i += 1;
         }
-        let tail = buf.trim();
+        let tail = buf.trim().to_owned();
         if !tail.is_empty() {
-            sqlx::query(tail)
+            sqlx::raw_sql(sqlx::AssertSqlSafe(tail.as_str()))
                 .execute(pool)
                 .await
                 .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
