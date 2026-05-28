@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.2](https://github.com/wingnut128/netcidr/compare/v0.26.1...v0.26.2) - 2026-05-28
+
+### Added
+
+- *(ci)* adopt digestabot for automated base-image digest refresh ([#203](https://github.com/wingnut128/netcidr/pull/203))
+- *(ipam)* log chosen backend at startup with password-safe URL parsing ([#201](https://github.com/wingnut128/netcidr/pull/201))
+
+### Other
+
+- *(image-scan)* only upload SARIF when Grype actually ran ([#202](https://github.com/wingnut128/netcidr/pull/202))
+- *(deps)* bump EmbarkStudios/cargo-deny-action from 2.0.18 to 2.0.19 ([#196](https://github.com/wingnut128/netcidr/pull/196))
+- *(deps)* bump github/codeql-action from 4.35.5 to 4.36.0 ([#197](https://github.com/wingnut128/netcidr/pull/197))
+- name Linear + GitHub as dual trackers; ban linear.app URLs in public artifacts ([#193](https://github.com/wingnut128/netcidr/pull/193))
+
 ### Added
 
 - **Digestabot keeps pinned base-image digests fresh.** New scheduled workflow (`.github/workflows/digestabot.yml`, daily 06:00 UTC + `workflow_dispatch`) runs `chainguard-dev/digestabot@v1.3.1` to resolve the upstream tag for every `image:tag@sha256:…` reference in the `Dockerfile` and open a PR when the digest has drifted. Complements `dependabot.yml`'s `docker` and `github-actions` ecosystems (which handle *tag* bumps) by handling *digest* refreshes for already-pinned references. Pins still gate every build through CI + branch protection; digestabot just turns the refresh into a reviewable PR instead of an unreviewable rot.
