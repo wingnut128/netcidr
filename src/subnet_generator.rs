@@ -47,6 +47,45 @@ pub struct Ipv6SubnetList {
     pub subnets: Vec<Ipv6Subnet>,
 }
 
+/// A variable-length (VLSM) allocation carved out of an IPv4 supernet.
+///
+/// Subnets appear in the order they were requested; each is placed greedily
+/// from the supernet's network address forward. `subnets[i].prefix_length`
+/// is the prefix that was requested for entry `i`.
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
+pub struct Ipv4VlsmList {
+    /// The original supernet that was carved up.
+    pub cidr_block: Ipv4Subnet,
+    /// Number of sub-allocations requested (equals `subnets.len()`).
+    pub requested_count: u64,
+    /// The carved sub-allocations, in request order.
+    pub subnets: Vec<Ipv4Subnet>,
+    /// Total addresses consumed by the allocation (decimal string).
+    pub allocated_addresses: String,
+    /// Addresses still free in the supernet after the allocation (decimal string).
+    pub remaining_addresses: String,
+}
+
+/// A variable-length (VLSM) allocation carved out of an IPv6 supernet.
+///
+/// See [`Ipv4VlsmList`] for field semantics.
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
+pub struct Ipv6VlsmList {
+    /// The original supernet that was carved up.
+    pub cidr_block: Ipv6Subnet,
+    /// Number of sub-allocations requested (equals `subnets.len()`).
+    pub requested_count: u64,
+    /// The carved sub-allocations, in request order.
+    pub subnets: Vec<Ipv6Subnet>,
+    /// Total addresses consumed by the allocation (decimal string).
+    pub allocated_addresses: String,
+    /// Addresses still free in the supernet after the allocation
+    /// (decimal string, or `2^128 - N` form for a `/0` supernet).
+    pub remaining_addresses: String,
+}
+
 /// Count how many child subnets a split would produce, without generating them.
 ///
 /// Auto-detects IPv4 vs IPv6 from the CIDR string.
@@ -246,6 +285,200 @@ pub fn generate_ipv6_subnets(
     })
 }
 
+/// Validate one entry of a VLSM prefix list against the supernet and the
+/// preceding entry. Shared by the IPv4 and IPv6 allocators.
+///
+/// Enforces: each prefix is strictly longer than the supernet prefix, does not
+/// exceed `max_bits`, and is not shorter than the preceding prefix (entries
+/// must be ordered largest-block-first so the allocation cursor stays aligned).
+fn validate_vlsm_prefix(
+    p: u8,
+    index: usize,
+    supernet_prefix: u8,
+    max_bits: u8,
+    prev: Option<u8>,
+) -> Result<()> {
+    if p > max_bits {
+        return Err(NetcidrError::InvalidPrefixLength(p));
+    }
+    if p <= supernet_prefix {
+        return Err(NetcidrError::InvalidSubnetSplit {
+            new_prefix: p,
+            original_prefix: supernet_prefix,
+        });
+    }
+    if let Some(prev_p) = prev
+        && p < prev_p
+    {
+        return Err(NetcidrError::InvalidInput(format!(
+            "VLSM prefixes must be ordered largest-block-first \
+             (non-decreasing prefix length): /{p} at entry {} is a larger \
+             block than the preceding /{prev_p}",
+            index + 1
+        )));
+    }
+    Ok(())
+}
+
+/// Carve an IPv4 supernet into a variable-length (VLSM) allocation.
+///
+/// Each prefix in `prefixes` is allocated greedily from the supernet's network
+/// address forward, in the order given. Prefixes must be ordered
+/// largest-block-first (non-decreasing prefix length) so each sub-allocation
+/// lands on a natural boundary.
+///
+/// # Errors
+///
+/// * [`NetcidrError::InvalidInput`] if `prefixes` is empty, the list is
+///   out of order, or the requested allocations overflow the supernet
+///   (the error names the offending entry and the space remaining).
+/// * [`NetcidrError::InvalidSubnetSplit`] if a prefix is not longer than the
+///   supernet prefix.
+/// * [`NetcidrError::InvalidPrefixLength`] if a prefix exceeds 32.
+pub fn vlsm_split_ipv4(cidr: &str, prefixes: &[u8]) -> Result<Ipv4VlsmList> {
+    let cidr_block = Ipv4Subnet::from_cidr(cidr)?;
+
+    if prefixes.is_empty() {
+        return Err(NetcidrError::InvalidInput(
+            "no target prefixes provided for VLSM split".to_string(),
+        ));
+    }
+
+    let supernet_prefix = cidr_block.prefix_length;
+    // /0 → 1<<32, which still fits in u64.
+    let capacity: u64 = 1u64 << (32 - supernet_prefix);
+    let network_u32 = u32::from(cidr_block.network);
+
+    let mut cursor: u64 = 0;
+    let mut prev: Option<u8> = None;
+    let mut subnets = Vec::with_capacity(prefixes.len());
+
+    for (i, &p) in prefixes.iter().enumerate() {
+        validate_vlsm_prefix(p, i, supernet_prefix, 32, prev)?;
+
+        let subnet_size: u64 = 1u64 << (32 - p);
+        if cursor + subnet_size > capacity {
+            let remaining = capacity - cursor;
+            return Err(NetcidrError::InvalidInput(format!(
+                "cannot allocate /{p} (entry {}): needs {subnet_size} addresses \
+                 but only {remaining} remain in {}",
+                i + 1,
+                cidr_block.input
+            )));
+        }
+
+        let addr = Ipv4Addr::from(network_u32 + cursor as u32);
+        subnets.push(Ipv4Subnet::new(addr, p)?);
+        cursor += subnet_size;
+        prev = Some(p);
+    }
+
+    Ok(Ipv4VlsmList {
+        cidr_block,
+        requested_count: prefixes.len() as u64,
+        subnets,
+        allocated_addresses: cursor.to_string(),
+        remaining_addresses: (capacity - cursor).to_string(),
+    })
+}
+
+/// Carve an IPv6 supernet into a variable-length (VLSM) allocation.
+///
+/// See [`vlsm_split_ipv4`] for the allocation semantics and ordering rules.
+///
+/// # Errors
+///
+/// Same error conditions as [`vlsm_split_ipv4`], with prefixes capped at 128.
+pub fn vlsm_split_ipv6(cidr: &str, prefixes: &[u8]) -> Result<Ipv6VlsmList> {
+    let cidr_block = Ipv6Subnet::from_cidr(cidr)?;
+
+    if prefixes.is_empty() {
+        return Err(NetcidrError::InvalidInput(
+            "no target prefixes provided for VLSM split".to_string(),
+        ));
+    }
+
+    let supernet_prefix = cidr_block.prefix_length;
+    // A /0 supernet holds 2^128 addresses, which does not fit in u128;
+    // represent it as `None` (effectively unbounded for any real list).
+    let capacity: Option<u128> = if supernet_prefix == 0 {
+        None
+    } else {
+        Some(1u128 << (128 - supernet_prefix))
+    };
+    let network_u128 = u128::from(cidr_block.network);
+
+    let mut cursor: u128 = 0;
+    let mut prev: Option<u8> = None;
+    let mut subnets = Vec::with_capacity(prefixes.len());
+    // Set once the allocation consumes the entire 2^128 /0 space exactly —
+    // `cursor` cannot represent 2^128 in a u128, so we track the boundary here.
+    let mut filled = false;
+
+    // Render free space as a decimal string, or `2^128 - N` for a /0 supernet.
+    let remaining_str = |cursor: u128, filled: bool| -> String {
+        if filled {
+            return "0".to_string();
+        }
+        match capacity {
+            Some(cap) => (cap - cursor).to_string(),
+            None => format!("2^128 - {cursor}"),
+        }
+    };
+
+    for (i, &p) in prefixes.iter().enumerate() {
+        validate_vlsm_prefix(p, i, supernet_prefix, 128, prev)?;
+
+        // p is in 1..=128 here (strictly greater than supernet_prefix >= 0),
+        // so the shift width is 0..=127 and never overflows.
+        let subnet_size: u128 = 1u128 << (128 - p);
+
+        // The supernet is exhausted once a prior entry filled it exactly, or
+        // when this entry would not fit before the supernet's last address.
+        // `max_start` = 2^128 - subnet_size, the highest cursor at which a
+        // block of this size still fits in the full address space.
+        let max_start = u128::MAX - (subnet_size - 1);
+        let fits = !filled
+            && cursor <= max_start
+            && match capacity {
+                Some(cap) => cursor + subnet_size <= cap,
+                None => true,
+            };
+        if !fits {
+            return Err(NetcidrError::InvalidInput(format!(
+                "cannot allocate /{p} (entry {}): needs {subnet_size} addresses \
+                 but only {} remain in {}",
+                i + 1,
+                remaining_str(cursor, filled),
+                cidr_block.input
+            )));
+        }
+
+        let addr = Ipv6Addr::from(network_u128 + cursor);
+        subnets.push(Ipv6Subnet::new(addr, p)?);
+        prev = Some(p);
+
+        // Advance. A `None` here means the allocation reached exactly 2^128
+        // (an exact fill of a /0 supernet); record it rather than overflow.
+        match cursor.checked_add(subnet_size) {
+            Some(next) => cursor = next,
+            None => filled = true,
+        }
+    }
+
+    Ok(Ipv6VlsmList {
+        cidr_block,
+        requested_count: prefixes.len() as u64,
+        subnets,
+        allocated_addresses: if filled {
+            "340282366920938463463374607431768211456".to_string() // 2^128
+        } else {
+            cursor.to_string()
+        },
+        remaining_addresses: remaining_str(cursor, filled),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,6 +554,152 @@ mod tests {
             ),
             "expected InvalidSubnetSplit, got {:?}",
             result
+        );
+    }
+
+    #[test]
+    fn test_vlsm_ipv4_basic() {
+        // ipcalc-style example from the ticket.
+        let result = vlsm_split_ipv4("192.168.0.0/24", &[26, 28, 28]).unwrap();
+        assert_eq!(result.requested_count, 3);
+        assert_eq!(result.subnets.len(), 3);
+        assert_eq!(result.subnets[0].network, Ipv4Addr::new(192, 168, 0, 0));
+        assert_eq!(result.subnets[0].prefix_length, 26);
+        assert_eq!(result.subnets[1].network, Ipv4Addr::new(192, 168, 0, 64));
+        assert_eq!(result.subnets[1].prefix_length, 28);
+        assert_eq!(result.subnets[2].network, Ipv4Addr::new(192, 168, 0, 80));
+        // 64 + 16 + 16 = 96 allocated, 256 - 96 = 160 remaining.
+        assert_eq!(result.allocated_addresses, "96");
+        assert_eq!(result.remaining_addresses, "160");
+    }
+
+    #[test]
+    fn test_vlsm_ipv4_exact_fit() {
+        // Four /26s exactly fill a /24.
+        let result = vlsm_split_ipv4("10.0.0.0/24", &[26, 26, 26, 26]).unwrap();
+        assert_eq!(result.subnets.len(), 4);
+        assert_eq!(result.subnets[3].network, Ipv4Addr::new(10, 0, 0, 192));
+        assert_eq!(result.allocated_addresses, "256");
+        assert_eq!(result.remaining_addresses, "0");
+    }
+
+    #[test]
+    fn test_vlsm_ipv4_overflow() {
+        // Three /25s (128 each) cannot fit in a /24 (256).
+        let result = vlsm_split_ipv4("10.0.0.0/24", &[25, 25, 25]);
+        assert!(
+            matches!(&result, Err(NetcidrError::InvalidInput(msg)) if msg.contains("entry 3") && msg.contains("only 0")),
+            "expected InvalidInput overflow naming entry 3, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_vlsm_ipv4_rejects_out_of_order() {
+        // A larger block (/24) requested after a smaller block (/26) is rejected.
+        let result = vlsm_split_ipv4("10.0.0.0/22", &[26, 24]);
+        assert!(
+            matches!(&result, Err(NetcidrError::InvalidInput(msg)) if msg.contains("largest-block-first")),
+            "expected ordering error, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_vlsm_ipv4_rejects_empty() {
+        let result = vlsm_split_ipv4("10.0.0.0/24", &[]);
+        assert!(
+            matches!(&result, Err(NetcidrError::InvalidInput(msg)) if msg.contains("no target prefixes")),
+            "expected empty-list error, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_vlsm_ipv4_rejects_prefix_not_longer() {
+        let result = vlsm_split_ipv4("10.0.0.0/24", &[24]);
+        assert!(
+            matches!(
+                result,
+                Err(NetcidrError::InvalidSubnetSplit {
+                    new_prefix: 24,
+                    original_prefix: 24
+                })
+            ),
+            "expected InvalidSubnetSplit"
+        );
+    }
+
+    #[test]
+    fn test_vlsm_ipv6_basic() {
+        let result = vlsm_split_ipv6("2001:db8::/48", &[52, 56, 56]).unwrap();
+        assert_eq!(result.subnets.len(), 3);
+        assert_eq!(result.subnets[0].prefix_length, 52);
+        assert_eq!(
+            result.subnets[0].network,
+            "2001:db8::".parse::<Ipv6Addr>().unwrap()
+        );
+        // /52 = 2^76 addresses; /56 = 2^72. Second subnet starts one /52 in.
+        assert_eq!(
+            result.subnets[1].network,
+            "2001:db8:0:1000::".parse::<Ipv6Addr>().unwrap()
+        );
+        assert_eq!(
+            result.subnets[2].network,
+            "2001:db8:0:1100::".parse::<Ipv6Addr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_vlsm_ipv6_overflow() {
+        // Two /49s (each half of a /48) fit; a third overflows.
+        let result = vlsm_split_ipv6("2001:db8::/48", &[49, 49, 49]);
+        assert!(
+            matches!(&result, Err(NetcidrError::InvalidInput(msg)) if msg.contains("entry 3")),
+            "expected overflow at entry 3, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_vlsm_ipv6_zero_supernet_partial() {
+        // A /0 supernet has effectively unbounded capacity; a partial fill
+        // reports remaining space symbolically rather than panicking.
+        let result = vlsm_split_ipv6("::/0", &[2, 2, 2]).unwrap();
+        assert_eq!(result.subnets.len(), 3);
+        assert!(result.remaining_addresses.starts_with("2^128 -"));
+    }
+
+    #[test]
+    fn test_vlsm_ipv6_zero_supernet_exact_fill() {
+        // /1 + /2 + /2 = 2^127 + 2^126 + 2^126 = 2^128, exactly filling /0.
+        let result = vlsm_split_ipv6("::/0", &[1, 2, 2]).unwrap();
+        assert_eq!(result.subnets.len(), 3);
+        assert_eq!(result.remaining_addresses, "0");
+        assert_eq!(
+            result.allocated_addresses,
+            "340282366920938463463374607431768211456"
+        );
+        // A further entry must fail cleanly, not panic.
+        let overflow = vlsm_split_ipv6("::/0", &[1, 2, 2, 64]);
+        assert!(matches!(overflow, Err(NetcidrError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_vlsm_ipv6_wraparound_high_supernet() {
+        // Allocate at the very top of the address space; must not wrap.
+        let result = vlsm_split_ipv6(
+            "ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffc/126",
+            &[127, 128, 128],
+        )
+        .unwrap();
+        assert_eq!(result.subnets.len(), 3);
+        assert_eq!(result.remaining_addresses, "0");
+        assert_eq!(
+            result.subnets[2].network,
+            "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"
+                .parse::<Ipv6Addr>()
+                .unwrap()
         );
     }
 }

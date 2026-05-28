@@ -171,6 +171,59 @@ fn test_split_requires_count_or_max() {
 }
 
 #[test]
+fn test_split_vlsm_ipv4() {
+    let (stdout, _, success) = run_netcidr(&["split", "192.168.0.0/24", "--vlsm", "26,28,28"]);
+    assert!(success);
+
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
+    assert_eq!(json["requested_count"], 3);
+    let subnets = json["subnets"].as_array().unwrap();
+    assert_eq!(subnets.len(), 3);
+    assert_eq!(subnets[0]["network_address"], "192.168.0.0");
+    assert_eq!(subnets[0]["prefix_length"], 26);
+    assert_eq!(subnets[1]["network_address"], "192.168.0.64");
+    assert_eq!(subnets[2]["network_address"], "192.168.0.80");
+    assert_eq!(json["allocated_addresses"], "96");
+    assert_eq!(json["remaining_addresses"], "160");
+}
+
+#[test]
+fn test_split_vlsm_ipv6() {
+    let (stdout, _, success) = run_netcidr(&["split", "2001:db8::/48", "--vlsm", "52,56,56"]);
+    assert!(success);
+
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
+    assert_eq!(json["requested_count"], 3);
+    let subnets = json["subnets"].as_array().unwrap();
+    assert_eq!(subnets.len(), 3);
+    assert_eq!(subnets[0]["prefix_length"], 52);
+    assert_eq!(subnets[1]["network_address"], "2001:db8:0:1000::");
+}
+
+#[test]
+fn test_split_vlsm_overflow_fails() {
+    // Three /25s (128 addresses each) cannot fit in a /24.
+    let (_, stderr, success) = run_netcidr(&["split", "10.0.0.0/24", "--vlsm", "25,25,25"]);
+    assert!(!success);
+    assert!(stderr.contains("cannot allocate"));
+}
+
+#[test]
+fn test_split_vlsm_out_of_order_fails() {
+    let (_, stderr, success) = run_netcidr(&["split", "10.0.0.0/22", "--vlsm", "26,24"]);
+    assert!(!success);
+    assert!(stderr.contains("largest-block-first"));
+}
+
+#[test]
+fn test_split_vlsm_conflicts_with_prefix() {
+    // --vlsm and --prefix are mutually exclusive (clap-enforced).
+    let (_, stderr, success) = run_netcidr(&["split", "10.0.0.0/24", "-p", "26", "--vlsm", "26"]);
+    assert!(!success);
+    assert!(stderr.contains("cannot be used with"));
+}
+
+#[test]
 fn test_direct_ipv4() {
     let (stdout, _, success) = run_netcidr(&["192.168.1.0/24"]);
     assert!(success);
@@ -542,6 +595,34 @@ fn test_split_csv_output() {
         .collect();
     // header + 4 data rows = 5
     assert_eq!(data_lines.len(), 5);
+}
+
+#[test]
+fn test_split_vlsm_csv_output() {
+    let (stdout, _, success) = run_netcidr(&[
+        "split",
+        "192.168.0.0/24",
+        "--vlsm",
+        "26,28,28",
+        "--format",
+        "csv",
+    ]);
+    assert!(success);
+
+    let lines: Vec<&str> = stdout.lines().collect();
+    let comment_lines: Vec<&&str> = lines.iter().filter(|l| l.starts_with('#')).collect();
+    assert!(
+        comment_lines
+            .iter()
+            .any(|l| l.contains("allocated_addresses")),
+        "VLSM CSV should report allocated_addresses in metadata"
+    );
+    let data_lines: Vec<&&str> = lines
+        .iter()
+        .filter(|l| !l.starts_with('#') && !l.is_empty())
+        .collect();
+    // header + 3 data rows = 4
+    assert_eq!(data_lines.len(), 4);
 }
 
 #[test]

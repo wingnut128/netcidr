@@ -125,6 +125,29 @@ netcidr split 192.168.0.0/22 -p 27 --count-only
 netcidr split 2001:db8::/32 -p 48 -n 5
 ```
 
+#### VLSM (variable-length subnetting)
+
+Carve a supernet into differently-sized sub-allocations in one pass. Pass a
+comma-separated list of target prefixes, ordered largest-block-first
+(non-decreasing prefix length). Each prefix is allocated greedily from the
+network address forward (Red Hat `ipcalc --split` style):
+
+```bash
+# Carve a /24 into a /26 and two /28s
+netcidr split 192.168.0.0/24 --vlsm 26,28,28
+#   192.168.0.0/26   (64 hosts)
+#   192.168.0.64/28  (16 hosts)
+#   192.168.0.80/28  (16 hosts)
+
+# Works for IPv6 too
+netcidr split 2001:db8::/48 --vlsm 52,56,56
+```
+
+Out-of-order lists (a larger block requested after a smaller one) and
+allocations that overflow the supernet are rejected with a clear error naming
+the offending entry and the space remaining. `--vlsm` is mutually exclusive
+with `--prefix`/`--count`/`--max`/`--count-only`.
+
 ### Subnet Summarization
 
 Aggregate multiple CIDRs into the minimal covering set:
@@ -446,6 +469,8 @@ enable_swagger = false        # Swagger UI at /swagger-ui (default: false)
 | `GET /v6/split?cidr=<cidr>&prefix=<n>&count=<n>` | Split IPv6 cidr_block | `/v6/split?cidr=2001:db8::/32&prefix=48&count=10` |
 | `GET /v4/split?cidr=<cidr>&prefix=<n>&count_only=true` | Count available IPv4 subnets | `/v4/split?cidr=10.0.0.0/8&prefix=16&count_only=true` |
 | `GET /v6/split?cidr=<cidr>&prefix=<n>&count_only=true` | Count available IPv6 subnets | `/v6/split?cidr=2001:db8::/32&prefix=48&count_only=true` |
+| `GET /v4/vlsm?cidr=<cidr>&prefixes=<n,n,...>` | VLSM IPv4 allocation (largest block first) | `/v4/vlsm?cidr=192.168.0.0/24&prefixes=26,28,28` |
+| `GET /v6/vlsm?cidr=<cidr>&prefixes=<n,n,...>` | VLSM IPv6 allocation (largest block first) | `/v6/vlsm?cidr=2001:db8::/48&prefixes=52,56,56` |
 | `GET /v4/contains?cidr=<cidr>&address=<ip>` | Check IPv4 containment | `/v4/contains?cidr=192.168.1.0/24&address=192.168.1.100` |
 | `GET /v6/contains?cidr=<cidr>&address=<ip>` | Check IPv6 containment | `/v6/contains?cidr=2001:db8::/32&address=2001:db8::1` |
 | `GET /v4/summarize?cidrs=<cidr>,<cidr>` | Summarize IPv4 CIDRs | `/v4/summarize?cidrs=192.168.0.0/24,192.168.1.0/24` |

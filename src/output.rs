@@ -4,7 +4,9 @@ use crate::error::{NetcidrError, Result};
 use crate::from_range::{Ipv4FromRangeResult, Ipv6FromRangeResult};
 use crate::ipv4::Ipv4Subnet;
 use crate::ipv6::Ipv6Subnet;
-use crate::subnet_generator::{Ipv4SubnetList, Ipv6SubnetList, SplitSummary};
+use crate::subnet_generator::{
+    Ipv4SubnetList, Ipv4VlsmList, Ipv6SubnetList, Ipv6VlsmList, SplitSummary,
+};
 use crate::summarize::{Ipv4SummaryResult, Ipv6SummaryResult};
 use serde::Serialize;
 use std::fmt::Write as FmtWrite;
@@ -210,6 +212,58 @@ impl TextOutput for Ipv6SubnetList {
                 i + 1,
                 subnet.network,
                 subnet.prefix_length
+            )
+            .unwrap();
+        }
+        out
+    }
+}
+
+impl TextOutput for Ipv4VlsmList {
+    fn to_text(&self) -> String {
+        let mut out = String::new();
+        writeln!(out, "IPv4 VLSM Allocation").unwrap();
+        writeln!(out, "====================").unwrap();
+        writeln!(out, "Supernet:   {}", self.cidr_block.input).unwrap();
+        writeln!(out, "Requested:  {} sub-allocations", self.requested_count).unwrap();
+        writeln!(out, "Allocated:  {} addresses", self.allocated_addresses).unwrap();
+        writeln!(out, "Remaining:  {} addresses\n", self.remaining_addresses).unwrap();
+
+        for (i, subnet) in self.subnets.iter().enumerate() {
+            writeln!(
+                out,
+                "  {}. {}/{} (Hosts: {}-{}, {} total)",
+                i + 1,
+                subnet.network,
+                subnet.prefix_length,
+                subnet.first_host,
+                subnet.last_host,
+                subnet.total_hosts
+            )
+            .unwrap();
+        }
+        out
+    }
+}
+
+impl TextOutput for Ipv6VlsmList {
+    fn to_text(&self) -> String {
+        let mut out = String::new();
+        writeln!(out, "IPv6 VLSM Allocation").unwrap();
+        writeln!(out, "====================").unwrap();
+        writeln!(out, "Supernet:   {}", self.cidr_block.input).unwrap();
+        writeln!(out, "Requested:  {} sub-allocations", self.requested_count).unwrap();
+        writeln!(out, "Allocated:  {} addresses", self.allocated_addresses).unwrap();
+        writeln!(out, "Remaining:  {} addresses\n", self.remaining_addresses).unwrap();
+
+        for (i, subnet) in self.subnets.iter().enumerate() {
+            writeln!(
+                out,
+                "  {}. {}/{} ({} addresses)",
+                i + 1,
+                subnet.network,
+                subnet.prefix_length,
+                subnet.total_addresses
             )
             .unwrap();
         }
@@ -466,6 +520,42 @@ impl CsvOutput for Ipv6SubnetList {
         writeln!(out, "# cidr_block: {}", self.cidr_block.input).unwrap();
         writeln!(out, "# new_prefix: {}", self.new_prefix).unwrap();
         writeln!(out, "# count: {}", self.requested_count).unwrap();
+
+        let mut wtr = csv::Writer::from_writer(Vec::new());
+        wtr.write_record(ipv6_csv_header()).map_err(csv_err)?;
+        for subnet in &self.subnets {
+            write_ipv6_csv_record(&mut wtr, subnet)?;
+        }
+        out.push_str(&finish_csv(wtr)?);
+        Ok(out)
+    }
+}
+
+impl CsvOutput for Ipv4VlsmList {
+    fn to_csv(&self) -> Result<String> {
+        let mut out = String::new();
+        writeln!(out, "# supernet: {}", self.cidr_block.input).unwrap();
+        writeln!(out, "# requested_count: {}", self.requested_count).unwrap();
+        writeln!(out, "# allocated_addresses: {}", self.allocated_addresses).unwrap();
+        writeln!(out, "# remaining_addresses: {}", self.remaining_addresses).unwrap();
+
+        let mut wtr = csv::Writer::from_writer(Vec::new());
+        wtr.write_record(ipv4_csv_header()).map_err(csv_err)?;
+        for subnet in &self.subnets {
+            write_ipv4_csv_record(&mut wtr, subnet)?;
+        }
+        out.push_str(&finish_csv(wtr)?);
+        Ok(out)
+    }
+}
+
+impl CsvOutput for Ipv6VlsmList {
+    fn to_csv(&self) -> Result<String> {
+        let mut out = String::new();
+        writeln!(out, "# supernet: {}", self.cidr_block.input).unwrap();
+        writeln!(out, "# requested_count: {}", self.requested_count).unwrap();
+        writeln!(out, "# allocated_addresses: {}", self.allocated_addresses).unwrap();
+        writeln!(out, "# remaining_addresses: {}", self.remaining_addresses).unwrap();
 
         let mut wtr = csv::Writer::from_writer(Vec::new());
         wtr.write_record(ipv6_csv_header()).map_err(csv_err)?;

@@ -9,7 +9,9 @@ use netcidr::ipv4::Ipv4Subnet;
 use netcidr::ipv6::Ipv6Subnet;
 use netcidr::logging::{LogConfig, init_logging, parse_log_level};
 use netcidr::output::{CsvOutput, OutputFormat, OutputWriter, TextOutput};
-use netcidr::subnet_generator::{count_subnets, generate_ipv4_subnets, generate_ipv6_subnets};
+use netcidr::subnet_generator::{
+    count_subnets, generate_ipv4_subnets, generate_ipv6_subnets, vlsm_split_ipv4, vlsm_split_ipv6,
+};
 use netcidr::summarize::{summarize_ipv4, summarize_ipv6};
 use serde::Serialize;
 use std::io::{self, BufRead, Write};
@@ -170,7 +172,22 @@ async fn async_main(cli: Cli) {
             count,
             max,
             count_only,
+            vlsm,
         }) => {
+            // VLSM mode: carve a variable-length allocation from the block.
+            if let Some(prefixes) = vlsm {
+                if cidr.contains(':') {
+                    handle_result(&writer, vlsm_split_ipv6(&cidr, &prefixes), &cli.output);
+                } else {
+                    handle_result(&writer, vlsm_split_ipv4(&cidr, &prefixes), &cli.output);
+                }
+                return;
+            }
+
+            // Fixed-size mode. clap guarantees --prefix is present here
+            // (required_unless_present = "vlsm").
+            let prefix = prefix.expect("clap enforces --prefix unless --vlsm is given");
+
             if count_only {
                 handle_result(&writer, count_subnets(&cidr, prefix), &cli.output);
                 return;

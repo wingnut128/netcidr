@@ -272,6 +272,59 @@ async fn test_v6_split() {
     assert_eq!(json["subnets"].as_array().unwrap().len(), 3);
 }
 
+// ── VLSM ────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_v4_vlsm() {
+    let (status, body) = get("/v4/vlsm?cidr=192.168.0.0/24&prefixes=26,28,28").await;
+    assert_eq!(status, 200);
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(json["requested_count"], 3);
+    let subnets = json["subnets"].as_array().unwrap();
+    assert_eq!(subnets.len(), 3);
+    assert_eq!(subnets[0]["network_address"], "192.168.0.0");
+    assert_eq!(subnets[1]["network_address"], "192.168.0.64");
+    assert_eq!(json["allocated_addresses"], "96");
+    assert_eq!(json["remaining_addresses"], "160");
+}
+
+#[tokio::test]
+async fn test_v6_vlsm() {
+    let (status, body) = get("/v6/vlsm?cidr=2001:db8::/48&prefixes=52,56,56").await;
+    assert_eq!(status, 200);
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(json["subnets"].as_array().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn test_v4_vlsm_overflow() {
+    let (status, body) = get("/v4/vlsm?cidr=10.0.0.0/24&prefixes=25,25,25").await;
+    assert_eq!(status, 400);
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(json["error"].as_str().unwrap().contains("cannot allocate"));
+}
+
+#[tokio::test]
+async fn test_v4_vlsm_out_of_order() {
+    let (status, body) = get("/v4/vlsm?cidr=10.0.0.0/22&prefixes=26,24").await;
+    assert_eq!(status, 400);
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(
+        json["error"]
+            .as_str()
+            .unwrap()
+            .contains("largest-block-first")
+    );
+}
+
+#[tokio::test]
+async fn test_v4_vlsm_invalid_prefix_list() {
+    let (status, body) = get("/v4/vlsm?cidr=10.0.0.0/24&prefixes=26,abc").await;
+    assert_eq!(status, 400);
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(json["error"].as_str().unwrap().contains("invalid prefix"));
+}
+
 // ── IPv4 Contains ───────────────────────────────────────────────────
 
 #[tokio::test]
