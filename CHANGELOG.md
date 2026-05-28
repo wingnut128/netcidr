@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.3](https://github.com/wingnut128/netcidr/compare/v0.26.2...v0.26.3) - 2026-05-28
+
+### Other
+
+- *(deps)* bump sqlx from 0.8.6 to 0.9.0 (with compat fix) ([#200](https://github.com/wingnut128/netcidr/pull/200))
+
 ## [0.26.2](https://github.com/wingnut128/netcidr/compare/v0.26.1...v0.26.2) - 2026-05-28
 
 ### Added
