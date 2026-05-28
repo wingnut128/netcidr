@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Digestabot keeps pinned base-image digests fresh.** New scheduled workflow (`.github/workflows/digestabot.yml`, daily 06:00 UTC + `workflow_dispatch`) runs `chainguard-dev/digestabot@v1.3.1` to resolve the upstream tag for every `image:tag@sha256:…` reference in the `Dockerfile` and open a PR when the digest has drifted. Complements `dependabot.yml`'s `docker` and `github-actions` ecosystems (which handle *tag* bumps) by handling *digest* refreshes for already-pinned references. Pins still gate every build through CI + branch protection; digestabot just turns the refresh into a reviewable PR instead of an unreviewable rot.
+
+### Changed
+
+- **Dockerfile base-image pins refreshed and brought into the digestabot-friendly format.** The runtime stage's `cgr.dev/chainguard/static@sha256:1f14…` (digest-only, untracked by digestabot) became `cgr.dev/chainguard/static:latest@sha256:77d8b89…` (tag + current digest, digestabot-tracked). The dashboard-builder's `oven/bun:1-alpine` digest moved from `sha256:4de4…` to `sha256:5acc90a…` to match upstream. The `rust:1.95-alpine3.23` pin was already current and unchanged. Triggering context: the previous Chainguard pin briefly became unreachable during a Chainguard registry outage on 2026-05-26, which surfaced as a misleading "missing SARIF file" error in the `Image Scan` workflow.
+
 ### Fixed
 
 - **`image-scan` workflow no longer masks upstream failures with a misleading SARIF error.** When the `Build image` step failed (e.g. the base-image registry returned a 500 on the HEAD request for the pinned distroless digest), the subsequent `Upload SARIF to code-scanning` step ran anyway because of `if: always()` and then errored with `Input required and not supplied: sarif_file`, burying the real cause. The guard is now `if: always() && steps.grype.outputs.sarif != ''`, so SARIF upload only runs when Grype actually produced output; transient registry hiccups now surface as the original `docker build` error instead of a confusing missing-input error.
