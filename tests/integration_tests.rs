@@ -224,6 +224,92 @@ fn test_split_vlsm_conflicts_with_prefix() {
 }
 
 #[test]
+fn test_split_steps_ipv4_tree() {
+    let (stdout, _, success) = run_netcidr(&["split", "10.0.0.0/18", "--steps", "22,24"]);
+    assert!(success);
+
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
+    assert_eq!(json["steps"][0], 22);
+    assert_eq!(json["steps"][1], 24);
+    assert_eq!(json["total_subnets"], 80);
+    let lvl1 = json["root"]["children"].as_array().unwrap();
+    assert_eq!(lvl1.len(), 16);
+    assert_eq!(lvl1[0]["subnet"]["network_address"], "10.0.0.0");
+    assert_eq!(lvl1[0]["subnet"]["prefix_length"], 22);
+    let lvl2 = lvl1[0]["children"].as_array().unwrap();
+    assert_eq!(lvl2.len(), 4);
+    assert_eq!(lvl2[1]["subnet"]["network_address"], "10.0.1.0");
+}
+
+#[test]
+fn test_split_steps_ipv6_tree() {
+    let (stdout, _, success) = run_netcidr(&["split", "2001:db8::/48", "--steps", "52,56"]);
+    assert!(success);
+
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
+    assert_eq!(json["total_subnets"], 272);
+    assert_eq!(json["root"]["children"].as_array().unwrap().len(), 16);
+}
+
+#[test]
+fn test_split_steps_text_tree() {
+    let (stdout, _, success) = run_netcidr(&[
+        "split",
+        "10.0.0.0/18",
+        "--steps",
+        "22,24",
+        "--format",
+        "text",
+    ]);
+    assert!(success);
+    assert!(stdout.contains("IPv4 Hierarchical Split"));
+    assert!(stdout.contains("10.0.0.0/18"));
+    assert!(stdout.contains("├──") || stdout.contains("└──"));
+}
+
+#[test]
+fn test_split_steps_csv_has_depth_column() {
+    let (stdout, _, success) = run_netcidr(&[
+        "split",
+        "192.168.0.0/24",
+        "--steps",
+        "26,28",
+        "--format",
+        "csv",
+    ]);
+    assert!(success);
+    let header = stdout
+        .lines()
+        .find(|l| l.starts_with("depth,"))
+        .expect("CSV should have a depth-prefixed header");
+    assert!(header.starts_with("depth,input,"));
+    // A depth-2 row should exist (two-level tree).
+    assert!(stdout.lines().any(|l| l.starts_with("2,")));
+}
+
+#[test]
+fn test_split_steps_non_increasing_fails() {
+    let (_, stderr, success) = run_netcidr(&["split", "10.0.0.0/18", "--steps", "24,22"]);
+    assert!(!success);
+    assert!(stderr.contains("strictly increasing"));
+}
+
+#[test]
+fn test_split_steps_respects_limit() {
+    let (_, stderr, success) = run_netcidr(&["split", "10.0.0.0/8", "--steps", "16,32"]);
+    assert!(!success);
+    assert!(stderr.contains("exceeds the limit"));
+}
+
+#[test]
+fn test_split_steps_conflicts_with_vlsm() {
+    let (_, stderr, success) =
+        run_netcidr(&["split", "10.0.0.0/18", "--vlsm", "22", "--steps", "24"]);
+    assert!(!success);
+    assert!(stderr.contains("cannot be used with"));
+}
+
+#[test]
 fn test_direct_ipv4() {
     let (stdout, _, success) = run_netcidr(&["192.168.1.0/24"]);
     assert!(success);

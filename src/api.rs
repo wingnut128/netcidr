@@ -43,10 +43,12 @@ use crate::ipv6::Ipv6Subnet;
 use crate::output::{CsvOutput, OutputFormat, TextOutput};
 #[cfg(feature = "swagger")]
 use crate::subnet_generator::{
-    Ipv4SubnetList, Ipv4VlsmList, Ipv6SubnetList, Ipv6VlsmList, SplitSummary,
+    Ipv4SplitTree, Ipv4SplitTreeNode, Ipv4SubnetList, Ipv4VlsmList, Ipv6SplitTree,
+    Ipv6SplitTreeNode, Ipv6SubnetList, Ipv6VlsmList, SplitSummary,
 };
 use crate::subnet_generator::{
-    count_subnets, generate_ipv4_subnets, generate_ipv6_subnets, vlsm_split_ipv4, vlsm_split_ipv6,
+    count_subnets, generate_ipv4_subnets, generate_ipv6_subnets, hierarchical_split_ipv4,
+    hierarchical_split_ipv6, vlsm_split_ipv4, vlsm_split_ipv6,
 };
 #[cfg(feature = "swagger")]
 use crate::summarize::{Ipv4SummaryResult, Ipv6SummaryResult};
@@ -103,6 +105,8 @@ impl Modify for SecurityAddon {
         split_ipv6,
         vlsm_ipv4,
         vlsm_ipv6,
+        split_tree_ipv4,
+        split_tree_ipv6,
         contains_ipv4,
         contains_ipv6,
         summarize_ipv4_handler,
@@ -137,6 +141,7 @@ impl Modify for SecurityAddon {
         schemas(
             Ipv4Subnet, Ipv6Subnet, Ipv4SubnetList, Ipv6SubnetList, SplitSummary,
             Ipv4VlsmList, Ipv6VlsmList, VlsmQuery,
+            Ipv4SplitTree, Ipv4SplitTreeNode, Ipv6SplitTree, Ipv6SplitTreeNode, StepsQuery,
             ContainsResult, Ipv4SummaryResult, Ipv6SummaryResult, Ipv4FromRangeResult,
             Ipv6FromRangeResult, SubnetQuery, SplitQuery, ContainsQuery, SummarizeQuery,
             FromRangeQuery, BatchRequest, BatchResult, ErrorResponse, VersionResponse,
@@ -218,6 +223,22 @@ pub struct VlsmQuery {
     /// Comma-separated target prefix lengths, largest block first
     /// (non-decreasing, e.g. 26,28,28)
     prefixes: String,
+    /// Pretty print JSON output
+    #[serde(default)]
+    pretty: bool,
+    /// Output format (json, text, csv, yaml)
+    #[serde(default)]
+    format: ApiOutputFormat,
+}
+
+#[derive(Deserialize)]
+#[cfg_attr(feature = "swagger", derive(ToSchema, IntoParams))]
+pub struct StepsQuery {
+    /// Supernet in CIDR notation (e.g., 10.0.0.0/18 or 2001:db8::/48)
+    cidr: String,
+    /// Comma-separated, strictly-increasing prefix lengths applied recursively
+    /// at each level (e.g. 22,24)
+    steps: String,
     /// Pretty print JSON output
     #[serde(default)]
     pretty: bool,
@@ -432,6 +453,8 @@ pub fn create_router(config: RouterConfig) -> Router {
         .route("/v6/split", get(split_ipv6))
         .route("/v4/vlsm", get(vlsm_ipv4))
         .route("/v6/vlsm", get(vlsm_ipv6))
+        .route("/v4/split-tree", get(split_tree_ipv4))
+        .route("/v6/split-tree", get(split_tree_ipv6))
         .route("/v4/contains", get(contains_ipv4))
         .route("/v6/contains", get(contains_ipv6))
         .route("/v4/summarize", get(summarize_ipv4_handler))
@@ -999,6 +1022,96 @@ async fn vlsm_ipv6(Query(params): Query<VlsmQuery>) -> impl IntoResponse {
         }
         Err(e) => {
             warn!(error = %e, "IPv6 VLSM failed");
+            json_response(
+                ErrorResponse {
+                    error: e.to_string(),
+                },
+                params.pretty,
+                StatusCode::BAD_REQUEST,
+            )
+        }
+    }
+}
+
+#[cfg_attr(feature = "swagger", utoipa::path(
+    get,
+    path = "/v4/split-tree",
+    params(
+        StepsQuery
+    ),
+    responses(
+        (status = 200, description = "Hierarchical IPv4 split tree", body = Ipv4SplitTree),
+        (status = 400, description = "Invalid parameters", body = ErrorResponse)
+    ),
+    tag = "netcidr"
+))]
+#[instrument(skip_all, fields(cidr = %params.cidr, steps = %params.steps))]
+async fn split_tree_ipv4(Query(params): Query<StepsQuery>) -> impl IntoResponse {
+    info!("Hierarchical IPv4 split");
+    let steps = match parse_prefix_list(&params.steps) {
+        Ok(s) => s,
+        Err(error) => {
+            warn!(%error, "IPv4 split-tree step parse failed");
+            return json_response(
+                ErrorResponse { error },
+                params.pretty,
+                StatusCode::BAD_REQUEST,
+            );
+        }
+    };
+
+    match hierarchical_split_ipv4(&params.cidr, &steps) {
+        Ok(result) => {
+            info!(total = result.total_subnets, "IPv4 split-tree successful");
+            format_response(result, params.format, params.pretty, StatusCode::OK)
+        }
+        Err(e) => {
+            warn!(error = %e, "IPv4 split-tree failed");
+            json_response(
+                ErrorResponse {
+                    error: e.to_string(),
+                },
+                params.pretty,
+                StatusCode::BAD_REQUEST,
+            )
+        }
+    }
+}
+
+#[cfg_attr(feature = "swagger", utoipa::path(
+    get,
+    path = "/v6/split-tree",
+    params(
+        StepsQuery
+    ),
+    responses(
+        (status = 200, description = "Hierarchical IPv6 split tree", body = Ipv6SplitTree),
+        (status = 400, description = "Invalid parameters", body = ErrorResponse)
+    ),
+    tag = "netcidr"
+))]
+#[instrument(skip_all, fields(cidr = %params.cidr, steps = %params.steps))]
+async fn split_tree_ipv6(Query(params): Query<StepsQuery>) -> impl IntoResponse {
+    info!("Hierarchical IPv6 split");
+    let steps = match parse_prefix_list(&params.steps) {
+        Ok(s) => s,
+        Err(error) => {
+            warn!(%error, "IPv6 split-tree step parse failed");
+            return json_response(
+                ErrorResponse { error },
+                params.pretty,
+                StatusCode::BAD_REQUEST,
+            );
+        }
+    };
+
+    match hierarchical_split_ipv6(&params.cidr, &steps) {
+        Ok(result) => {
+            info!(total = result.total_subnets, "IPv6 split-tree successful");
+            format_response(result, params.format, params.pretty, StatusCode::OK)
+        }
+        Err(e) => {
+            warn!(error = %e, "IPv6 split-tree failed");
             json_response(
                 ErrorResponse {
                     error: e.to_string(),
