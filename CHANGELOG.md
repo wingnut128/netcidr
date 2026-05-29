@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.4](https://github.com/wingnut128/netcidr/compare/v0.26.3...v0.26.4) - 2026-05-29
+
+### Added
+
+- *(dashboard)* admin Users page for role-email management ([#215](https://github.com/wingnut128/netcidr/pull/215)) ([#217](https://github.com/wingnut128/netcidr/pull/217))
+- *(rbac)* move role-email membership to DB with env bootstrap ([#216](https://github.com/wingnut128/netcidr/pull/216))
+- *(dashboard)* admin Activity tab for audit visibility ([#214](https://github.com/wingnut128/netcidr/pull/214))
+- *(audit)* per-user/per-PAT audit filtering + admin CLI + token last-used ([#213](https://github.com/wingnut128/netcidr/pull/213))
+- *(ipam)* hostname pointers HTTP API + MCP tools ([#211](https://github.com/wingnut128/netcidr/pull/211))
+- *(ipam)* hostname pointers with append-only change history ([#210](https://github.com/wingnut128/netcidr/pull/210))
+- *(split)* hierarchical (recursive) subnet splitting ([#208](https://github.com/wingnut128/netcidr/pull/208))
+- *(split)* VLSM variable-length subnet allocation ([#206](https://github.com/wingnut128/netcidr/pull/206))
+
 ### Added
 
 - **Runtime role-email management (env → DB).** Role membership now lives in a global `role_assignments` table (migration 011, both backends) instead of env-vars-only, so RBAC changes survive restarts and need no redeploy. Managed via `netcidr admin user grant <email> --role reader|allocator|admin` / `revoke` / `list`, and `GET/POST/DELETE /admin/users` (Admin-gated). Role resolution (`AuthConfig::role_for_email`) now reads the DB per request (with an in-memory env fallback for bearer-only/non-IPAM deploys). Env lists (`NETCIDR_ADMIN_EMAILS` etc.) become a **first-start bootstrap seed only** — seeded once when the table is empty, ignored thereafter. Guards prevent revoking the last remaining admin or your own admin; every grant/revoke is audited (`entity_type=role_assignment`, visible in the Activity view). Roles are global; data stays tenant-isolated separately. See ADR-0003. An admin-only **Users** dashboard page (`/#/admin/users`) lists assignments and grants/revokes roles via the `/admin/users` API, surfacing the last-admin/self-revoke guards inline — completing [#215](https://github.com/wingnut128/netcidr/issues/215).
