@@ -68,7 +68,10 @@ export function Sidebar({
       : []),
   ];
   const adminItems = auth.isAdmin
-    ? [{ to: "/admin/allowlist", label: "Allowlist" }]
+    ? [
+        { to: "/admin/allowlist", label: "Allowlist" },
+        { to: "/admin/activity", label: "Activity" },
+      ]
     : [];
 
   return (

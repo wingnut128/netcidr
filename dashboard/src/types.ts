@@ -61,6 +61,8 @@ export interface AuditEntry {
   action: string;
   details?: string;
   timestamp: string;
+  caller_email?: string | null;
+  pat_id?: string | null;
 }
 
 export interface AuditList {

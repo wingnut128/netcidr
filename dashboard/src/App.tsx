@@ -8,6 +8,7 @@ import { FromRange } from "./pages/FromRange";
 import { Ipam } from "./pages/Ipam";
 import { Visualizer } from "./pages/Visualizer";
 import { AllowlistAdmin } from "./pages/AllowlistAdmin";
+import { Activity } from "./pages/Activity";
 import { Tokens } from "./pages/Tokens";
 
 export function App() {
@@ -24,6 +25,7 @@ export function App() {
           <Route path="ipam" element={<Ipam />} />
           <Route path="tokens" element={<Tokens />} />
           <Route path="admin/allowlist" element={<AllowlistAdmin />} />
+          <Route path="admin/activity" element={<Activity />} />
         </Route>
       </Routes>
     </HashRouter>
