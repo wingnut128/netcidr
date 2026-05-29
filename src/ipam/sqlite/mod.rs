@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 use std::path::Path;
 
 use crate::error::{NetcidrError, Result};
@@ -141,6 +141,43 @@ impl SqliteStore {
         }
         Ok(())
     }
+}
+
+/// Serialize a hostname pointer to a JSON snapshot for the history table.
+fn hostname_snapshot(p: &HostnamePointer) -> String {
+    serde_json::to_string(p).unwrap_or_default()
+}
+
+fn row_to_hostname_pointer(row: &rusqlite::Row<'_>) -> rusqlite::Result<HostnamePointer> {
+    Ok(HostnamePointer {
+        id: row.get("id")?,
+        tenant_id: row.get("tenant_id")?,
+        ip_address: row.get("ip_address")?,
+        hostname: row.get("hostname")?,
+        allocation_id: row.get("allocation_id")?,
+        notes: row.get("notes")?,
+        created_at: row.get("created_at")?,
+        updated_at: row.get("updated_at")?,
+    })
+}
+
+fn row_to_hostname_history(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<HostnamePointerHistoryEntry> {
+    let kind_str: String = row.get("change_kind")?;
+    let change_kind = kind_str.parse::<ChangeKind>().unwrap_or(ChangeKind::Update);
+    Ok(HostnamePointerHistoryEntry {
+        id: row.get("id")?,
+        tenant_id: row.get("tenant_id")?,
+        pointer_id: row.get("pointer_id")?,
+        ip_address: row.get("ip_address")?,
+        hostname: row.get("hostname")?,
+        change_kind,
+        previous_value: row.get("previous_value")?,
+        new_value: row.get("new_value")?,
+        actor: row.get("actor")?,
+        changed_at: row.get("changed_at")?,
+    })
 }
 
 #[async_trait]
@@ -679,6 +716,247 @@ impl IpamStore for SqliteStore {
         let conn = self.conn()?;
         Self::assert_allocation_in_tenant(&conn, tenant_id, allocation_id)?;
         Self::load_tags_for_allocation(&conn, allocation_id)
+    }
+
+    // --- hostname pointers ---
+
+    async fn set_hostname_pointer(
+        &self,
+        tenant_id: &str,
+        actor: &str,
+        input: &CreateHostnamePointer,
+    ) -> Result<HostnamePointer> {
+        let mut conn = self.conn()?;
+        let now = Self::now();
+        let tx = conn
+            .transaction()
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+
+        // Cross-tenant invariant: a linked allocation must belong to this tenant.
+        if let Some(ref alloc_id) = input.allocation_id {
+            let in_tenant: bool = tx
+                .query_row(
+                    "SELECT COUNT(*) > 0 FROM allocations WHERE id = ?1 AND tenant_id = ?2",
+                    params![alloc_id, tenant_id],
+                    |row| row.get(0),
+                )
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+            if !in_tenant {
+                return Err(NetcidrError::AllocationNotFound(alloc_id.clone()));
+            }
+        }
+
+        // Existing live row for this (tenant, ip, hostname)?
+        let existing: Option<HostnamePointer> = tx
+            .query_row(
+                "SELECT id, tenant_id, ip_address, hostname, allocation_id, notes, created_at, updated_at \
+                 FROM hostname_pointers WHERE tenant_id = ?1 AND ip_address = ?2 AND hostname = ?3",
+                params![tenant_id, input.ip_address, input.hostname],
+                row_to_hostname_pointer,
+            )
+            .optional()
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+
+        let (pointer, change_kind, previous) = match existing {
+            Some(prev) => {
+                // Update path: refresh notes / allocation_id.
+                tx.execute(
+                    "UPDATE hostname_pointers SET allocation_id = ?1, notes = ?2, updated_at = ?3 \
+                     WHERE id = ?4 AND tenant_id = ?5",
+                    params![input.allocation_id, input.notes, now, prev.id, tenant_id],
+                )
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+                let updated = HostnamePointer {
+                    allocation_id: input.allocation_id.clone(),
+                    notes: input.notes.clone(),
+                    updated_at: now.clone(),
+                    ..prev.clone()
+                };
+                (updated, ChangeKind::Update, Some(hostname_snapshot(&prev)))
+            }
+            None => {
+                let id = uuid::Uuid::new_v4().to_string();
+                tx.execute(
+                    "INSERT INTO hostname_pointers \
+                     (id, tenant_id, ip_address, hostname, allocation_id, notes, created_at, updated_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+                    params![
+                        id,
+                        tenant_id,
+                        input.ip_address,
+                        input.hostname,
+                        input.allocation_id,
+                        input.notes,
+                        now
+                    ],
+                )
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+                let created = HostnamePointer {
+                    id,
+                    tenant_id: tenant_id.to_string(),
+                    ip_address: input.ip_address.clone(),
+                    hostname: input.hostname.clone(),
+                    allocation_id: input.allocation_id.clone(),
+                    notes: input.notes.clone(),
+                    created_at: now.clone(),
+                    updated_at: now.clone(),
+                };
+                (created, ChangeKind::Create, None)
+            }
+        };
+
+        tx.execute(
+            "INSERT INTO hostname_pointer_history \
+             (id, tenant_id, pointer_id, ip_address, hostname, change_kind, previous_value, new_value, actor, changed_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                uuid::Uuid::new_v4().to_string(),
+                tenant_id,
+                pointer.id,
+                pointer.ip_address,
+                pointer.hostname,
+                change_kind.to_string(),
+                previous,
+                Some(hostname_snapshot(&pointer)),
+                actor,
+                now
+            ],
+        )
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+
+        tx.commit()
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        Ok(pointer)
+    }
+
+    async fn list_hostname_pointers(
+        &self,
+        tenant_id: &str,
+        filter: &HostnamePointerFilter,
+    ) -> Result<Vec<HostnamePointer>> {
+        let conn = self.conn()?;
+        let mut sql = String::from(
+            "SELECT id, tenant_id, ip_address, hostname, allocation_id, notes, created_at, updated_at \
+             FROM hostname_pointers WHERE tenant_id = ?1",
+        );
+        let mut binds: Vec<String> = vec![tenant_id.to_string()];
+        if let Some(ref ip) = filter.ip_address {
+            binds.push(ip.clone());
+            sql.push_str(&format!(" AND ip_address = ?{}", binds.len()));
+        }
+        if let Some(ref h) = filter.hostname {
+            binds.push(h.clone());
+            sql.push_str(&format!(" AND hostname = ?{}", binds.len()));
+        }
+        if let Some(ref a) = filter.allocation_id {
+            binds.push(a.clone());
+            sql.push_str(&format!(" AND allocation_id = ?{}", binds.len()));
+        }
+        sql.push_str(" ORDER BY hostname, ip_address");
+
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        let params_ref = rusqlite::params_from_iter(binds.iter());
+        let rows = stmt
+            .query_map(params_ref, row_to_hostname_pointer)
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        Ok(rows)
+    }
+
+    async fn delete_hostname_pointer(
+        &self,
+        tenant_id: &str,
+        actor: &str,
+        ip: &str,
+        hostname: &str,
+    ) -> Result<()> {
+        let mut conn = self.conn()?;
+        let now = Self::now();
+        let tx = conn
+            .transaction()
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+
+        let existing: Option<HostnamePointer> = tx
+            .query_row(
+                "SELECT id, tenant_id, ip_address, hostname, allocation_id, notes, created_at, updated_at \
+                 FROM hostname_pointers WHERE tenant_id = ?1 AND ip_address = ?2 AND hostname = ?3",
+                params![tenant_id, ip, hostname],
+                row_to_hostname_pointer,
+            )
+            .optional()
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+
+        let prev = match existing {
+            Some(p) => p,
+            None => {
+                return Err(NetcidrError::HostnamePointerNotFound(format!(
+                    "{ip} -> {hostname}"
+                )));
+            }
+        };
+
+        tx.execute(
+            "DELETE FROM hostname_pointers WHERE id = ?1 AND tenant_id = ?2",
+            params![prev.id, tenant_id],
+        )
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+
+        tx.execute(
+            "INSERT INTO hostname_pointer_history \
+             (id, tenant_id, pointer_id, ip_address, hostname, change_kind, previous_value, new_value, actor, changed_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, 'delete', ?6, NULL, ?7, ?8)",
+            params![
+                uuid::Uuid::new_v4().to_string(),
+                tenant_id,
+                prev.id,
+                prev.ip_address,
+                prev.hostname,
+                hostname_snapshot(&prev),
+                actor,
+                now
+            ],
+        )
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+
+        tx.commit()
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn list_hostname_history(
+        &self,
+        tenant_id: &str,
+        filter: &HostnameHistoryFilter,
+    ) -> Result<Vec<HostnamePointerHistoryEntry>> {
+        let conn = self.conn()?;
+        let mut sql = String::from(
+            "SELECT id, tenant_id, pointer_id, ip_address, hostname, change_kind, previous_value, new_value, actor, changed_at \
+             FROM hostname_pointer_history WHERE tenant_id = ?1",
+        );
+        let mut binds: Vec<String> = vec![tenant_id.to_string()];
+        if let Some(ref ip) = filter.ip_address {
+            binds.push(ip.clone());
+            sql.push_str(&format!(" AND ip_address = ?{}", binds.len()));
+        }
+        if let Some(ref h) = filter.hostname {
+            binds.push(h.clone());
+            sql.push_str(&format!(" AND hostname = ?{}", binds.len()));
+        }
+        sql.push_str(" ORDER BY changed_at");
+
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        let params_ref = rusqlite::params_from_iter(binds.iter());
+        let rows = stmt
+            .query_map(params_ref, row_to_hostname_history)
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        Ok(rows)
     }
 
     // --- audit ---

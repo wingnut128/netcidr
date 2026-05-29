@@ -81,6 +81,9 @@ pub enum NetcidrError {
     #[error("Allocation not found: {0}")]
     AllocationNotFound(String),
 
+    #[error("Hostname pointer not found: {0}")]
+    HostnamePointerNotFound(String),
+
     #[error("CIDR block {0} has active allocations and cannot be deleted")]
     CidrBlockHasActiveAllocations(String),
 

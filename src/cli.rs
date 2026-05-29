@@ -372,6 +372,12 @@ pub enum IpamCommands {
         command: TagCommands,
     },
 
+    /// Manage hostname pointers (IP↔hostname mappings with change history)
+    Hostname {
+        #[command(subcommand)]
+        command: HostnameCommands,
+    },
+
     /// Export all IPAM data to JSON
     Dump {
         /// Tenant ID to export (default: "local" for CLI; set to your email for API-written data)
@@ -386,6 +392,52 @@ pub enum IpamCommands {
         /// Tenant ID to import data under (default: "local")
         #[arg(long, default_value = "local")]
         tenant: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum HostnameCommands {
+    /// Set (create or update) a hostname pointer for an IP
+    Set {
+        /// IP address (IPv4 or IPv6)
+        ip: String,
+        /// Fully-qualified hostname (e.g., web-01.example.com)
+        hostname: String,
+        /// Optional allocation ID to associate with this pointer
+        #[arg(long)]
+        allocation_id: Option<String>,
+        /// Optional free-form notes
+        #[arg(long)]
+        notes: Option<String>,
+    },
+    /// Show the current hostnames recorded for an IP
+    Get {
+        /// IP address
+        ip: String,
+    },
+    /// List hostname pointers, optionally filtered
+    List {
+        /// Filter by IP address
+        #[arg(long)]
+        ip: Option<String>,
+        /// Filter by hostname
+        #[arg(long)]
+        hostname: Option<String>,
+        /// Filter by allocation ID
+        #[arg(long)]
+        allocation_id: Option<String>,
+    },
+    /// Show the append-only change history for an IP or hostname
+    History {
+        /// An IP address or a hostname; auto-detected
+        target: String,
+    },
+    /// Delete a hostname pointer (the deletion is preserved in history)
+    Delete {
+        /// IP address
+        ip: String,
+        /// Hostname
+        hostname: String,
     },
 }
 

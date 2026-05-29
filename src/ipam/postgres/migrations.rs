@@ -9,6 +9,7 @@ pub const MIGRATIONS: &[(u32, &str)] = &[
     (6, MIGRATION_006),
     (7, MIGRATION_007),
     (8, MIGRATION_008),
+    (9, MIGRATION_009),
 ];
 
 const MIGRATION_001: &str = r#"
@@ -259,6 +260,44 @@ const MIGRATION_008: &str = r#"
 ALTER TABLE personal_access_tokens
     ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'
     CHECK (role IN ('reader', 'allocator', 'admin'));
+"#;
+
+/// Adds tenant-scoped hostname pointers plus an append-only change-history
+/// table. Mirrors SQLite migration 009. See [`super::super::sqlite::migrations`].
+const MIGRATION_009: &str = r#"
+CREATE TABLE IF NOT EXISTS hostname_pointers (
+    id            TEXT PRIMARY KEY,
+    tenant_id     TEXT NOT NULL,
+    ip_address    TEXT NOT NULL,
+    hostname      TEXT NOT NULL,
+    allocation_id TEXT REFERENCES allocations(id),
+    notes         TEXT,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    UNIQUE (tenant_id, ip_address, hostname)
+);
+
+CREATE INDEX IF NOT EXISTS idx_hostname_pointers_tenant ON hostname_pointers(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_hostname_pointers_ip     ON hostname_pointers(tenant_id, ip_address);
+CREATE INDEX IF NOT EXISTS idx_hostname_pointers_name   ON hostname_pointers(tenant_id, hostname);
+CREATE INDEX IF NOT EXISTS idx_hostname_pointers_alloc  ON hostname_pointers(allocation_id);
+
+CREATE TABLE IF NOT EXISTS hostname_pointer_history (
+    id             TEXT PRIMARY KEY,
+    tenant_id      TEXT NOT NULL,
+    pointer_id     TEXT NOT NULL,
+    ip_address     TEXT NOT NULL,
+    hostname       TEXT NOT NULL,
+    change_kind    TEXT NOT NULL CHECK (change_kind IN ('create', 'update', 'delete')),
+    previous_value TEXT,
+    new_value      TEXT,
+    actor          TEXT NOT NULL,
+    changed_at     TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hostname_history_tenant ON hostname_pointer_history(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_hostname_history_ip     ON hostname_pointer_history(tenant_id, ip_address);
+CREATE INDEX IF NOT EXISTS idx_hostname_history_name   ON hostname_pointer_history(tenant_id, hostname);
 "#;
 
 #[cfg(all(test, feature = "ipam-postgres"))]

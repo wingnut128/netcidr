@@ -427,3 +427,133 @@ fn write_allocation_csv_row(wtr: &mut csv::Writer<Vec<u8>>, a: &Allocation) -> R
     ])
     .map_err(csv_err)
 }
+
+// ---------------------------------------------------------------------------
+// Hostname pointers
+// ---------------------------------------------------------------------------
+
+impl TextOutput for HostnamePointer {
+    fn to_text(&self) -> String {
+        let mut out = String::new();
+        writeln!(out, "Hostname Pointer").unwrap();
+        writeln!(out, "================").unwrap();
+        writeln!(out, "IP:         {}", self.ip_address).unwrap();
+        writeln!(out, "Hostname:   {}", self.hostname).unwrap();
+        if let Some(ref a) = self.allocation_id {
+            writeln!(out, "Allocation: {}", a).unwrap();
+        }
+        if let Some(ref n) = self.notes {
+            writeln!(out, "Notes:      {}", n).unwrap();
+        }
+        writeln!(out, "Created:    {}", self.created_at).unwrap();
+        writeln!(out, "Updated:    {}", self.updated_at).unwrap();
+        out
+    }
+}
+
+impl TextOutput for HostnamePointerList {
+    fn to_text(&self) -> String {
+        let mut out = String::new();
+        writeln!(out, "Hostname Pointers ({} entries)", self.count).unwrap();
+        writeln!(out, "==============================").unwrap();
+        for p in &self.pointers {
+            writeln!(
+                out,
+                "  {} -> {}{}",
+                p.ip_address,
+                p.hostname,
+                p.allocation_id
+                    .as_deref()
+                    .map(|a| format!(" [alloc {a}]"))
+                    .unwrap_or_default(),
+            )
+            .unwrap();
+        }
+        out
+    }
+}
+
+impl TextOutput for HostnamePointerHistoryList {
+    fn to_text(&self) -> String {
+        let mut out = String::new();
+        writeln!(out, "Hostname Pointer History ({} entries)", self.count).unwrap();
+        writeln!(out, "=====================================").unwrap();
+        for e in &self.entries {
+            writeln!(
+                out,
+                "  [{}] {} {} -> {} (by {})",
+                e.changed_at, e.change_kind, e.ip_address, e.hostname, e.actor,
+            )
+            .unwrap();
+        }
+        out
+    }
+}
+
+impl CsvOutput for HostnamePointerList {
+    fn to_csv(&self) -> Result<String> {
+        let mut wtr = csv::Writer::from_writer(Vec::new());
+        wtr.write_record([
+            "id",
+            "ip_address",
+            "hostname",
+            "allocation_id",
+            "notes",
+            "created_at",
+            "updated_at",
+        ])
+        .map_err(csv_err)?;
+        for p in &self.pointers {
+            wtr.write_record([
+                &p.id,
+                &p.ip_address,
+                &p.hostname,
+                p.allocation_id.as_deref().unwrap_or(""),
+                p.notes.as_deref().unwrap_or(""),
+                &p.created_at,
+                &p.updated_at,
+            ])
+            .map_err(csv_err)?;
+        }
+        finish_csv(wtr)
+    }
+}
+
+impl CsvOutput for HostnamePointerHistoryList {
+    fn to_csv(&self) -> Result<String> {
+        let mut wtr = csv::Writer::from_writer(Vec::new());
+        wtr.write_record([
+            "changed_at",
+            "change_kind",
+            "ip_address",
+            "hostname",
+            "actor",
+            "previous_value",
+            "new_value",
+        ])
+        .map_err(csv_err)?;
+        for e in &self.entries {
+            wtr.write_record([
+                &e.changed_at,
+                &e.change_kind.to_string(),
+                &e.ip_address,
+                &e.hostname,
+                &e.actor,
+                e.previous_value.as_deref().unwrap_or(""),
+                e.new_value.as_deref().unwrap_or(""),
+            ])
+            .map_err(csv_err)?;
+        }
+        finish_csv(wtr)
+    }
+}
+
+impl CsvOutput for HostnamePointer {
+    fn to_csv(&self) -> Result<String> {
+        HostnamePointerList {
+            count: 1,
+            pointers: vec![self.clone()],
+        }
+        .to_csv()
+    }
+}

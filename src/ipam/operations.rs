@@ -1096,6 +1096,123 @@ impl IpamOps {
         Ok(())
     }
 
+    // --- hostname pointers ---
+
+    /// Resolve the acting identity for history records: the authenticated
+    /// caller's email, then their OIDC subject, else `"cli"`.
+    fn current_actor() -> String {
+        let ctx = crate::audit_context::current();
+        ctx.caller_email
+            .or(ctx.caller_sub)
+            .unwrap_or_else(|| "cli".to_string())
+    }
+
+    /// Create or update a hostname pointer. The IP is canonicalized and the
+    /// hostname normalized (lowercased, RFC 1123 validated) before storage.
+    pub async fn set_hostname_pointer(
+        &self,
+        tenant_id: &str,
+        input: &CreateHostnamePointer,
+    ) -> Result<HostnamePointer> {
+        let ip_address = validation::normalize_ip_address(&input.ip_address)?;
+        let hostname = validation::normalize_hostname(&input.hostname)?;
+        validation::validate_optional_identifier(&input.allocation_id)?;
+        validation::validate_optional_text(&input.notes, 0)?;
+
+        let normalized = CreateHostnamePointer {
+            ip_address,
+            hostname,
+            allocation_id: input.allocation_id.clone(),
+            notes: input.notes.clone(),
+        };
+        let actor = Self::current_actor();
+        self.store
+            .set_hostname_pointer(tenant_id, &actor, &normalized)
+            .await
+    }
+
+    /// List hostname pointers, optionally filtered by IP, hostname, or
+    /// allocation. Filter values are normalized to match stored form.
+    pub async fn list_hostname_pointers(
+        &self,
+        tenant_id: &str,
+        filter: &HostnamePointerFilter,
+    ) -> Result<Vec<HostnamePointer>> {
+        let normalized = HostnamePointerFilter {
+            ip_address: filter
+                .ip_address
+                .as_deref()
+                .map(validation::normalize_ip_address)
+                .transpose()?,
+            hostname: filter
+                .hostname
+                .as_deref()
+                .map(validation::normalize_hostname)
+                .transpose()?,
+            allocation_id: filter.allocation_id.clone(),
+        };
+        self.store
+            .list_hostname_pointers(tenant_id, &normalized)
+            .await
+    }
+
+    /// Convenience: the current hostnames recorded for a single IP.
+    pub async fn get_hostname_pointers_for_ip(
+        &self,
+        tenant_id: &str,
+        ip: &str,
+    ) -> Result<Vec<HostnamePointer>> {
+        let ip_address = validation::normalize_ip_address(ip)?;
+        self.store
+            .list_hostname_pointers(
+                tenant_id,
+                &HostnamePointerFilter {
+                    ip_address: Some(ip_address),
+                    ..Default::default()
+                },
+            )
+            .await
+    }
+
+    /// Remove the live `(ip, hostname)` pointer; the deletion is preserved in
+    /// history.
+    pub async fn delete_hostname_pointer(
+        &self,
+        tenant_id: &str,
+        ip: &str,
+        hostname: &str,
+    ) -> Result<()> {
+        let ip_address = validation::normalize_ip_address(ip)?;
+        let hostname = validation::normalize_hostname(hostname)?;
+        let actor = Self::current_actor();
+        self.store
+            .delete_hostname_pointer(tenant_id, &actor, &ip_address, &hostname)
+            .await
+    }
+
+    /// The append-only change history, optionally filtered by IP or hostname.
+    pub async fn list_hostname_history(
+        &self,
+        tenant_id: &str,
+        filter: &HostnameHistoryFilter,
+    ) -> Result<Vec<HostnamePointerHistoryEntry>> {
+        let normalized = HostnameHistoryFilter {
+            ip_address: filter
+                .ip_address
+                .as_deref()
+                .map(validation::normalize_ip_address)
+                .transpose()?,
+            hostname: filter
+                .hostname
+                .as_deref()
+                .map(validation::normalize_hostname)
+                .transpose()?,
+        };
+        self.store
+            .list_hostname_history(tenant_id, &normalized)
+            .await
+    }
+
     async fn audit(
         &self,
         tenant_id: &str,

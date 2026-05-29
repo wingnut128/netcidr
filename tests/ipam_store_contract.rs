@@ -1151,6 +1151,161 @@ macro_rules! store_contract_tests {
                 .unwrap();
             assert_eq!(removed, 2);
         }
+
+        // ---- Hostname pointers ----
+
+        #[tokio::test]
+        async fn contract_hostname_set_get_and_history() {
+            let store = $factory().await;
+
+            let p = store
+                .set_hostname_pointer(
+                    TEST_TENANT,
+                    "cli",
+                    &CreateHostnamePointer {
+                        ip_address: "10.0.1.5".to_string(),
+                        hostname: "web-01.example.com".to_string(),
+                        allocation_id: None,
+                        notes: Some("primary".to_string()),
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(p.ip_address, "10.0.1.5");
+            assert_eq!(p.hostname, "web-01.example.com");
+            assert!(!p.id.is_empty());
+
+            // Many-to-many: a second hostname on the same IP.
+            store
+                .set_hostname_pointer(
+                    TEST_TENANT,
+                    "cli",
+                    &CreateHostnamePointer {
+                        ip_address: "10.0.1.5".to_string(),
+                        hostname: "app.example.com".to_string(),
+                        allocation_id: None,
+                        notes: None,
+                    },
+                )
+                .await
+                .unwrap();
+
+            let by_ip = store
+                .list_hostname_pointers(
+                    TEST_TENANT,
+                    &HostnamePointerFilter {
+                        ip_address: Some("10.0.1.5".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(by_ip.len(), 2);
+
+            // History has two create rows so far.
+            let hist = store
+                .list_hostname_history(
+                    TEST_TENANT,
+                    &HostnameHistoryFilter {
+                        ip_address: Some("10.0.1.5".to_string()),
+                        hostname: None,
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(hist.len(), 2);
+            assert!(hist.iter().all(|h| h.change_kind == ChangeKind::Create));
+        }
+
+        #[tokio::test]
+        async fn contract_hostname_upsert_records_update() {
+            let store = $factory().await;
+            let input = CreateHostnamePointer {
+                ip_address: "192.168.0.1".to_string(),
+                hostname: "host.example.com".to_string(),
+                allocation_id: None,
+                notes: Some("v1".to_string()),
+            };
+            let first = store
+                .set_hostname_pointer(TEST_TENANT, "cli", &input)
+                .await
+                .unwrap();
+            // Re-set the same pair updates in place (same id), records `update`.
+            let second = store
+                .set_hostname_pointer(
+                    TEST_TENANT,
+                    "cli",
+                    &CreateHostnamePointer {
+                        notes: Some("v2".to_string()),
+                        ..input.clone()
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(first.id, second.id);
+            assert_eq!(second.notes, Some("v2".to_string()));
+
+            let pointers = store
+                .list_hostname_pointers(TEST_TENANT, &HostnamePointerFilter::default())
+                .await
+                .unwrap();
+            assert_eq!(pointers.len(), 1, "upsert must not create a duplicate row");
+
+            let hist = store
+                .list_hostname_history(TEST_TENANT, &HostnameHistoryFilter::default())
+                .await
+                .unwrap();
+            assert_eq!(hist.len(), 2);
+            assert_eq!(hist[0].change_kind, ChangeKind::Create);
+            assert_eq!(hist[1].change_kind, ChangeKind::Update);
+        }
+
+        #[tokio::test]
+        async fn contract_hostname_delete_is_hard_with_history() {
+            let store = $factory().await;
+            store
+                .set_hostname_pointer(
+                    TEST_TENANT,
+                    "cli",
+                    &CreateHostnamePointer {
+                        ip_address: "10.0.0.9".to_string(),
+                        hostname: "gone.example.com".to_string(),
+                        allocation_id: None,
+                        notes: None,
+                    },
+                )
+                .await
+                .unwrap();
+
+            store
+                .delete_hostname_pointer(TEST_TENANT, "cli", "10.0.0.9", "gone.example.com")
+                .await
+                .unwrap();
+
+            // Live row is gone.
+            let live = store
+                .list_hostname_pointers(TEST_TENANT, &HostnamePointerFilter::default())
+                .await
+                .unwrap();
+            assert!(live.is_empty());
+
+            // History preserves create + delete.
+            let hist = store
+                .list_hostname_history(TEST_TENANT, &HostnameHistoryFilter::default())
+                .await
+                .unwrap();
+            assert_eq!(hist.len(), 2);
+            assert_eq!(hist[1].change_kind, ChangeKind::Delete);
+            assert!(hist[1].previous_value.is_some());
+            assert!(hist[1].new_value.is_none());
+
+            // Deleting a missing pointer is NotFound.
+            let err = store
+                .delete_hostname_pointer(TEST_TENANT, "cli", "10.0.0.9", "gone.example.com")
+                .await
+                .unwrap_err();
+            assert!(matches!(err, NetcidrError::HostnamePointerNotFound(_)));
+        }
     };
 }
 
@@ -1161,6 +1316,80 @@ macro_rules! store_contract_tests {
 mod sqlite_contract {
     use super::*;
     store_contract_tests!(sqlite_store);
+}
+
+/// Hostname pointers and their history are isolated per tenant: tenant A
+/// cannot see tenant B's pointers or change history, and identical
+/// `(ip, hostname)` pairs may coexist across tenants.
+#[tokio::test]
+async fn hostname_pointers_are_tenant_isolated() {
+    let store = sqlite_store().await;
+    let mk = |ip: &str, host: &str| CreateHostnamePointer {
+        ip_address: ip.to_string(),
+        hostname: host.to_string(),
+        allocation_id: None,
+        notes: None,
+    };
+
+    // Both tenants record the *same* IP↔hostname pair.
+    store
+        .set_hostname_pointer("a@x", "a@x", &mk("10.0.0.1", "shared.example.com"))
+        .await
+        .unwrap();
+    store
+        .set_hostname_pointer("b@x", "b@x", &mk("10.0.0.1", "shared.example.com"))
+        .await
+        .unwrap();
+
+    // Each tenant sees exactly their own pointer.
+    let a = store
+        .list_hostname_pointers("a@x", &HostnamePointerFilter::default())
+        .await
+        .unwrap();
+    let b = store
+        .list_hostname_pointers("b@x", &HostnamePointerFilter::default())
+        .await
+        .unwrap();
+    assert_eq!(a.len(), 1);
+    assert_eq!(b.len(), 1);
+    assert_ne!(
+        a[0].id, b[0].id,
+        "pointers must be distinct rows per tenant"
+    );
+
+    // History is isolated too.
+    let a_hist = store
+        .list_hostname_history("a@x", &HostnameHistoryFilter::default())
+        .await
+        .unwrap();
+    assert_eq!(a_hist.len(), 1);
+    assert!(a_hist.iter().all(|h| h.tenant_id == "a@x"));
+
+    // Tenant A cannot delete tenant B's pointer (cross-tenant ⇒ NotFound).
+    store
+        .set_hostname_pointer("b@x", "b@x", &mk("10.0.0.2", "b-only.example.com"))
+        .await
+        .unwrap();
+    let err = store
+        .delete_hostname_pointer("a@x", "a@x", "10.0.0.2", "b-only.example.com")
+        .await
+        .unwrap_err();
+    assert!(matches!(err, NetcidrError::HostnamePointerNotFound(_)));
+    // B's pointer survives.
+    assert_eq!(
+        store
+            .list_hostname_pointers(
+                "b@x",
+                &HostnamePointerFilter {
+                    ip_address: Some("10.0.0.2".to_string()),
+                    ..Default::default()
+                }
+            )
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 // ---------------------------------------------------------------------------
