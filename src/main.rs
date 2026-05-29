@@ -273,6 +273,14 @@ async fn async_main(cli: Cli) {
                 std::process::exit(1);
             }
         }
+        Some(Commands::Admin { db, command }) => {
+            if let Err(e) =
+                ipam_cli::handle_admin_command(&writer, &cli.output, db.as_deref(), command).await
+            {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
         Some(Commands::Token { api_url, command }) => {
             if let Err(e) =
                 token_cli::handle_token_command(&writer, &cli.output, api_url.as_deref(), command)

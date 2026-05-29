@@ -230,6 +230,10 @@ pub struct AuditFilter {
     pub entity_type: Option<String>,
     pub entity_id: Option<String>,
     pub action: Option<String>,
+    /// Filter by the authenticated caller's email.
+    pub caller_email: Option<String>,
+    /// Filter by the personal access token id that performed the action.
+    pub pat_id: Option<String>,
     pub limit: Option<u32>,
 }
 

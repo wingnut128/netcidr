@@ -1,5 +1,6 @@
 use netcidr::cli::{
-    AllocationCommands, CidrBlockCommands, HostnameCommands, IpamCommands, TagCommands,
+    AdminCommands, AllocationCommands, CidrBlockCommands, HostnameCommands, IpamCommands,
+    TagCommands,
 };
 use netcidr::error::Result;
 use netcidr::ipam::config::IpamConfig;
@@ -293,6 +294,7 @@ pub async fn handle_ipam_command(
                         entity_id,
                         action,
                         limit: Some(limit),
+                        ..Default::default()
                     },
                 )
                 .await?;
@@ -438,6 +440,47 @@ pub async fn handle_ipam_command(
                 }
             }
         },
+    }
+
+    Ok(())
+}
+
+/// Handle `netcidr admin <subcommand>` against a local store.
+pub async fn handle_admin_command(
+    writer: &OutputWriter,
+    output_file: &Option<String>,
+    db: Option<&str>,
+    command: AdminCommands,
+) -> Result<()> {
+    let ops = create_ops(db).await?;
+
+    match command {
+        AdminCommands::Audit {
+            user,
+            pat_id,
+            entity_type,
+            action,
+            limit,
+        } => {
+            let entries = ops
+                .query_audit(
+                    Tenant::LOCAL,
+                    &AuditFilter {
+                        entity_type,
+                        action,
+                        caller_email: user,
+                        pat_id,
+                        limit: Some(limit),
+                        ..Default::default()
+                    },
+                )
+                .await?;
+            let result = AuditList {
+                count: entries.len(),
+                entries,
+            };
+            output_result(writer, output_file, &result);
+        }
     }
 
     Ok(())

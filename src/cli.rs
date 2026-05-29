@@ -134,6 +134,16 @@ pub enum Commands {
         api_url: Option<String>,
     },
 
+    /// Administrative commands (audit queries, and more over time)
+    Admin {
+        /// Path to SQLite database (overrides NETCIDR_DB env and config file)
+        #[arg(long)]
+        db: Option<String>,
+
+        #[command(subcommand)]
+        command: AdminCommands,
+    },
+
     /// Manage personal access tokens against a remote netcidr server
     Token {
         /// API base URL (overrides NETCIDR_API_URL)
@@ -231,6 +241,28 @@ pub enum Commands {
         /// IPAM PostgreSQL connection URL (overrides NETCIDR_IPAM_DB_URL env and config file)
         #[arg(long)]
         ipam_db_url: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum AdminCommands {
+    /// Query the audit log, filtered by user, PAT, entity, or action
+    Audit {
+        /// Filter by the caller's email address
+        #[arg(long)]
+        user: Option<String>,
+        /// Filter by the personal access token id that performed the action
+        #[arg(long)]
+        pat_id: Option<String>,
+        /// Filter by entity type (cidr_block, allocation)
+        #[arg(long)]
+        entity_type: Option<String>,
+        /// Filter by action
+        #[arg(long)]
+        action: Option<String>,
+        /// Maximum entries to return
+        #[arg(long, default_value = "50")]
+        limit: u32,
     },
 }
 

@@ -491,6 +491,36 @@ async fn test_ipam_audit_log() {
     assert_eq!(json["entries"][0]["action"], "create_cidr_block");
 }
 
+#[tokio::test]
+async fn test_ipam_audit_caller_email_and_pat_filters() {
+    let app = ipam_app().await;
+
+    // Generate at least one audit entry.
+    req(
+        app.clone(),
+        "POST",
+        "/ipam/cidr-blocks",
+        Some(r#"{"cidr":"10.0.0.0/8"}"#),
+    )
+    .await;
+
+    // The caller_email / pat_id query params are accepted and applied.
+    // (Test-harness entries carry no email, so a specific value filters all out.)
+    let (status, json) = req(
+        app.clone(),
+        "GET",
+        "/ipam/audit?caller_email=nobody@example.com",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["count"], 0);
+
+    let (status, json) = req(app, "GET", "/ipam/audit?pat_id=pat-xyz", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["count"], 0);
+}
+
 // ── Tags ──────────────────────────────────────────────────────────────
 
 #[tokio::test]

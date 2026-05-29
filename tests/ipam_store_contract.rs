@@ -868,6 +868,64 @@ macro_rules! store_contract_tests {
                 .await
                 .unwrap();
             assert_eq!(limited.len(), 1);
+
+            // A third entry carrying caller identity, for per-user/per-PAT filters.
+            store
+                .append_audit(&AuditEntry {
+                    id: String::new(),
+                    tenant_id: TEST_TENANT.to_string(),
+                    entity_type: "cidr_block".to_string(),
+                    entity_id: "s-2".to_string(),
+                    action: "create_cidr_block".to_string(),
+                    details: None,
+                    timestamp: "2026-03-16T00:02:00Z".to_string(),
+                    caller_email: Some("alice@example.com".to_string()),
+                    pat_id: Some("pat-123".to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            // Filter by caller_email.
+            let by_email = store
+                .query_audit(
+                    TEST_TENANT,
+                    &AuditFilter {
+                        caller_email: Some("alice@example.com".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(by_email.len(), 1);
+            assert_eq!(by_email[0].entity_id, "s-2");
+
+            // Filter by pat_id.
+            let by_pat = store
+                .query_audit(
+                    TEST_TENANT,
+                    &AuditFilter {
+                        pat_id: Some("pat-123".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(by_pat.len(), 1);
+            assert_eq!(by_pat[0].entity_id, "s-2");
+
+            // A caller_email with no rows returns nothing.
+            let none = store
+                .query_audit(
+                    TEST_TENANT,
+                    &AuditFilter {
+                        caller_email: Some("nobody@example.com".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+            assert!(none.is_empty());
         }
 
         // ---- Parent allocation ----

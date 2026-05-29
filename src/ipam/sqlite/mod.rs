@@ -1007,6 +1007,16 @@ impl IpamStore for SqliteStore {
             param_values.push(Box::new(action.clone()));
             idx += 1;
         }
+        if let Some(ref email) = filter.caller_email {
+            sql.push_str(&format!(" AND caller_email = ?{}", idx));
+            param_values.push(Box::new(email.clone()));
+            idx += 1;
+        }
+        if let Some(ref pat_id) = filter.pat_id {
+            sql.push_str(&format!(" AND pat_id = ?{}", idx));
+            param_values.push(Box::new(pat_id.clone()));
+            idx += 1;
+        }
 
         sql.push_str(" ORDER BY id DESC");
 

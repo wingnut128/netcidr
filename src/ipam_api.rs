@@ -217,6 +217,10 @@ pub struct AuditQuery {
     pub entity_id: Option<String>,
     /// Filter by action (e.g., create_cidr_block, allocate)
     pub action: Option<String>,
+    /// Filter by the authenticated caller's email
+    pub caller_email: Option<String>,
+    /// Filter by the personal access token id that performed the action
+    pub pat_id: Option<String>,
     /// Maximum number of entries to return
     pub limit: Option<u32>,
 }
@@ -887,6 +891,8 @@ async fn ipam_query_audit(
         entity_type: query.entity_type,
         entity_id: query.entity_id,
         action: query.action,
+        caller_email: query.caller_email,
+        pat_id: query.pat_id,
         limit: query.limit,
     };
     match ops.query_audit(tenant.as_str(), &filter).await {
