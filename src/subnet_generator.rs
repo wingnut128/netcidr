@@ -86,6 +86,51 @@ pub struct Ipv6VlsmList {
     pub remaining_addresses: String,
 }
 
+/// A node in an IPv4 hierarchical split tree: a subnet plus its subdivisions.
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
+pub struct Ipv4SplitTreeNode {
+    /// The subnet at this level of the tree.
+    pub subnet: Ipv4Subnet,
+    /// Child subnets one level deeper (empty at the leaves).
+    pub children: Vec<Ipv4SplitTreeNode>,
+}
+
+/// An IPv4 hierarchical (recursive) split: a supernet carved level-by-level
+/// according to `steps`.
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
+pub struct Ipv4SplitTree {
+    /// The root supernet and its full subdivision tree.
+    pub root: Ipv4SplitTreeNode,
+    /// The prefix lengths applied at each level, outermost first.
+    pub steps: Vec<u8>,
+    /// Total subnets generated across all levels (excludes the root).
+    pub total_subnets: u64,
+}
+
+/// A node in an IPv6 hierarchical split tree. See [`Ipv4SplitTreeNode`].
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
+pub struct Ipv6SplitTreeNode {
+    /// The subnet at this level of the tree.
+    pub subnet: Ipv6Subnet,
+    /// Child subnets one level deeper (empty at the leaves).
+    pub children: Vec<Ipv6SplitTreeNode>,
+}
+
+/// An IPv6 hierarchical (recursive) split. See [`Ipv4SplitTree`].
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
+pub struct Ipv6SplitTree {
+    /// The root supernet and its full subdivision tree.
+    pub root: Ipv6SplitTreeNode,
+    /// The prefix lengths applied at each level, outermost first.
+    pub steps: Vec<u8>,
+    /// Total subnets generated across all levels (excludes the root).
+    pub total_subnets: u64,
+}
+
 /// Count how many child subnets a split would produce, without generating them.
 ///
 /// Auto-detects IPv4 vs IPv6 from the CIDR string.
@@ -479,6 +524,141 @@ pub fn vlsm_split_ipv6(cidr: &str, prefixes: &[u8]) -> Result<Ipv6VlsmList> {
     })
 }
 
+/// Validate a hierarchical-split `steps` list and return the total number of
+/// subnets it would generate (across all levels, excluding the root).
+///
+/// Steps must be non-empty, each strictly longer than the previous level
+/// (the first strictly longer than `supernet_prefix`), and no longer than
+/// `max_bits`. The total is bounded by [`MAX_GENERATED_SUBNETS`].
+fn validate_steps(steps: &[u8], supernet_prefix: u8, max_bits: u8) -> Result<u64> {
+    if steps.is_empty() {
+        return Err(NetcidrError::InvalidInput(
+            "no prefix steps provided for hierarchical split".to_string(),
+        ));
+    }
+
+    let mut prev = supernet_prefix;
+    let mut level_count: u64 = 1; // nodes at the parent level (root = 1)
+    let mut total: u64 = 0;
+
+    for (i, &s) in steps.iter().enumerate() {
+        if s > max_bits {
+            return Err(NetcidrError::InvalidPrefixLength(s));
+        }
+        if s <= prev {
+            // The first step that is not deeper than its parent. The root case
+            // (s <= supernet_prefix) is the classic "not a valid split".
+            if i == 0 {
+                return Err(NetcidrError::InvalidSubnetSplit {
+                    new_prefix: s,
+                    original_prefix: supernet_prefix,
+                });
+            }
+            return Err(NetcidrError::InvalidInput(format!(
+                "hierarchical steps must be strictly increasing prefix lengths: \
+                 /{s} at step {} is not deeper than the preceding /{prev}",
+                i + 1
+            )));
+        }
+
+        let bits_diff = s - prev;
+        // A fanout that would not fit in u64 is, on its own, far past the
+        // generation limit; saturate so the limit check below fires cleanly.
+        let fanout: u64 = if bits_diff >= 64 {
+            u64::MAX
+        } else {
+            1u64 << bits_diff
+        };
+        level_count = level_count.saturating_mul(fanout);
+        total = total.saturating_add(level_count);
+        if total > MAX_GENERATED_SUBNETS {
+            return Err(NetcidrError::SubnetLimitExceeded {
+                count: total.to_string(),
+                limit: MAX_GENERATED_SUBNETS,
+            });
+        }
+        prev = s;
+    }
+
+    Ok(total)
+}
+
+fn build_ipv4_tree(network: Ipv4Addr, prefix: u8, steps: &[u8]) -> Result<Ipv4SplitTreeNode> {
+    let subnet = Ipv4Subnet::new(network, prefix)?;
+    let children = match steps.split_first() {
+        Some((&next, rest)) => {
+            let count = 1u64 << (next - prefix);
+            let net_u32 = u32::from(network);
+            let size = 1u32 << (32 - next);
+            (0..count)
+                .map(|i| {
+                    let child = Ipv4Addr::from(net_u32 + i as u32 * size);
+                    build_ipv4_tree(child, next, rest)
+                })
+                .collect::<Result<Vec<_>>>()?
+        }
+        None => Vec::new(),
+    };
+    Ok(Ipv4SplitTreeNode { subnet, children })
+}
+
+fn build_ipv6_tree(network: Ipv6Addr, prefix: u8, steps: &[u8]) -> Result<Ipv6SplitTreeNode> {
+    let subnet = Ipv6Subnet::new(network, prefix)?;
+    let children = match steps.split_first() {
+        Some((&next, rest)) => {
+            let count = 1u64 << (next - prefix);
+            let net_u128 = u128::from(network);
+            let size: u128 = if next == 128 {
+                1
+            } else {
+                1u128 << (128 - next)
+            };
+            (0..count)
+                .map(|i| {
+                    let child = Ipv6Addr::from(net_u128 + i as u128 * size);
+                    build_ipv6_tree(child, next, rest)
+                })
+                .collect::<Result<Vec<_>>>()?
+        }
+        None => Vec::new(),
+    };
+    Ok(Ipv6SplitTreeNode { subnet, children })
+}
+
+/// Recursively split an IPv4 supernet, applying each prefix in `steps` to every
+/// node of the level above it.
+///
+/// # Errors
+///
+/// * [`NetcidrError::InvalidInput`] for an empty or non-increasing step list.
+/// * [`NetcidrError::InvalidSubnetSplit`] if the first step is not deeper than
+///   the supernet.
+/// * [`NetcidrError::InvalidPrefixLength`] if a step exceeds 32.
+/// * [`NetcidrError::SubnetLimitExceeded`] if the tree would exceed
+///   [`MAX_GENERATED_SUBNETS`] total subnets.
+pub fn hierarchical_split_ipv4(cidr: &str, steps: &[u8]) -> Result<Ipv4SplitTree> {
+    let root_subnet = Ipv4Subnet::from_cidr(cidr)?;
+    let total = validate_steps(steps, root_subnet.prefix_length, 32)?;
+    let root = build_ipv4_tree(root_subnet.network, root_subnet.prefix_length, steps)?;
+    Ok(Ipv4SplitTree {
+        root,
+        steps: steps.to_vec(),
+        total_subnets: total,
+    })
+}
+
+/// Recursively split an IPv6 supernet. See [`hierarchical_split_ipv4`].
+pub fn hierarchical_split_ipv6(cidr: &str, steps: &[u8]) -> Result<Ipv6SplitTree> {
+    let root_subnet = Ipv6Subnet::from_cidr(cidr)?;
+    let total = validate_steps(steps, root_subnet.prefix_length, 128)?;
+    let root = build_ipv6_tree(root_subnet.network, root_subnet.prefix_length, steps)?;
+    Ok(Ipv6SplitTree {
+        root,
+        steps: steps.to_vec(),
+        total_subnets: total,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -701,5 +881,99 @@ mod tests {
                 .parse::<Ipv6Addr>()
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn test_hierarchical_ipv4_basic() {
+        // /18 → /22 → /24: 16 /22s, each with 4 /24s.
+        let tree = hierarchical_split_ipv4("10.0.0.0/18", &[22, 24]).unwrap();
+        assert_eq!(tree.steps, vec![22, 24]);
+        assert_eq!(tree.root.subnet.network, Ipv4Addr::new(10, 0, 0, 0));
+        assert_eq!(tree.root.subnet.prefix_length, 18);
+        assert_eq!(tree.root.children.len(), 16);
+        // First /22 and its /24 children.
+        let first = &tree.root.children[0];
+        assert_eq!(first.subnet.network, Ipv4Addr::new(10, 0, 0, 0));
+        assert_eq!(first.subnet.prefix_length, 22);
+        assert_eq!(first.children.len(), 4);
+        assert_eq!(first.children[0].subnet.network, Ipv4Addr::new(10, 0, 0, 0));
+        assert_eq!(first.children[1].subnet.network, Ipv4Addr::new(10, 0, 1, 0));
+        assert_eq!(first.children[3].subnet.network, Ipv4Addr::new(10, 0, 3, 0));
+        assert!(first.children[0].children.is_empty());
+        // Second /22 starts at 10.0.4.0.
+        assert_eq!(
+            tree.root.children[1].subnet.network,
+            Ipv4Addr::new(10, 0, 4, 0)
+        );
+        // total = 16 (/22) + 64 (/24) = 80.
+        assert_eq!(tree.total_subnets, 80);
+    }
+
+    #[test]
+    fn test_hierarchical_ipv4_single_level() {
+        let tree = hierarchical_split_ipv4("192.168.0.0/24", &[26]).unwrap();
+        assert_eq!(tree.root.children.len(), 4);
+        assert!(tree.root.children.iter().all(|c| c.children.is_empty()));
+        assert_eq!(tree.total_subnets, 4);
+    }
+
+    #[test]
+    fn test_hierarchical_rejects_empty() {
+        let result = hierarchical_split_ipv4("10.0.0.0/8", &[]);
+        assert!(
+            matches!(&result, Err(NetcidrError::InvalidInput(msg)) if msg.contains("no prefix steps")),
+            "expected empty-steps error, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_hierarchical_rejects_non_increasing() {
+        // Second step is not deeper than the first.
+        let result = hierarchical_split_ipv4("10.0.0.0/18", &[24, 22]);
+        assert!(
+            matches!(&result, Err(NetcidrError::InvalidInput(msg)) if msg.contains("strictly increasing")),
+            "expected non-increasing error, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_hierarchical_rejects_first_step_not_deeper() {
+        let result = hierarchical_split_ipv4("10.0.0.0/18", &[18, 24]);
+        assert!(
+            matches!(
+                result,
+                Err(NetcidrError::InvalidSubnetSplit {
+                    new_prefix: 18,
+                    original_prefix: 18
+                })
+            ),
+            "expected InvalidSubnetSplit for first step"
+        );
+    }
+
+    #[test]
+    fn test_hierarchical_respects_generation_limit() {
+        // /0 → /16 → /32 would be billions of subnets.
+        let result = hierarchical_split_ipv4("10.0.0.0/8", &[16, 32]);
+        assert!(
+            matches!(result, Err(NetcidrError::SubnetLimitExceeded { .. })),
+            "expected SubnetLimitExceeded"
+        );
+    }
+
+    #[test]
+    fn test_hierarchical_ipv6_basic() {
+        // /48 → /52 → /56: 16 /52s, each with 16 /56s.
+        let tree = hierarchical_split_ipv6("2001:db8::/48", &[52, 56]).unwrap();
+        assert_eq!(tree.root.subnet.prefix_length, 48);
+        assert_eq!(tree.root.children.len(), 16);
+        let first = &tree.root.children[0];
+        assert_eq!(first.subnet.prefix_length, 52);
+        assert_eq!(first.children.len(), 16);
+        assert_eq!(first.children[0].subnet.prefix_length, 56);
+        // total = 16 + 256 = 272.
+        assert_eq!(tree.total_subnets, 272);
     }
 }

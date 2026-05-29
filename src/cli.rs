@@ -38,8 +38,8 @@ pub enum Commands {
         /// Network in CIDR notation (or prefix notation for IPv6)
         cidr: String,
 
-        /// New prefix length for fixed-size subnets (required unless --vlsm is used)
-        #[arg(short = 'p', long, required_unless_present = "vlsm")]
+        /// New prefix length for fixed-size subnets (required unless --vlsm or --steps is used)
+        #[arg(short = 'p', long, required_unless_present_any = ["vlsm", "steps"])]
         prefix: Option<u8>,
 
         /// Number of subnets to generate (mutually exclusive with --max)
@@ -56,8 +56,13 @@ pub enum Commands {
 
         /// VLSM: comma-separated descending prefix lengths to carve greedily
         /// from the block, largest block first (e.g. --vlsm 26,28,28)
-        #[arg(long, value_delimiter = ',', conflicts_with_all = ["prefix", "count", "max", "count_only"])]
+        #[arg(long, value_delimiter = ',', conflicts_with_all = ["prefix", "count", "max", "count_only", "steps"])]
         vlsm: Option<Vec<u8>>,
+
+        /// Hierarchical: comma-separated strictly-increasing prefix lengths
+        /// applied recursively to each level, producing a tree (e.g. --steps 22,24)
+        #[arg(long, value_delimiter = ',', conflicts_with_all = ["prefix", "count", "max", "count_only", "vlsm"])]
+        steps: Option<Vec<u8>>,
     },
 
     /// Check if an IP address is contained in a subnet

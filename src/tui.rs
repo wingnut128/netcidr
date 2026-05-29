@@ -10,7 +10,12 @@ use ratatui::{prelude::*, widgets::*};
 use std::io;
 
 #[cfg(feature = "tui")]
-use crate::subnet_generator::{count_subnets, generate_ipv4_subnets, generate_ipv6_subnets};
+use crate::output::TextOutput;
+#[cfg(feature = "tui")]
+use crate::subnet_generator::{
+    count_subnets, generate_ipv4_subnets, generate_ipv6_subnets, hierarchical_split_ipv4,
+    hierarchical_split_ipv6,
+};
 
 #[cfg(feature = "tui")]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -86,7 +91,9 @@ impl AppState {
         match self.active_field {
             InputField::Cidr => self.cidr_input.push(c),
             InputField::Prefix => {
-                if c.is_ascii_digit() {
+                // Digits for a single fixed-size prefix; commas turn the field
+                // into a hierarchical step list (e.g. "22,24").
+                if c.is_ascii_digit() || c == ',' {
                     self.prefix_input.push(c);
                 }
             }
@@ -282,7 +289,11 @@ fn render_split_inputs(f: &mut Frame, app: &AppState, area: Rect) {
     };
     let prefix_panel = Paragraph::new(format!(" {} ", app.prefix_input))
         .style(prefix_style)
-        .block(Block::default().borders(Borders::ALL).title(" New Prefix "));
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" New Prefix (list e.g. 22,24 = tree) "),
+        );
     f.render_widget(prefix_panel, input_chunks[1]);
 
     // Count input
@@ -336,10 +347,60 @@ fn render_calculate_results(f: &mut Frame, app: &AppState, area: Rect) {
     f.render_widget(results, area);
 }
 
+/// Render a hierarchical split as a scrollable ASCII tree. Invoked when the
+/// prefix field contains a comma-separated step list (e.g. "22,24").
+#[cfg(feature = "tui")]
+fn render_split_tree_results(f: &mut Frame, app: &AppState, area: Rect) {
+    let steps: std::result::Result<Vec<u8>, _> = app
+        .prefix_input
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.parse::<u8>())
+        .collect();
+
+    let (text, is_error) = match steps {
+        Err(_) => ("Invalid prefix in step list".to_string(), true),
+        Ok(steps) => {
+            let is_ipv6 = app.cidr_input.contains(':');
+            let rendered = if is_ipv6 {
+                hierarchical_split_ipv6(&app.cidr_input, &steps).map(|t| t.to_text())
+            } else {
+                hierarchical_split_ipv4(&app.cidr_input, &steps).map(|t| t.to_text())
+            };
+            match rendered {
+                Ok(t) => (t, false),
+                Err(e) => (format!("Error: {}", e), true),
+            }
+        }
+    };
+
+    let lines: Vec<&str> = text.lines().collect();
+    let visible_height = area.height.saturating_sub(2) as usize;
+    let start = app.scroll_offset.min(lines.len().saturating_sub(1));
+    let end = (start + visible_height).min(lines.len());
+    let shown = lines[start..end].join("\n");
+
+    let style = if is_error {
+        Style::default().fg(Color::Red)
+    } else {
+        Style::default().fg(Color::Green)
+    };
+    let results = Paragraph::new(shown)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Split Results (Tree) "),
+        )
+        .style(style);
+    f.render_widget(results, area);
+}
+
 #[cfg(feature = "tui")]
 fn render_split_results(f: &mut Frame, app: &AppState, area: Rect) {
     if app.cidr_input.is_empty() || app.prefix_input.is_empty() {
-        let help_text = "Enter CIDR and new prefix length to generate subnets";
+        let help_text =
+            "Enter CIDR and new prefix length to generate subnets (e.g. 22,24 for a tree)";
         let results = Paragraph::new(help_text)
             .block(
                 Block::default()
@@ -348,6 +409,13 @@ fn render_split_results(f: &mut Frame, app: &AppState, area: Rect) {
             )
             .style(Style::default().fg(Color::DarkGray));
         f.render_widget(results, area);
+        return;
+    }
+
+    // Hierarchical (tree) mode: the prefix field holds a comma-separated step
+    // list, so count/max/count-only don't apply — render the tree directly.
+    if app.prefix_input.contains(',') {
+        render_split_tree_results(f, app, area);
         return;
     }
 
@@ -645,6 +713,18 @@ mod tests {
         app.handle_char_input('a');
         app.handle_char_input('4');
         assert_eq!(app.prefix_input, "24");
+    }
+
+    #[test]
+    fn char_input_prefix_accepts_comma_for_step_list() {
+        // A comma turns the prefix field into a hierarchical step list; other
+        // non-digits are still rejected.
+        let mut app = AppState::new();
+        app.active_field = InputField::Prefix;
+        for ch in ['2', '2', ',', '2', '4', 'x'] {
+            app.handle_char_input(ch);
+        }
+        assert_eq!(app.prefix_input, "22,24");
     }
 
     #[test]

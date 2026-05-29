@@ -5,7 +5,8 @@ use crate::from_range::{Ipv4FromRangeResult, Ipv6FromRangeResult};
 use crate::ipv4::Ipv4Subnet;
 use crate::ipv6::Ipv6Subnet;
 use crate::subnet_generator::{
-    Ipv4SubnetList, Ipv4VlsmList, Ipv6SubnetList, Ipv6VlsmList, SplitSummary,
+    Ipv4SplitTree, Ipv4SplitTreeNode, Ipv4SubnetList, Ipv4VlsmList, Ipv6SplitTree,
+    Ipv6SplitTreeNode, Ipv6SubnetList, Ipv6VlsmList, SplitSummary,
 };
 use crate::summarize::{Ipv4SummaryResult, Ipv6SummaryResult};
 use serde::Serialize;
@@ -267,6 +268,98 @@ impl TextOutput for Ipv6VlsmList {
             )
             .unwrap();
         }
+        out
+    }
+}
+
+/// Render the children of an IPv4 tree node as an ASCII tree, recursively.
+/// `prefix` is the indentation carried down from ancestor levels.
+fn render_ipv4_tree_children(out: &mut String, node: &Ipv4SplitTreeNode, prefix: &str) {
+    let n = node.children.len();
+    for (i, child) in node.children.iter().enumerate() {
+        let last = i == n - 1;
+        let connector = if last { "└── " } else { "├── " };
+        writeln!(
+            out,
+            "{prefix}{connector}{}/{}",
+            child.subnet.network, child.subnet.prefix_length
+        )
+        .unwrap();
+        let child_prefix = format!("{prefix}{}", if last { "    " } else { "│   " });
+        render_ipv4_tree_children(out, child, &child_prefix);
+    }
+}
+
+fn render_ipv6_tree_children(out: &mut String, node: &Ipv6SplitTreeNode, prefix: &str) {
+    let n = node.children.len();
+    for (i, child) in node.children.iter().enumerate() {
+        let last = i == n - 1;
+        let connector = if last { "└── " } else { "├── " };
+        writeln!(
+            out,
+            "{prefix}{connector}{}/{}",
+            child.subnet.network, child.subnet.prefix_length
+        )
+        .unwrap();
+        let child_prefix = format!("{prefix}{}", if last { "    " } else { "│   " });
+        render_ipv6_tree_children(out, child, &child_prefix);
+    }
+}
+
+fn steps_label(steps: &[u8]) -> String {
+    steps
+        .iter()
+        .map(|s| format!("/{s}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+impl TextOutput for Ipv4SplitTree {
+    fn to_text(&self) -> String {
+        let mut out = String::new();
+        writeln!(out, "IPv4 Hierarchical Split").unwrap();
+        writeln!(out, "=======================").unwrap();
+        writeln!(
+            out,
+            "Supernet: {}/{}",
+            self.root.subnet.network, self.root.subnet.prefix_length
+        )
+        .unwrap();
+        writeln!(out, "Steps:    {}", steps_label(&self.steps)).unwrap();
+        writeln!(out, "Total:    {} subnets\n", self.total_subnets).unwrap();
+
+        writeln!(
+            out,
+            "{}/{}",
+            self.root.subnet.network, self.root.subnet.prefix_length
+        )
+        .unwrap();
+        render_ipv4_tree_children(&mut out, &self.root, "");
+        out
+    }
+}
+
+impl TextOutput for Ipv6SplitTree {
+    fn to_text(&self) -> String {
+        let mut out = String::new();
+        writeln!(out, "IPv6 Hierarchical Split").unwrap();
+        writeln!(out, "=======================").unwrap();
+        writeln!(
+            out,
+            "Supernet: {}/{}",
+            self.root.subnet.network, self.root.subnet.prefix_length
+        )
+        .unwrap();
+        writeln!(out, "Steps:    {}", steps_label(&self.steps)).unwrap();
+        writeln!(out, "Total:    {} subnets\n", self.total_subnets).unwrap();
+
+        writeln!(
+            out,
+            "{}/{}",
+            self.root.subnet.network, self.root.subnet.prefix_length
+        )
+        .unwrap();
+        render_ipv6_tree_children(&mut out, &self.root, "");
         out
     }
 }
@@ -562,6 +655,108 @@ impl CsvOutput for Ipv6VlsmList {
         for subnet in &self.subnets {
             write_ipv6_csv_record(&mut wtr, subnet)?;
         }
+        out.push_str(&finish_csv(wtr)?);
+        Ok(out)
+    }
+}
+
+/// CSV header for a flattened IPv4 split tree: a `depth` column followed by
+/// the standard IPv4 subnet columns.
+fn ipv4_tree_csv_header() -> Vec<&'static str> {
+    let mut h = vec!["depth"];
+    h.extend_from_slice(ipv4_csv_header());
+    h
+}
+
+fn ipv6_tree_csv_header() -> Vec<&'static str> {
+    let mut h = vec!["depth"];
+    h.extend_from_slice(ipv6_csv_header());
+    h
+}
+
+fn write_ipv4_tree_csv(
+    wtr: &mut csv::Writer<Vec<u8>>,
+    node: &Ipv4SplitTreeNode,
+    depth: usize,
+) -> Result<()> {
+    let s = &node.subnet;
+    write_safe_record(
+        wtr,
+        [
+            depth.to_string(),
+            s.input.clone(),
+            s.network.to_string(),
+            s.broadcast.to_string(),
+            s.mask.to_string(),
+            s.wildcard.to_string(),
+            s.prefix_length.to_string(),
+            s.first_host.to_string(),
+            s.last_host.to_string(),
+            s.total_hosts.to_string(),
+            s.usable_hosts.to_string(),
+            s.network_class.clone(),
+            s.is_private.to_string(),
+            s.address_type.clone(),
+        ],
+    )?;
+    for child in &node.children {
+        write_ipv4_tree_csv(wtr, child, depth + 1)?;
+    }
+    Ok(())
+}
+
+fn write_ipv6_tree_csv(
+    wtr: &mut csv::Writer<Vec<u8>>,
+    node: &Ipv6SplitTreeNode,
+    depth: usize,
+) -> Result<()> {
+    let s = &node.subnet;
+    write_safe_record(
+        wtr,
+        [
+            depth.to_string(),
+            s.input.clone(),
+            s.network.to_string(),
+            s.network_address_full.clone(),
+            s.last.to_string(),
+            s.last_address_full.clone(),
+            s.prefix_length.to_string(),
+            s.total_addresses.clone(),
+            s.hextets.join(":"),
+            s.address_type.clone(),
+        ],
+    )?;
+    for child in &node.children {
+        write_ipv6_tree_csv(wtr, child, depth + 1)?;
+    }
+    Ok(())
+}
+
+impl CsvOutput for Ipv4SplitTree {
+    fn to_csv(&self) -> Result<String> {
+        let mut out = String::new();
+        writeln!(out, "# supernet: {}", self.root.subnet.input).unwrap();
+        writeln!(out, "# steps: {}", steps_label(&self.steps)).unwrap();
+        writeln!(out, "# total_subnets: {}", self.total_subnets).unwrap();
+
+        let mut wtr = csv::Writer::from_writer(Vec::new());
+        wtr.write_record(ipv4_tree_csv_header()).map_err(csv_err)?;
+        write_ipv4_tree_csv(&mut wtr, &self.root, 0)?;
+        out.push_str(&finish_csv(wtr)?);
+        Ok(out)
+    }
+}
+
+impl CsvOutput for Ipv6SplitTree {
+    fn to_csv(&self) -> Result<String> {
+        let mut out = String::new();
+        writeln!(out, "# supernet: {}", self.root.subnet.input).unwrap();
+        writeln!(out, "# steps: {}", steps_label(&self.steps)).unwrap();
+        writeln!(out, "# total_subnets: {}", self.total_subnets).unwrap();
+
+        let mut wtr = csv::Writer::from_writer(Vec::new());
+        wtr.write_record(ipv6_tree_csv_header()).map_err(csv_err)?;
+        write_ipv6_tree_csv(&mut wtr, &self.root, 0)?;
         out.push_str(&finish_csv(wtr)?);
         Ok(out)
     }

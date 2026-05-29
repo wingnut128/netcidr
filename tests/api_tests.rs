@@ -325,6 +325,53 @@ async fn test_v4_vlsm_invalid_prefix_list() {
     assert!(json["error"].as_str().unwrap().contains("invalid prefix"));
 }
 
+// ── Hierarchical split tree ─────────────────────────────────────────
+
+#[tokio::test]
+async fn test_v4_split_tree() {
+    let (status, body) = get("/v4/split-tree?cidr=10.0.0.0/18&steps=22,24").await;
+    assert_eq!(status, 200);
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(json["total_subnets"], 80);
+    let lvl1 = json["root"]["children"].as_array().unwrap();
+    assert_eq!(lvl1.len(), 16);
+    assert_eq!(lvl1[0]["children"].as_array().unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn test_v6_split_tree() {
+    let (status, body) = get("/v6/split-tree?cidr=2001:db8::/48&steps=52,56").await;
+    assert_eq!(status, 200);
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(json["total_subnets"], 272);
+}
+
+#[tokio::test]
+async fn test_v4_split_tree_non_increasing() {
+    let (status, body) = get("/v4/split-tree?cidr=10.0.0.0/18&steps=24,22").await;
+    assert_eq!(status, 400);
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(
+        json["error"]
+            .as_str()
+            .unwrap()
+            .contains("strictly increasing")
+    );
+}
+
+#[tokio::test]
+async fn test_v4_split_tree_limit() {
+    let (status, body) = get("/v4/split-tree?cidr=10.0.0.0/8&steps=16,32").await;
+    assert_eq!(status, 400);
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(
+        json["error"]
+            .as_str()
+            .unwrap()
+            .contains("exceeds the limit")
+    );
+}
+
 // ── IPv4 Contains ───────────────────────────────────────────────────
 
 #[tokio::test]
