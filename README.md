@@ -148,6 +148,31 @@ allocations that overflow the supernet are rejected with a clear error naming
 the offending entry and the space remaining. `--vlsm` is mutually exclusive
 with `--prefix`/`--count`/`--max`/`--count-only`.
 
+#### Hierarchical (recursive) splitting
+
+Carve a supernet level-by-level into a tree. Pass a comma-separated list of
+strictly-increasing prefix lengths; each step is applied to every node of the
+level above it:
+
+```bash
+# /18 → /22 → /24
+netcidr split 10.0.0.0/18 --steps 22,24 --format text
+# 10.0.0.0/18
+# ├── 10.0.0.0/22
+# │   ├── 10.0.0.0/24
+# │   ├── 10.0.1.0/24
+# │   ├── 10.0.2.0/24
+# │   └── 10.0.3.0/24
+# ├── 10.0.4.0/22
+# │   └── …
+```
+
+JSON/YAML produce a nested tree; CSV flattens it with a `depth` column. The
+total tree size is bounded by the 1,000,000-subnet generation limit. `--steps`
+is mutually exclusive with `--prefix`/`--vlsm`/`--count`/`--max`/`--count-only`.
+In the interactive TUI, entering a comma-separated list in the prefix field
+renders the same tree.
+
 ### Subnet Summarization
 
 Aggregate multiple CIDRs into the minimal covering set:
@@ -471,6 +496,8 @@ enable_swagger = false        # Swagger UI at /swagger-ui (default: false)
 | `GET /v6/split?cidr=<cidr>&prefix=<n>&count_only=true` | Count available IPv6 subnets | `/v6/split?cidr=2001:db8::/32&prefix=48&count_only=true` |
 | `GET /v4/vlsm?cidr=<cidr>&prefixes=<n,n,...>` | VLSM IPv4 allocation (largest block first) | `/v4/vlsm?cidr=192.168.0.0/24&prefixes=26,28,28` |
 | `GET /v6/vlsm?cidr=<cidr>&prefixes=<n,n,...>` | VLSM IPv6 allocation (largest block first) | `/v6/vlsm?cidr=2001:db8::/48&prefixes=52,56,56` |
+| `GET /v4/split-tree?cidr=<cidr>&steps=<n,n,...>` | Hierarchical IPv4 split tree | `/v4/split-tree?cidr=10.0.0.0/18&steps=22,24` |
+| `GET /v6/split-tree?cidr=<cidr>&steps=<n,n,...>` | Hierarchical IPv6 split tree | `/v6/split-tree?cidr=2001:db8::/48&steps=52,56` |
 | `GET /v4/contains?cidr=<cidr>&address=<ip>` | Check IPv4 containment | `/v4/contains?cidr=192.168.1.0/24&address=192.168.1.100` |
 | `GET /v6/contains?cidr=<cidr>&address=<ip>` | Check IPv6 containment | `/v6/contains?cidr=2001:db8::/32&address=2001:db8::1` |
 | `GET /v4/summarize?cidrs=<cidr>,<cidr>` | Summarize IPv4 CIDRs | `/v4/summarize?cidrs=192.168.0.0/24,192.168.1.0/24` |

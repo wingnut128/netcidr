@@ -10,7 +10,8 @@ use netcidr::ipv6::Ipv6Subnet;
 use netcidr::logging::{LogConfig, init_logging, parse_log_level};
 use netcidr::output::{CsvOutput, OutputFormat, OutputWriter, TextOutput};
 use netcidr::subnet_generator::{
-    count_subnets, generate_ipv4_subnets, generate_ipv6_subnets, vlsm_split_ipv4, vlsm_split_ipv6,
+    count_subnets, generate_ipv4_subnets, generate_ipv6_subnets, hierarchical_split_ipv4,
+    hierarchical_split_ipv6, vlsm_split_ipv4, vlsm_split_ipv6,
 };
 use netcidr::summarize::{summarize_ipv4, summarize_ipv6};
 use serde::Serialize;
@@ -173,6 +174,7 @@ async fn async_main(cli: Cli) {
             max,
             count_only,
             vlsm,
+            steps,
         }) => {
             // VLSM mode: carve a variable-length allocation from the block.
             if let Some(prefixes) = vlsm {
@@ -184,9 +186,27 @@ async fn async_main(cli: Cli) {
                 return;
             }
 
+            // Hierarchical mode: recursively split into a tree.
+            if let Some(step_list) = steps {
+                if cidr.contains(':') {
+                    handle_result(
+                        &writer,
+                        hierarchical_split_ipv6(&cidr, &step_list),
+                        &cli.output,
+                    );
+                } else {
+                    handle_result(
+                        &writer,
+                        hierarchical_split_ipv4(&cidr, &step_list),
+                        &cli.output,
+                    );
+                }
+                return;
+            }
+
             // Fixed-size mode. clap guarantees --prefix is present here
-            // (required_unless_present = "vlsm").
-            let prefix = prefix.expect("clap enforces --prefix unless --vlsm is given");
+            // (required_unless_present_any = ["vlsm", "steps"]).
+            let prefix = prefix.expect("clap enforces --prefix unless --vlsm/--steps is given");
 
             if count_only {
                 handle_result(&writer, count_subnets(&cidr, prefix), &cli.output);
