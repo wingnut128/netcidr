@@ -718,7 +718,7 @@ export NETCIDR_API_TOKEN="<your-OIDC-id-token>"
 # --role accepts reader|allocator|admin; defaults to your own resolved role.
 netcidr token create --name ci-runner --expires-in 90d --role reader
 
-# List your tokens (the table includes a ROLE column).
+# List your tokens (the table includes ROLE and LAST USED columns).
 netcidr token list
 
 # Revoke by id.
@@ -836,6 +836,10 @@ netcidr ipam find-ip 10.0.1.50
 
 # View audit log
 netcidr ipam audit --limit 10
+
+# Admin: query the audit log by user or PAT (who did what)
+netcidr admin audit --user alice@example.com
+netcidr admin audit --pat-id <pat-id> --action create_cidr_block
 
 # Hostname pointers — map IPs to hostnames with full change history
 netcidr ipam hostname set 10.0.1.5 web-01.example.com --notes "primary"

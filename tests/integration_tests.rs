@@ -906,6 +906,41 @@ fn test_ipam_hostname_lifecycle() {
 }
 
 #[test]
+fn test_admin_audit_query() {
+    let db = "/tmp/netcidr-test-admin-audit.db";
+    let _ = std::fs::remove_file(db);
+
+    // A mutation writes an audit_log row.
+    let (_, _, success) = run_ipam(
+        db,
+        &["cidr-block", "create", "10.0.0.0/8", "--name", "Corp"],
+    );
+    assert!(success);
+
+    // `admin audit` lists it.
+    let (stdout, _, success) = run_netcidr(&["admin", "--db", db, "audit"]);
+    assert!(success);
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
+    assert!(json["count"].as_u64().unwrap() >= 1);
+
+    // Filter by entity type.
+    let (stdout, _, success) =
+        run_netcidr(&["admin", "--db", db, "audit", "--entity-type", "cidr_block"]);
+    assert!(success);
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
+    assert_eq!(json["count"], 1);
+
+    // Filter by a user with no CLI-authored rows (CLI entries have null email).
+    let (stdout, _, success) =
+        run_netcidr(&["admin", "--db", db, "audit", "--user", "nobody@example.com"]);
+    assert!(success);
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
+    assert_eq!(json["count"], 0);
+
+    let _ = std::fs::remove_file(db);
+}
+
+#[test]
 fn test_ipam_allocation_workflow() {
     let db = "/tmp/netcidr-test-alloc.db";
     let _ = std::fs::remove_file(db);

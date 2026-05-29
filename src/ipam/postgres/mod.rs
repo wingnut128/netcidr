@@ -967,6 +967,14 @@ impl IpamStore for PostgresStore {
             builder.push(" AND action = ");
             builder.push_bind(action.as_str());
         }
+        if let Some(ref email) = filter.caller_email {
+            builder.push(" AND caller_email = ");
+            builder.push_bind(email.as_str());
+        }
+        if let Some(ref pat_id) = filter.pat_id {
+            builder.push(" AND pat_id = ");
+            builder.push_bind(pat_id.as_str());
+        }
 
         builder.push(" ORDER BY id DESC");
 

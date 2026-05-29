@@ -148,8 +148,8 @@ impl TextOutput for TokenListView {
         }
         let mut out = String::new();
         out.push_str(&format!(
-            "{:<36}  {:<12}  {:<24}  {:<10}  {:<25}  {:<25}  {}\n",
-            "ID", "PREFIX", "NAME", "ROLE", "CREATED", "EXPIRES", "STATUS"
+            "{:<36}  {:<12}  {:<24}  {:<10}  {:<25}  {:<25}  {:<25}  {}\n",
+            "ID", "PREFIX", "NAME", "ROLE", "CREATED", "EXPIRES", "LAST USED", "STATUS"
         ));
         for t in &self.tokens {
             let status = if t.revoked_at.is_some() {
@@ -158,13 +158,14 @@ impl TextOutput for TokenListView {
                 "active"
             };
             out.push_str(&format!(
-                "{:<36}  {:<12}  {:<24}  {:<10}  {:<25}  {:<25}  {}\n",
+                "{:<36}  {:<12}  {:<24}  {:<10}  {:<25}  {:<25}  {:<25}  {}\n",
                 t.id,
                 t.prefix,
                 t.name,
                 t.role.as_str(),
                 t.created_at,
                 t.expires_at,
+                t.last_used_at.as_deref().unwrap_or("never"),
                 status
             ));
         }
@@ -175,16 +176,18 @@ impl TextOutput for TokenListView {
 
 impl CsvOutput for TokenListView {
     fn to_csv(&self) -> Result<String> {
-        let mut out = String::from("id,prefix,name,role,created_at,expires_at,revoked_at\n");
+        let mut out =
+            String::from("id,prefix,name,role,created_at,expires_at,last_used_at,revoked_at\n");
         for t in &self.tokens {
             out.push_str(&format!(
-                "{},{},{},{},{},{},{}\n",
+                "{},{},{},{},{},{},{},{}\n",
                 t.id,
                 t.prefix,
                 csv_escape(&t.name),
                 t.role.as_str(),
                 t.created_at,
                 t.expires_at,
+                t.last_used_at.as_deref().unwrap_or(""),
                 t.revoked_at.as_deref().unwrap_or("")
             ));
         }

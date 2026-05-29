@@ -10,6 +10,7 @@ pub const MIGRATIONS: &[(u32, &str)] = &[
     (7, MIGRATION_007),
     (8, MIGRATION_008),
     (9, MIGRATION_009),
+    (10, MIGRATION_010),
 ];
 
 const MIGRATION_001: &str = r#"
@@ -298,6 +299,13 @@ CREATE TABLE IF NOT EXISTS hostname_pointer_history (
 CREATE INDEX IF NOT EXISTS idx_hostname_history_tenant ON hostname_pointer_history(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_hostname_history_ip     ON hostname_pointer_history(tenant_id, ip_address);
 CREATE INDEX IF NOT EXISTS idx_hostname_history_name   ON hostname_pointer_history(tenant_id, hostname);
+"#;
+
+/// Adds composite indexes for per-caller and per-PAT audit filtering.
+/// Mirrors SQLite migration 010.
+const MIGRATION_010: &str = r#"
+CREATE INDEX IF NOT EXISTS idx_audit_tenant_email ON audit_log(tenant_id, caller_email);
+CREATE INDEX IF NOT EXISTS idx_audit_tenant_pat   ON audit_log(tenant_id, pat_id);
 "#;
 
 #[cfg(all(test, feature = "ipam-postgres"))]

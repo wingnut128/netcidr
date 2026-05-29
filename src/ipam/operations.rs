@@ -644,6 +644,8 @@ impl IpamOps {
         validation::validate_optional_identifier(&filter.entity_id)?;
         validation::validate_optional_text(&filter.entity_type, 0)?;
         validation::validate_optional_text(&filter.action, 0)?;
+        validation::validate_optional_text(&filter.caller_email, 0)?;
+        validation::validate_optional_identifier(&filter.pat_id)?;
         self.store.query_audit(tenant_id, filter).await
     }
 
@@ -3760,6 +3762,7 @@ mod tests {
                     entity_id: Some("sn-abc123".to_string()),
                     action: Some("create_cidr_block".to_string()),
                     limit: Some(10),
+                    ..Default::default()
                 },
             )
             .await
