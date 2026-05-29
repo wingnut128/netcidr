@@ -256,6 +256,13 @@ pub struct HostnameDeleteQuery {
 
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "swagger", derive(IntoParams))]
+pub struct DeleteUserQuery {
+    /// Email whose role assignment should be revoked
+    pub email: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(IntoParams))]
 pub struct SummaryQuery {
     /// Optional CIDR block ID to scope the summary
     pub cidr_block_id: Option<String>,
@@ -312,6 +319,94 @@ pub fn create_ipam_router() -> Router {
         .route("/batch/allocate", post(ipam_batch_allocate))
         .route("/batch/release", post(ipam_batch_release))
         .route("/batch/summary", get(ipam_batch_summary))
+}
+
+/// Admin router (role-email management). Mounted at the root so paths are
+/// `/admin/users`; all handlers are `RequireAdmin`-gated. Role membership is
+/// global, so the injected tenant is used only for the audit row.
+pub fn create_admin_router() -> Router {
+    Router::new().route(
+        "/admin/users",
+        get(admin_list_users)
+            .post(admin_grant_user)
+            .delete(admin_revoke_user),
+    )
+}
+
+#[cfg_attr(feature = "swagger", utoipa::path(
+    get,
+    path = "/admin/users",
+    responses(
+        (status = 200, description = "Role assignments", body = RoleAssignmentList),
+    ),
+    security(("bearerAuth" = [])),
+    tag = "auth"
+))]
+async fn admin_list_users(
+    Extension(ops): Extension<Arc<IpamOps>>,
+    _tenant: crate::tenant::Tenant,
+    _: RequireAdmin,
+) -> impl IntoResponse {
+    match ops.list_role_assignments().await {
+        Ok(users) => {
+            let list = RoleAssignmentList {
+                count: users.len(),
+                users,
+            };
+            Json(list).into_response()
+        }
+        Err(e) => ipam_error_response(e),
+    }
+}
+
+#[cfg_attr(feature = "swagger", utoipa::path(
+    post,
+    path = "/admin/users",
+    request_body = GrantRoleRequest,
+    responses(
+        (status = 200, description = "Role granted/updated", body = RoleAssignment),
+        (status = 400, description = "Invalid email", body = IpamErrorResponse),
+    ),
+    security(("bearerAuth" = [])),
+    tag = "auth"
+))]
+async fn admin_grant_user(
+    Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
+    _: RequireAdmin,
+    Json(body): Json<GrantRoleRequest>,
+) -> impl IntoResponse {
+    match ops
+        .grant_role(tenant.as_str(), &body.email, body.role)
+        .await
+    {
+        Ok(assignment) => Json(assignment).into_response(),
+        Err(e) => ipam_error_response(e),
+    }
+}
+
+#[cfg_attr(feature = "swagger", utoipa::path(
+    delete,
+    path = "/admin/users",
+    params(DeleteUserQuery),
+    responses(
+        (status = 204, description = "Role revoked"),
+        (status = 404, description = "No assignment for email", body = IpamErrorResponse),
+        (status = 409, description = "Refused: last admin", body = IpamErrorResponse),
+    ),
+    security(("bearerAuth" = [])),
+    tag = "auth"
+))]
+async fn admin_revoke_user(
+    Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
+    _: RequireAdmin,
+    Query(query): Query<DeleteUserQuery>,
+) -> impl IntoResponse {
+    match ops.revoke_role(tenant.as_str(), &query.email).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => ipam_error_response(e),
+    }
 }
 
 // ---------------------------------------------------------------------------

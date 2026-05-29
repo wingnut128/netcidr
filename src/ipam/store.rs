@@ -90,6 +90,29 @@ pub trait IpamStore: Send + Sync {
         filter: &HostnameHistoryFilter,
     ) -> Result<Vec<HostnamePointerHistoryEntry>>;
 
+    // --- role assignments (global; not tenant-scoped) ---
+    /// Resolve the role for an email, or `None` if no assignment exists.
+    async fn get_role_for_email(&self, email: &str) -> Result<Option<crate::auth::Role>>;
+    async fn list_role_assignments(&self) -> Result<Vec<RoleAssignment>>;
+    /// Insert or update the role for `email`. `actor` records who made the grant.
+    async fn upsert_role_assignment(
+        &self,
+        email: &str,
+        role: crate::auth::Role,
+        actor: &str,
+    ) -> Result<RoleAssignment>;
+    /// Remove an assignment. Returns `HostnamePointerNotFound`-style
+    /// `RoleAssignmentNotFound` if no row exists for `email`.
+    async fn delete_role_assignment(&self, email: &str) -> Result<()>;
+    /// Number of rows whose role is `admin` — used for the last-admin guard.
+    async fn count_admin_roles(&self) -> Result<u64>;
+    /// Seed the table from `(email, role)` pairs only if it is currently empty.
+    /// Returns the number of rows seeded (0 if the table already had rows).
+    async fn seed_role_assignments_if_empty(
+        &self,
+        seeds: &[(String, crate::auth::Role)],
+    ) -> Result<u64>;
+
     // --- audit ---
     /// `entry.tenant_id` is the source of truth (already populated by caller).
     async fn append_audit(&self, entry: &AuditEntry) -> Result<()>;

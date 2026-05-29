@@ -733,3 +733,88 @@ async fn test_ipam_hostname_invalid_rejected() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(json["error"].as_str().unwrap().contains("hostname"));
 }
+
+// ── Admin role-email management ────────────────────────────────────────
+
+#[tokio::test]
+async fn test_admin_users_grant_list_revoke() {
+    let app = ipam_app().await;
+
+    // Grant a reader and an admin.
+    let (status, json) = req(
+        app.clone(),
+        "POST",
+        "/admin/users",
+        Some(r#"{"email":"alice@example.com","role":"reader"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["email"], "alice@example.com");
+    assert_eq!(json["role"], "reader");
+
+    let (status, _) = req(
+        app.clone(),
+        "POST",
+        "/admin/users",
+        Some(r#"{"email":"bob@example.com","role":"admin"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // List shows both.
+    let (status, json) = req(app.clone(), "GET", "/admin/users", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["count"], 2);
+
+    // Revoke the reader.
+    let (status, _) = req(
+        app.clone(),
+        "DELETE",
+        "/admin/users?email=alice@example.com",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (status, json) = req(app, "GET", "/admin/users", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["count"], 1);
+}
+
+#[tokio::test]
+async fn test_admin_users_last_admin_guard() {
+    let app = ipam_app().await;
+
+    // One admin in the table.
+    let (status, _) = req(
+        app.clone(),
+        "POST",
+        "/admin/users",
+        Some(r#"{"email":"solo@example.com","role":"admin"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Revoking the only admin is refused (409).
+    let (status, json) = req(app, "DELETE", "/admin/users?email=solo@example.com", None).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(
+        json["error"]
+            .as_str()
+            .unwrap()
+            .contains("last remaining admin")
+    );
+}
+
+#[tokio::test]
+async fn test_admin_users_invalid_email_rejected() {
+    let app = ipam_app().await;
+    let (status, _) = req(
+        app,
+        "POST",
+        "/admin/users",
+        Some(r#"{"email":"notanemail","role":"reader"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}

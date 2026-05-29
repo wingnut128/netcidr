@@ -11,6 +11,7 @@ pub const MIGRATIONS: &[(u32, &str)] = &[
     (8, MIGRATION_008),
     (9, MIGRATION_009),
     (10, MIGRATION_010),
+    (11, MIGRATION_011),
 ];
 
 const MIGRATION_001: &str = r#"
@@ -306,6 +307,19 @@ CREATE INDEX IF NOT EXISTS idx_hostname_history_name   ON hostname_pointer_histo
 const MIGRATION_010: &str = r#"
 CREATE INDEX IF NOT EXISTS idx_audit_tenant_email ON audit_log(tenant_id, caller_email);
 CREATE INDEX IF NOT EXISTS idx_audit_tenant_pat   ON audit_log(tenant_id, pat_id);
+"#;
+
+/// Global (non-tenant-scoped) role membership. Mirrors SQLite migration 011.
+const MIGRATION_011: &str = r#"
+CREATE TABLE IF NOT EXISTS role_assignments (
+    email      TEXT PRIMARY KEY,
+    role       TEXT NOT NULL CHECK (role IN ('reader', 'allocator', 'admin')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    created_by TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_role_assignments_role ON role_assignments(role);
 "#;
 
 #[cfg(all(test, feature = "ipam-postgres"))]

@@ -246,6 +246,12 @@ pub enum Commands {
 
 #[derive(Subcommand)]
 pub enum AdminCommands {
+    /// Manage role-email assignments (who has reader/allocator/admin)
+    User {
+        #[command(subcommand)]
+        command: AdminUserCommands,
+    },
+
     /// Query the audit log, filtered by user, PAT, entity, or action
     Audit {
         /// Filter by the caller's email address
@@ -264,6 +270,25 @@ pub enum AdminCommands {
         #[arg(long, default_value = "50")]
         limit: u32,
     },
+}
+
+#[derive(Subcommand)]
+pub enum AdminUserCommands {
+    /// Grant (or change) a role for an email
+    Grant {
+        /// Email address
+        email: String,
+        /// Role to grant
+        #[arg(long, value_enum)]
+        role: crate::auth::Role,
+    },
+    /// Revoke an email's role (blocked for the last admin / your own admin)
+    Revoke {
+        /// Email address
+        email: String,
+    },
+    /// List all role assignments
+    List,
 }
 
 #[derive(Subcommand)]

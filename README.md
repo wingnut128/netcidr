@@ -741,13 +741,15 @@ Every IPAM endpoint declares a minimum role tier — `Reader`, `Allocator`, or `
 | `Allocator` | All `Reader` actions + allocate/release/update allocations, set tags, batch allocate/release |
 | `Admin` | All `Allocator` actions + create/delete CIDR blocks, query audit log |
 
-Configure role membership via env vars (comma-separated emails) or the matching `oidc_*_emails` keys in `netcidr.toml`:
+Configure the *initial* role membership via env vars (comma-separated emails) or the matching `oidc_*_emails` keys in `netcidr.toml`:
 
 ```bash
 export NETCIDR_ADMIN_EMAILS="ops@example.com,security@example.com"
 export NETCIDR_ALLOCATOR_EMAILS="dev@example.com,ci-bot@example.com"
 export NETCIDR_READER_EMAILS="auditor@example.com"
 ```
+
+**Env vars are a bootstrap seed (when IPAM is enabled).** On first start, if the role table is empty, these lists seed it; once it has any rows the env lists are ignored and the database is the source of truth. After bootstrap, manage roles at runtime with `netcidr admin user grant/revoke/list` or the `/admin/users` API (no redeploy). See ADR-0003. (Bearer-only / non-IPAM deployments with no store keep resolving roles directly from these env lists.)
 
 **Precedence:** admin > allocator > reader (an email listed in `NETCIDR_ADMIN_EMAILS` is always Admin even if also in the others).
 
@@ -841,6 +843,11 @@ netcidr ipam audit --limit 10
 netcidr admin audit --user alice@example.com
 netcidr admin audit --pat-id <pat-id> --action create_cidr_block
 
+# Admin: manage role-email assignments (reader/allocator/admin)
+netcidr admin user grant alice@example.com --role allocator
+netcidr admin user list
+netcidr admin user revoke alice@example.com   # blocked for the last admin / your own admin
+
 # Hostname pointers — map IPs to hostnames with full change history
 netcidr ipam hostname set 10.0.1.5 web-01.example.com --notes "primary"
 netcidr ipam hostname set 10.0.1.5 app.example.com          # many-to-many
@@ -895,6 +902,9 @@ netcidr serve --ipam-enabled --ipam-db /path/to/ipam.db
 | `/ipam/hostnames` | `DELETE` | Delete a hostname pointer (`?ip=&hostname=`) |
 | `/ipam/hostnames/history` | `GET` | Hostname pointer change history (`?ip=&hostname=`) |
 | `/ipam/audit` | `GET` | Query audit log (filterable) |
+| `/admin/users` | `GET` | List role-email assignments (Admin) |
+| `/admin/users` | `POST` | Grant/update a role (Admin) |
+| `/admin/users` | `DELETE` | Revoke a role (`?email=`, Admin; last-admin guarded) |
 
 **Status:** Fully integrated — available via CLI (`netcidr ipam`), REST API (`netcidr serve --ipam-enabled`), and MCP server (`netcidr mcp-serve --ipam-db <path>`).
 
