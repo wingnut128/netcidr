@@ -906,6 +906,60 @@ fn test_ipam_hostname_lifecycle() {
 }
 
 #[test]
+fn test_admin_user_role_management() {
+    let db = "/tmp/netcidr-test-admin-users.db";
+    let _ = std::fs::remove_file(db);
+
+    // Grant an admin and a reader.
+    let (stdout, _, success) = run_netcidr(&[
+        "admin",
+        "--db",
+        db,
+        "user",
+        "grant",
+        "root@example.com",
+        "--role",
+        "admin",
+    ]);
+    assert!(success);
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
+    assert_eq!(json["email"], "root@example.com");
+    assert_eq!(json["role"], "admin");
+
+    let (_, _, success) = run_netcidr(&[
+        "admin",
+        "--db",
+        db,
+        "user",
+        "grant",
+        "ro@example.com",
+        "--role",
+        "reader",
+    ]);
+    assert!(success);
+
+    // List shows both.
+    let (stdout, _, success) = run_netcidr(&["admin", "--db", db, "user", "list"]);
+    assert!(success);
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
+    assert_eq!(json["count"], 2);
+
+    // Revoke the reader.
+    let (stdout, _, success) =
+        run_netcidr(&["admin", "--db", db, "user", "revoke", "ro@example.com"]);
+    assert!(success);
+    assert!(stdout.contains("Revoked"));
+
+    // Last-admin guard: revoking the only admin fails.
+    let (_, stderr, success) =
+        run_netcidr(&["admin", "--db", db, "user", "revoke", "root@example.com"]);
+    assert!(!success);
+    assert!(stderr.contains("last remaining admin"));
+
+    let _ = std::fs::remove_file(db);
+}
+
+#[test]
 fn test_admin_audit_query() {
     let db = "/tmp/netcidr-test-admin-audit.db";
     let _ = std::fs::remove_file(db);

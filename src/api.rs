@@ -26,6 +26,8 @@ use utoipa::{
 #[cfg(feature = "swagger")]
 use utoipa_swagger_ui::SwaggerUi;
 
+#[cfg(feature = "swagger")]
+use crate::auth::Role;
 use crate::auth::require_auth;
 #[cfg(feature = "swagger")]
 use crate::batch::BatchResult;
@@ -58,8 +60,9 @@ use crate::summarize::{summarize_ipv4_with_limit, summarize_ipv6_with_limit};
 use crate::ipam::models::{
     Allocation, AllocationList, AllocationStatus, AuditEntry, AuditList, ChangeKind, CidrBlock,
     CidrBlockList, CreateCidrBlock, CreateHostnamePointer, FreeBlock, FreeBlocksReport,
-    HostnamePointer, HostnamePointerHistoryEntry, HostnamePointerHistoryList, HostnamePointerList,
-    Tag, UpdateAllocation, UtilizationReport,
+    GrantRoleRequest, HostnamePointer, HostnamePointerHistoryEntry, HostnamePointerHistoryList,
+    HostnamePointerList, RoleAssignment, RoleAssignmentList, Tag, UpdateAllocation,
+    UtilizationReport,
 };
 #[cfg(feature = "swagger")]
 use crate::ipam_api::{AllocateSpecificRequest, AutoAllocateBody, IpamErrorResponse, TagsBody};
@@ -142,6 +145,9 @@ impl Modify for SecurityAddon {
         crate::ipam_api::ipam_list_hostnames,
         crate::ipam_api::ipam_hostname_history,
         crate::ipam_api::ipam_delete_hostname,
+        crate::ipam_api::admin_list_users,
+        crate::ipam_api::admin_grant_user,
+        crate::ipam_api::admin_revoke_user,
     ),
     components(
         schemas(
@@ -161,6 +167,7 @@ impl Modify for SecurityAddon {
             FreeBlock, FreeBlocksReport, IpamErrorResponse,
             HostnamePointer, CreateHostnamePointer, HostnamePointerList,
             HostnamePointerHistoryEntry, HostnamePointerHistoryList, ChangeKind,
+            RoleAssignment, RoleAssignmentList, GrantRoleRequest, Role,
         )
     ),
     modifiers(&SecurityAddon),
@@ -490,6 +497,17 @@ pub fn create_router(config: RouterConfig) -> Router {
                 async move { require_auth(auth_config, request, next).await }
             }));
         let router = router.nest("/ipam", ipam_router);
+
+        // Admin role-email management. Lives at the root (`/admin/users`) but
+        // needs the store + auth, so it's mounted here inside the IPAM branch.
+        let admin_auth = auth_config.clone();
+        let admin_router = crate::ipam_api::create_admin_router()
+            .layer(Extension(Arc::clone(&ops)))
+            .layer(middleware::from_fn(move |request, next| {
+                let auth_config = admin_auth.clone();
+                async move { require_auth(auth_config, request, next).await }
+            }));
+        let router = router.merge(admin_router);
 
         // Mount /me/tokens whenever a PAT pepper is configured. /me/tokens
         // requires OIDC (PATs and bearer-mode static tokens are rejected
@@ -1390,7 +1408,7 @@ async fn me_handler(
     };
     let email = principal.email.clone();
     let is_allowlisted = auth_config.email_is_allowed(email.as_deref());
-    let is_admin = auth_config.is_admin(email.as_deref());
+    let is_admin = auth_config.is_admin(email.as_deref()).await;
     let admin_contact = auth_config.admin_emails().first().cloned();
     Json(MeResponse {
         email,
@@ -1420,7 +1438,7 @@ async fn allowlist_handler(
         Some(p) => p,
         None => return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response(),
     };
-    if !auth_config.is_admin(principal.email.as_deref()) {
+    if !auth_config.is_admin(principal.email.as_deref()).await {
         return (StatusCode::FORBIDDEN, "Admin access required").into_response();
     }
     Json(AllowlistResponse {

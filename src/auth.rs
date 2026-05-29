@@ -263,10 +263,29 @@ impl AuthConfig {
     /// write call without warning, with no per-token override available
     /// (bearer tokens carry no identity beyond the shared secret). See
     /// ADR-0002 for the design discussion.
-    pub fn role_for_email(&self, email: Option<&str>) -> Role {
+    pub async fn role_for_email(&self, email: Option<&str>) -> Role {
         let Some(email) = email else {
             return Role::Admin;
         };
+        // When an IPAM store is attached, role membership lives in the DB
+        // (`role_assignments`), seeded once from the env lists at startup —
+        // so the DB is the source of truth and changes survive restarts and
+        // are visible across instances. With no store (bearer-only / non-IPAM
+        // deploys) fall back to the in-memory env lists.
+        if let Some(store) = &self.pat_store {
+            return store
+                .get_role_for_email(email)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+        }
+        self.role_for_email_from_env(email)
+    }
+
+    /// In-memory env-list resolution (admin > allocator > reader > default).
+    /// Used as the no-store fallback and as the bootstrap seed source.
+    fn role_for_email_from_env(&self, email: &str) -> Role {
         let needle = email.to_ascii_lowercase();
         if self.admin_emails.iter().any(|e| e == &needle) {
             return Role::Admin;
@@ -278,6 +297,23 @@ impl AuthConfig {
             return Role::Reader;
         }
         Role::default()
+    }
+
+    /// The `(email, role)` seed pairs derived from the env lists, ordered so
+    /// that a stronger role wins if an email appears in multiple lists
+    /// (admin first; the store's seed is first-write-wins per email).
+    pub fn role_seed_pairs(&self) -> Vec<(String, Role)> {
+        let mut pairs = Vec::new();
+        for e in &self.admin_emails {
+            pairs.push((e.clone(), Role::Admin));
+        }
+        for e in &self.allocator_emails {
+            pairs.push((e.clone(), Role::Allocator));
+        }
+        for e in &self.reader_emails {
+            pairs.push((e.clone(), Role::Reader));
+        }
+        pairs
     }
 
     /// Attach the resolved role to a principal whose identity has been
@@ -292,8 +328,11 @@ impl AuthConfig {
     /// the owner's current privileges (e.g. an admin mints a reader-only
     /// CI token) but never widen them, and a later demotion of the owner's
     /// email automatically narrows every existing PAT.
-    fn finalize_principal(&self, principal: AuthenticatedPrincipal) -> AuthenticatedPrincipal {
-        let email_role = self.role_for_email(principal.email.as_deref());
+    async fn finalize_principal(
+        &self,
+        principal: AuthenticatedPrincipal,
+    ) -> AuthenticatedPrincipal {
+        let email_role = self.role_for_email(principal.email.as_deref()).await;
         let role = match principal.auth_method {
             AuthMethod::Pat => email_role.min(principal.role),
             AuthMethod::Oidc | AuthMethod::Bearer => email_role,
@@ -305,15 +344,12 @@ impl AuthConfig {
         self.oidc_audience.as_deref()
     }
 
-    pub fn is_admin(&self, email: Option<&str>) -> bool {
-        if self.admin_emails.is_empty() {
-            return false;
-        }
+    pub async fn is_admin(&self, email: Option<&str>) -> bool {
+        // No-email principals (static bearer) are never "admin" for the
+        // purposes of the /me and /admin/allowlist surfaces, regardless of
+        // the bearer carve-out in `role_for_email`.
         match email {
-            Some(addr) => {
-                let needle = addr.to_ascii_lowercase();
-                self.admin_emails.iter().any(|a| a == &needle)
-            }
+            Some(_) => self.role_for_email(email).await == Role::Admin,
             None => false,
         }
     }
@@ -345,7 +381,10 @@ impl AuthConfig {
                 AuthMode::Oidc => authenticate_oidc(headers, self.oidc_audience.as_deref()).await,
             }
         };
-        principal.map(|p| self.finalize_principal(p))
+        match principal {
+            Some(p) => Some(self.finalize_principal(p).await),
+            None => None,
+        }
     }
 
     pub fn email_is_allowed(&self, email: Option<&str>) -> bool {
@@ -421,7 +460,7 @@ pub async fn require_auth(config: AuthConfig, mut request: Request, next: Next) 
     // the allowlist check, so a downgraded admin who was just removed from
     // the allowlist still gets a clean 403 from the email check below (not
     // a confusing role-derivation surprise).
-    let principal = config.finalize_principal(principal);
+    let principal = config.finalize_principal(principal).await;
 
     if !config.email_allowed(principal.email.as_deref()) {
         warn!(
@@ -1143,39 +1182,45 @@ mod tests {
         assert_eq!(Role::Admin.as_str(), "admin");
     }
 
-    #[test]
-    fn role_for_email_resolves_with_admin_allocator_reader_precedence() {
+    // These exercise the no-store (env-list) fallback path of the now-async
+    // `role_for_email`/`finalize_principal`. DB-backed resolution is covered by
+    // the store-contract + API tests.
+    #[tokio::test]
+    async fn role_for_email_resolves_with_admin_allocator_reader_precedence() {
         let config = AuthConfig::oidc(Some("aud".to_string()))
             .with_admin_emails(vec!["root@x".to_string()])
             .with_allocator_emails(vec!["dev@x".to_string(), "ROOT@X".to_string()])
             .with_reader_emails(vec!["readonly@x".to_string(), "dev@x".to_string()]);
 
         // Admin email is in all three lists; admin wins.
-        assert_eq!(config.role_for_email(Some("root@x")), Role::Admin);
+        assert_eq!(config.role_for_email(Some("root@x")).await, Role::Admin);
         // Allocator email is also in reader list; allocator wins.
-        assert_eq!(config.role_for_email(Some("dev@x")), Role::Allocator);
+        assert_eq!(config.role_for_email(Some("dev@x")).await, Role::Allocator);
         // Reader-only.
-        assert_eq!(config.role_for_email(Some("readonly@x")), Role::Reader);
+        assert_eq!(
+            config.role_for_email(Some("readonly@x")).await,
+            Role::Reader
+        );
         // Case-insensitive: lists are pre-lowercased; caller email is lowercased on lookup.
-        assert_eq!(config.role_for_email(Some("DEV@X")), Role::Allocator);
+        assert_eq!(config.role_for_email(Some("DEV@X")).await, Role::Allocator);
         // Unknown OIDC email → Role::default() (Reader as of PR2).
-        assert_eq!(config.role_for_email(Some("unknown@x")), Role::Reader);
+        assert_eq!(config.role_for_email(Some("unknown@x")).await, Role::Reader);
         // None email → Admin. Static bearer-token principals (no email)
         // are the documented carve-out — see the role_for_email doc + ADR-0002.
-        assert_eq!(config.role_for_email(None), Role::Admin);
+        assert_eq!(config.role_for_email(None).await, Role::Admin);
     }
 
-    #[test]
-    fn role_for_email_falls_through_to_reader_when_no_lists_set() {
+    #[tokio::test]
+    async fn role_for_email_falls_through_to_reader_when_no_lists_set() {
         // PR2 default: unknown OIDC user → Reader. Bearer-token (None)
         // stays Admin even with no lists configured.
         let config = AuthConfig::oidc(Some("aud".to_string()));
-        assert_eq!(config.role_for_email(Some("anyone@x")), Role::Reader);
-        assert_eq!(config.role_for_email(None), Role::Admin);
+        assert_eq!(config.role_for_email(Some("anyone@x")).await, Role::Reader);
+        assert_eq!(config.role_for_email(None).await, Role::Admin);
     }
 
-    #[test]
-    fn role_for_email_bearer_mode_always_returns_admin() {
+    #[tokio::test]
+    async fn role_for_email_bearer_mode_always_returns_admin() {
         // Explicit assertion of the bearer-token carve-out documented on
         // role_for_email and ADR-0002. Bearer principals carry email=None;
         // they must keep Admin regardless of which lists are configured,
@@ -1184,11 +1229,11 @@ mod tests {
             .with_admin_emails(vec!["specific-admin@x".to_string()])
             .with_allocator_emails(vec!["alice@x".to_string()])
             .with_reader_emails(vec!["bob@x".to_string()]);
-        assert_eq!(config.role_for_email(None), Role::Admin);
+        assert_eq!(config.role_for_email(None).await, Role::Admin);
     }
 
-    #[test]
-    fn finalize_principal_overwrites_role_from_config() {
+    #[tokio::test]
+    async fn finalize_principal_overwrites_role_from_config() {
         let config = AuthConfig::oidc(Some("aud".to_string()))
             .with_reader_emails(vec!["readonly@x".to_string()]);
         let principal = AuthenticatedPrincipal {
@@ -1200,7 +1245,7 @@ mod tests {
             pat_id: None,
             role: Role::Admin, // pre-finalize value; lower-level constructors set this to Role::default()
         };
-        let finalized = config.finalize_principal(principal);
+        let finalized = config.finalize_principal(principal).await;
         assert_eq!(finalized.role, Role::Reader);
     }
 
@@ -1216,58 +1261,68 @@ mod tests {
         }
     }
 
-    #[test]
-    fn finalize_principal_pat_clamps_when_stored_role_is_narrower_than_email_role() {
+    #[tokio::test]
+    async fn finalize_principal_pat_clamps_when_stored_role_is_narrower_than_email_role() {
         // Admin user mints a reader-only PAT for a CI script.
         // Final role must be Reader — the PAT cannot widen the user's
         // privileges, and storing Reader narrows them on purpose.
         let config =
             AuthConfig::oidc(Some("aud".to_string())).with_admin_emails(vec!["root@x".to_string()]);
-        let finalized = config.finalize_principal(pat_principal("root@x", Role::Reader));
+        let finalized = config
+            .finalize_principal(pat_principal("root@x", Role::Reader))
+            .await;
         assert_eq!(finalized.role, Role::Reader);
     }
 
-    #[test]
-    fn finalize_principal_pat_clamps_when_email_role_is_narrower_than_stored_role() {
+    #[tokio::test]
+    async fn finalize_principal_pat_clamps_when_email_role_is_narrower_than_stored_role() {
         // PAT was minted when the owner was Admin; the owner has since
         // been demoted to Reader (removed from admin_emails, no longer
         // listed). Final role must be Reader — every existing PAT
         // narrows automatically without the operator having to revoke.
         let config = AuthConfig::oidc(Some("aud".to_string()))
             .with_reader_emails(vec!["former-admin@x".to_string()]);
-        let finalized = config.finalize_principal(pat_principal("former-admin@x", Role::Admin));
+        let finalized = config
+            .finalize_principal(pat_principal("former-admin@x", Role::Admin))
+            .await;
         assert_eq!(finalized.role, Role::Reader);
     }
 
-    #[test]
-    fn finalize_principal_pat_preserves_role_when_both_match() {
+    #[tokio::test]
+    async fn finalize_principal_pat_preserves_role_when_both_match() {
         let config = AuthConfig::oidc(Some("aud".to_string()))
             .with_allocator_emails(vec!["dev@x".to_string()]);
-        let finalized = config.finalize_principal(pat_principal("dev@x", Role::Allocator));
+        let finalized = config
+            .finalize_principal(pat_principal("dev@x", Role::Allocator))
+            .await;
         assert_eq!(finalized.role, Role::Allocator);
     }
 
-    #[test]
-    fn finalize_principal_pat_picks_intermediate_role_when_stored_sits_below_email() {
+    #[tokio::test]
+    async fn finalize_principal_pat_picks_intermediate_role_when_stored_sits_below_email() {
         // Admin email, stored=Allocator → Allocator (PAT narrows by one tier).
         let config =
             AuthConfig::oidc(Some("aud".to_string())).with_admin_emails(vec!["root@x".to_string()]);
-        let finalized = config.finalize_principal(pat_principal("root@x", Role::Allocator));
+        let finalized = config
+            .finalize_principal(pat_principal("root@x", Role::Allocator))
+            .await;
         assert_eq!(finalized.role, Role::Allocator);
     }
 
-    #[test]
-    fn finalize_principal_pat_clamps_to_reader_when_owner_falls_through_to_default() {
+    #[tokio::test]
+    async fn finalize_principal_pat_clamps_to_reader_when_owner_falls_through_to_default() {
         // PAT owner is not on any list — the email-resolved role is
         // Role::default() (Reader as of PR2). Even an admin-stored PAT
         // resolves to Reader.
         let config = AuthConfig::oidc(Some("aud".to_string()));
-        let finalized = config.finalize_principal(pat_principal("nobody@x", Role::Admin));
+        let finalized = config
+            .finalize_principal(pat_principal("nobody@x", Role::Admin))
+            .await;
         assert_eq!(finalized.role, Role::Reader);
     }
 
-    #[test]
-    fn finalize_principal_bearer_ignores_stored_role_field() {
+    #[tokio::test]
+    async fn finalize_principal_bearer_ignores_stored_role_field() {
         // Static-bearer principals carry `email = None` and
         // `auth_method = Bearer`. The bearer carve-out keeps them at
         // Admin regardless of any pre-finalize role value (which should
@@ -1282,7 +1337,7 @@ mod tests {
             pat_id: None,
             role: Role::Reader,
         };
-        let finalized = config.finalize_principal(principal);
+        let finalized = config.finalize_principal(principal).await;
         assert_eq!(finalized.role, Role::Admin);
     }
 }

@@ -70,13 +70,14 @@ pub fn present(err: &NetcidrError) -> PresentedError {
         },
 
         // 404 — domain "not found"
-        CidrBlockNotFound(_) | AllocationNotFound(_) | HostnamePointerNotFound(_) => {
-            PresentedError {
-                status: 404,
-                client_msg: err.to_string(),
-                log_level: LogLevel::None,
-            }
-        }
+        CidrBlockNotFound(_)
+        | AllocationNotFound(_)
+        | HostnamePointerNotFound(_)
+        | RoleAssignmentNotFound(_) => PresentedError {
+            status: 404,
+            client_msg: err.to_string(),
+            log_level: LogLevel::None,
+        },
 
         // 404 — PAT not found; do NOT echo the caller-supplied id.
         PatNotFound(_) => PresentedError {
@@ -86,11 +87,13 @@ pub fn present(err: &NetcidrError) -> PresentedError {
         },
 
         // 409 — conflict
-        AllocationConflict { .. } | CidrBlockHasActiveAllocations(_) => PresentedError {
-            status: 409,
-            client_msg: err.to_string(),
-            log_level: LogLevel::None,
-        },
+        AllocationConflict { .. } | CidrBlockHasActiveAllocations(_) | LastAdmin => {
+            PresentedError {
+                status: 409,
+                client_msg: err.to_string(),
+                log_level: LogLevel::None,
+            }
+        }
 
         // 409 — idempotency-key reuse. Don't echo the key or scope back
         // to the caller; the safe message is sufficient and the key may

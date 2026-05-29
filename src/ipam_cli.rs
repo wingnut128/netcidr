@@ -1,6 +1,6 @@
 use netcidr::cli::{
-    AdminCommands, AllocationCommands, CidrBlockCommands, HostnameCommands, IpamCommands,
-    TagCommands,
+    AdminCommands, AdminUserCommands, AllocationCommands, CidrBlockCommands, HostnameCommands,
+    IpamCommands, TagCommands,
 };
 use netcidr::error::Result;
 use netcidr::ipam::config::IpamConfig;
@@ -481,6 +481,27 @@ pub async fn handle_admin_command(
             };
             output_result(writer, output_file, &result);
         }
+
+        AdminCommands::User { command } => match command {
+            AdminUserCommands::Grant { email, role } => {
+                let assignment = ops.grant_role(Tenant::LOCAL, &email, role).await?;
+                output_result(writer, output_file, &assignment);
+            }
+            AdminUserCommands::Revoke { email } => {
+                ops.revoke_role(Tenant::LOCAL, &email).await?;
+                if output_file.is_none() {
+                    print_stdout(&format!("Revoked role for {email}"));
+                }
+            }
+            AdminUserCommands::List => {
+                let users = ops.list_role_assignments().await?;
+                let result = RoleAssignmentList {
+                    count: users.len(),
+                    users,
+                };
+                output_result(writer, output_file, &result);
+            }
+        },
     }
 
     Ok(())

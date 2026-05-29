@@ -172,6 +172,30 @@ pub fn validate_hostname(s: &str) -> Result<()> {
     normalize_hostname(s).map(|_| ())
 }
 
+/// Validate an email address used as a role-assignment key. Intentionally
+/// permissive (a single `@` with non-empty local/domain parts), but rejects
+/// control chars, path traversal, and oversized input.
+pub fn validate_email(s: &str) -> Result<()> {
+    if has_control_chars(s) || has_path_traversal(s) {
+        return Err(NetcidrError::InvalidInput(
+            "email contains invalid characters".to_string(),
+        ));
+    }
+    if s.len() > MAX_HOSTNAME_LENGTH {
+        return Err(NetcidrError::InputTooLong {
+            length: s.len(),
+            limit: MAX_HOSTNAME_LENGTH,
+        });
+    }
+    let parts: Vec<&str> = s.split('@').collect();
+    if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() || !parts[1].contains('.') {
+        return Err(NetcidrError::InvalidInput(format!(
+            "not a valid email address: {s}"
+        )));
+    }
+    Ok(())
+}
+
 /// Validate prefix length for the given IP version (4 or 6).
 pub fn validate_prefix_length(prefix: u8, ip_version: u8) -> Result<()> {
     let max = if ip_version == 4 { 32 } else { 128 };

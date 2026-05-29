@@ -84,6 +84,12 @@ pub enum NetcidrError {
     #[error("Hostname pointer not found: {0}")]
     HostnamePointerNotFound(String),
 
+    #[error("Role assignment not found: {0}")]
+    RoleAssignmentNotFound(String),
+
+    #[error("cannot revoke the last remaining admin")]
+    LastAdmin,
+
     #[error("CIDR block {0} has active allocations and cannot be deleted")]
     CidrBlockHasActiveAllocations(String),
 
