@@ -175,3 +175,22 @@ export interface FeaturesResponse {
   ipam: boolean;
   swagger: boolean;
 }
+
+// Role-email management (admin) — mirrors src/auth.rs `Role` and
+// src/ipam/models.rs `RoleAssignment` / `RoleAssignmentList`.
+
+export type Role = "reader" | "allocator" | "admin";
+
+export interface RoleAssignment {
+  email: string;
+  role: Role;
+  created_at: string;
+  updated_at: string;
+  /** Admin who made the grant, or "bootstrap" for env-seeded rows. */
+  created_by?: string;
+}
+
+export interface RoleAssignmentList {
+  users: RoleAssignment[];
+  count: number;
+}
