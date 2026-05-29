@@ -352,4 +352,104 @@ impl HttpIpamClient {
             Err(Self::map_error(resp).await)
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Hostname pointer operations
+    // -----------------------------------------------------------------------
+
+    pub async fn set_hostname_pointer(
+        &self,
+        input: &CreateHostnamePointer,
+    ) -> Result<HostnamePointer> {
+        let resp = self
+            .client
+            .post(self.url("/hostnames"))
+            .json(input)
+            .send()
+            .await
+            .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
+        if resp.status().is_success() {
+            resp.json()
+                .await
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))
+        } else {
+            Err(Self::map_error(resp).await)
+        }
+    }
+
+    pub async fn list_hostname_pointers(
+        &self,
+        filter: &HostnamePointerFilter,
+    ) -> Result<Vec<HostnamePointer>> {
+        let mut query: Vec<(&str, &str)> = Vec::new();
+        if let Some(ref ip) = filter.ip_address {
+            query.push(("ip", ip));
+        }
+        if let Some(ref h) = filter.hostname {
+            query.push(("hostname", h));
+        }
+        if let Some(ref a) = filter.allocation_id {
+            query.push(("allocation_id", a));
+        }
+        let resp = self
+            .client
+            .get(self.url("/hostnames"))
+            .query(&query)
+            .send()
+            .await
+            .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
+        if resp.status().is_success() {
+            let list: HostnamePointerList = resp
+                .json()
+                .await
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+            Ok(list.pointers)
+        } else {
+            Err(Self::map_error(resp).await)
+        }
+    }
+
+    pub async fn list_hostname_history(
+        &self,
+        filter: &HostnameHistoryFilter,
+    ) -> Result<Vec<HostnamePointerHistoryEntry>> {
+        let mut query: Vec<(&str, &str)> = Vec::new();
+        if let Some(ref ip) = filter.ip_address {
+            query.push(("ip", ip));
+        }
+        if let Some(ref h) = filter.hostname {
+            query.push(("hostname", h));
+        }
+        let resp = self
+            .client
+            .get(self.url("/hostnames/history"))
+            .query(&query)
+            .send()
+            .await
+            .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
+        if resp.status().is_success() {
+            let list: HostnamePointerHistoryList = resp
+                .json()
+                .await
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+            Ok(list.entries)
+        } else {
+            Err(Self::map_error(resp).await)
+        }
+    }
+
+    pub async fn delete_hostname_pointer(&self, ip: &str, hostname: &str) -> Result<()> {
+        let resp = self
+            .client
+            .delete(self.url("/hostnames"))
+            .query(&[("ip", ip), ("hostname", hostname)])
+            .send()
+            .await
+            .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            Err(Self::map_error(resp).await)
+        }
+    }
 }

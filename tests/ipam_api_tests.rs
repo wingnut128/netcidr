@@ -617,3 +617,89 @@ async fn test_ipam_list_allocations_with_filter() {
     assert_eq!(json["count"], 1);
     assert_eq!(json["allocations"][0]["environment"], "prod");
 }
+
+// ── Hostname pointers ──────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_ipam_hostname_lifecycle() {
+    let app = ipam_app().await;
+
+    // Set (create) — hostname normalized to lowercase.
+    let (status, json) = req(
+        app.clone(),
+        "POST",
+        "/ipam/hostnames",
+        Some(r#"{"ip_address":"10.0.1.5","hostname":"Web-01.Example.COM"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["ip_address"], "10.0.1.5");
+    assert_eq!(json["hostname"], "web-01.example.com");
+
+    // Second name on the same IP.
+    let (status, _) = req(
+        app.clone(),
+        "POST",
+        "/ipam/hostnames",
+        Some(r#"{"ip_address":"10.0.1.5","hostname":"app.example.com"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // List filtered by IP.
+    let (status, json) = req(app.clone(), "GET", "/ipam/hostnames?ip=10.0.1.5", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["count"], 2);
+
+    // Delete one.
+    let (status, _) = req(
+        app.clone(),
+        "DELETE",
+        "/ipam/hostnames?ip=10.0.1.5&hostname=web-01.example.com",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // History shows create/create/delete.
+    let (status, json) = req(
+        app.clone(),
+        "GET",
+        "/ipam/hostnames/history?ip=10.0.1.5",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["count"], 3);
+    let kinds: Vec<&str> = json["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["change_kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, vec!["create", "create", "delete"]);
+
+    // Deleting a missing pointer → 404.
+    let (status, _) = req(
+        app,
+        "DELETE",
+        "/ipam/hostnames?ip=10.0.1.5&hostname=web-01.example.com",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_ipam_hostname_invalid_rejected() {
+    let app = ipam_app().await;
+    let (status, json) = req(
+        app,
+        "POST",
+        "/ipam/hostnames",
+        Some(r#"{"ip_address":"10.0.1.5","hostname":"bad_host!"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(json["error"].as_str().unwrap().contains("hostname"));
+}

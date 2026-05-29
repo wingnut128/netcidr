@@ -223,6 +223,35 @@ pub struct AuditQuery {
 
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "swagger", derive(IntoParams))]
+pub struct HostnameListQuery {
+    /// Filter by IP address
+    pub ip: Option<String>,
+    /// Filter by hostname
+    pub hostname: Option<String>,
+    /// Filter by associated allocation ID
+    pub allocation_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(IntoParams))]
+pub struct HostnameHistoryQuery {
+    /// Filter history by IP address
+    pub ip: Option<String>,
+    /// Filter history by hostname
+    pub hostname: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(IntoParams))]
+pub struct HostnameDeleteQuery {
+    /// IP address of the pointer to delete
+    pub ip: String,
+    /// Hostname of the pointer to delete
+    pub hostname: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(IntoParams))]
 pub struct SummaryQuery {
     /// Optional CIDR block ID to scope the summary
     pub cidr_block_id: Option<String>,
@@ -268,6 +297,13 @@ pub fn create_ipam_router() -> Router {
         .route("/allocations/{id}/tags", put(ipam_set_tags))
         .route("/find-ip/{address}", get(ipam_find_ip))
         .route("/find-resource/{resource_id}", get(ipam_find_resource))
+        .route(
+            "/hostnames",
+            post(ipam_set_hostname)
+                .get(ipam_list_hostnames)
+                .delete(ipam_delete_hostname),
+        )
+        .route("/hostnames/history", get(ipam_hostname_history))
         .route("/audit", get(ipam_query_audit))
         .route("/batch/allocate", post(ipam_batch_allocate))
         .route("/batch/release", post(ipam_batch_release))
@@ -712,6 +748,121 @@ async fn ipam_find_resource(
             };
             Json(list).into_response()
         }
+        Err(e) => ipam_error_response(e),
+    }
+}
+
+#[cfg_attr(feature = "swagger", utoipa::path(
+    post,
+    path = "/ipam/hostnames",
+    request_body = CreateHostnamePointer,
+    responses(
+        (status = 200, description = "Hostname pointer created or updated", body = HostnamePointer),
+        (status = 400, description = "Invalid IP or hostname", body = IpamErrorResponse),
+        (status = 404, description = "Linked allocation not found", body = IpamErrorResponse),
+    ),
+    security(("bearerAuth" = [])),
+    tag = "ipam"
+))]
+async fn ipam_set_hostname(
+    Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
+    _: RequireAllocator,
+    Json(body): Json<CreateHostnamePointer>,
+) -> impl IntoResponse {
+    match ops.set_hostname_pointer(tenant.as_str(), &body).await {
+        Ok(pointer) => Json(pointer).into_response(),
+        Err(e) => ipam_error_response(e),
+    }
+}
+
+#[cfg_attr(feature = "swagger", utoipa::path(
+    get,
+    path = "/ipam/hostnames",
+    params(HostnameListQuery),
+    responses(
+        (status = 200, description = "Hostname pointers", body = HostnamePointerList),
+    ),
+    security(("bearerAuth" = [])),
+    tag = "ipam"
+))]
+async fn ipam_list_hostnames(
+    Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
+    _: RequireReader,
+    Query(query): Query<HostnameListQuery>,
+) -> impl IntoResponse {
+    let filter = HostnamePointerFilter {
+        ip_address: query.ip,
+        hostname: query.hostname,
+        allocation_id: query.allocation_id,
+    };
+    match ops.list_hostname_pointers(tenant.as_str(), &filter).await {
+        Ok(pointers) => {
+            let list = HostnamePointerList {
+                count: pointers.len(),
+                pointers,
+            };
+            Json(list).into_response()
+        }
+        Err(e) => ipam_error_response(e),
+    }
+}
+
+#[cfg_attr(feature = "swagger", utoipa::path(
+    get,
+    path = "/ipam/hostnames/history",
+    params(HostnameHistoryQuery),
+    responses(
+        (status = 200, description = "Hostname pointer change history", body = HostnamePointerHistoryList),
+    ),
+    security(("bearerAuth" = [])),
+    tag = "ipam"
+))]
+async fn ipam_hostname_history(
+    Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
+    _: RequireReader,
+    Query(query): Query<HostnameHistoryQuery>,
+) -> impl IntoResponse {
+    let filter = HostnameHistoryFilter {
+        ip_address: query.ip,
+        hostname: query.hostname,
+    };
+    match ops.list_hostname_history(tenant.as_str(), &filter).await {
+        Ok(entries) => {
+            let list = HostnamePointerHistoryList {
+                count: entries.len(),
+                entries,
+            };
+            Json(list).into_response()
+        }
+        Err(e) => ipam_error_response(e),
+    }
+}
+
+#[cfg_attr(feature = "swagger", utoipa::path(
+    delete,
+    path = "/ipam/hostnames",
+    params(HostnameDeleteQuery),
+    responses(
+        (status = 204, description = "Hostname pointer deleted"),
+        (status = 404, description = "Hostname pointer not found", body = IpamErrorResponse),
+    ),
+    security(("bearerAuth" = [])),
+    tag = "ipam"
+))]
+async fn ipam_delete_hostname(
+    Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
+    _: RequireAllocator,
+    Query(query): Query<HostnameDeleteQuery>,
+) -> impl IntoResponse {
+    match ops
+        .delete_hostname_pointer(tenant.as_str(), &query.ip, &query.hostname)
+        .await
+    {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => ipam_error_response(e),
     }
 }
