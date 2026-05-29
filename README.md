@@ -17,7 +17,7 @@ A fast IPv4 and IPv6 subnet calculator written in Rust. Available as a CLI tool,
 - **Batch processing**: process multiple CIDRs via positional arguments, `--stdin`, or the `POST /batch` API endpoint
 - **Multiple output formats**: JSON (default), plain text, CSV, and YAML
 - **File output**: write results directly to a file
-- **Web dashboard**: Full SPA at `http://localhost:8080/` with subnet calculator, splitter, contains check, summarize, from-range, IPAM dashboard, subnet visualizer, and an admin-only **Activity** view (audited mutations grouped by day, filterable by user) — served automatically when running `netcidr serve`. Light/dark themes (toggle with ⌘+J / Ctrl+J), and Google sign-in gates the IPAM tab when the server runs in OIDC mode (set `VITE_OAUTH_WEB_CLIENT_ID` when building the dashboard — see `dashboard/.env.example`).
+- **Web dashboard**: Full SPA at `http://localhost:8080/` with subnet calculator, splitter, contains check, summarize, from-range, IPAM dashboard, subnet visualizer, an admin-only **Users** page (grant/revoke role-email access without a redeploy) and an admin-only **Activity** view (audited mutations grouped by day, filterable by user) — served automatically when running `netcidr serve`. Light/dark themes (toggle with ⌘+J / Ctrl+J), and Google sign-in gates the IPAM tab when the server runs in OIDC mode (set `VITE_OAUTH_WEB_CLIENT_ID` when building the dashboard — see `dashboard/.env.example`).
 - **HTTP API**: REST endpoints for all calculations
 - **OpenAPI documentation**: Machine-readable API specification for easy integration with tools like Swagger Editor, Postman, and Insomnia
 - **MCP server**: [Model Context Protocol](https://modelcontextprotocol.io) server for AI assistant integration (Claude, etc.) via Streamable HTTP or stdio
@@ -749,7 +749,7 @@ export NETCIDR_ALLOCATOR_EMAILS="dev@example.com,ci-bot@example.com"
 export NETCIDR_READER_EMAILS="auditor@example.com"
 ```
 
-**Env vars are a bootstrap seed (when IPAM is enabled).** On first start, if the role table is empty, these lists seed it; once it has any rows the env lists are ignored and the database is the source of truth. After bootstrap, manage roles at runtime with `netcidr admin user grant/revoke/list` or the `/admin/users` API (no redeploy). See ADR-0003. (Bearer-only / non-IPAM deployments with no store keep resolving roles directly from these env lists.)
+**Env vars are a bootstrap seed (when IPAM is enabled).** On first start, if the role table is empty, these lists seed it; once it has any rows the env lists are ignored and the database is the source of truth. After bootstrap, manage roles at runtime with `netcidr admin user grant/revoke/list`, the `/admin/users` API, or the admin-only **Users** page in the dashboard (no redeploy). See ADR-0003. (Bearer-only / non-IPAM deployments with no store keep resolving roles directly from these env lists.)
 
 **Precedence:** admin > allocator > reader (an email listed in `NETCIDR_ADMIN_EMAILS` is always Admin even if also in the others).
 
