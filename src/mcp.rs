@@ -152,6 +152,50 @@ impl McpIpamBackend {
             Self::Remote(client) => client.allocation_summary(cidr_block_id).await,
         }
     }
+
+    pub async fn set_hostname_pointer(
+        &self,
+        input: &CreateHostnamePointer,
+    ) -> crate::error::Result<HostnamePointer> {
+        match self {
+            Self::Local(ops) => ops.set_hostname_pointer(Tenant::LOCAL, input).await,
+            Self::Remote(client) => client.set_hostname_pointer(input).await,
+        }
+    }
+
+    pub async fn list_hostname_pointers(
+        &self,
+        filter: &HostnamePointerFilter,
+    ) -> crate::error::Result<Vec<HostnamePointer>> {
+        match self {
+            Self::Local(ops) => ops.list_hostname_pointers(Tenant::LOCAL, filter).await,
+            Self::Remote(client) => client.list_hostname_pointers(filter).await,
+        }
+    }
+
+    pub async fn list_hostname_history(
+        &self,
+        filter: &HostnameHistoryFilter,
+    ) -> crate::error::Result<Vec<HostnamePointerHistoryEntry>> {
+        match self {
+            Self::Local(ops) => ops.list_hostname_history(Tenant::LOCAL, filter).await,
+            Self::Remote(client) => client.list_hostname_history(filter).await,
+        }
+    }
+
+    pub async fn delete_hostname_pointer(
+        &self,
+        ip: &str,
+        hostname: &str,
+    ) -> crate::error::Result<()> {
+        match self {
+            Self::Local(ops) => {
+                ops.delete_hostname_pointer(Tenant::LOCAL, ip, hostname)
+                    .await
+            }
+            Self::Remote(client) => client.delete_hostname_pointer(ip, hostname).await,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -335,6 +379,44 @@ struct IpamBatchReleaseParams {
 struct IpamAllocationSummaryParams {
     /// Optional CIDR block ID to scope the summary (omit for all CIDR blocks)
     cidr_block_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct IpamHostnameSetParams {
+    /// IP address (IPv4 or IPv6)
+    ip: String,
+    /// Fully-qualified hostname, e.g. web-01.example.com
+    hostname: String,
+    /// Optional allocation ID to associate with this pointer
+    allocation_id: Option<String>,
+    /// Optional free-form notes
+    notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct IpamHostnameListParams {
+    /// Filter by IP address
+    ip: Option<String>,
+    /// Filter by hostname
+    hostname: Option<String>,
+    /// Filter by associated allocation ID
+    allocation_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct IpamHostnameHistoryParams {
+    /// Filter history by IP address
+    ip: Option<String>,
+    /// Filter history by hostname
+    hostname: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct IpamHostnameDeleteParams {
+    /// IP address of the pointer to delete
+    ip: String,
+    /// Hostname of the pointer to delete
+    hostname: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -714,6 +796,86 @@ impl NetcidrMcp {
                 .allocation_summary(params.cidr_block_id.as_deref())
                 .await,
         )
+    }
+
+    #[tool(
+        name = "ipam_hostname_set",
+        description = "Create or update a hostname pointer for an IP (many-to-many). Hostname is RFC 1123-validated and lowercased; IP is canonicalized. Re-setting an existing IP/hostname pair updates its notes/allocation. Every change is recorded in append-only history."
+    )]
+    async fn ipam_hostname_set(
+        &self,
+        Parameters(params): Parameters<IpamHostnameSetParams>,
+    ) -> String {
+        let Some(backend) = &self.ipam else {
+            return IPAM_NOT_ENABLED.to_string();
+        };
+        let input = CreateHostnamePointer {
+            ip_address: params.ip,
+            hostname: params.hostname,
+            allocation_id: params.allocation_id,
+            notes: params.notes,
+        };
+        result_to_string(backend.set_hostname_pointer(&input).await)
+    }
+
+    #[tool(
+        name = "ipam_hostname_list",
+        description = "List hostname pointers, optionally filtered by IP, hostname, or allocation ID. Returns the current (live) IP↔hostname mappings."
+    )]
+    async fn ipam_hostname_list(
+        &self,
+        Parameters(params): Parameters<IpamHostnameListParams>,
+    ) -> String {
+        let Some(backend) = &self.ipam else {
+            return IPAM_NOT_ENABLED.to_string();
+        };
+        let filter = HostnamePointerFilter {
+            ip_address: params.ip,
+            hostname: params.hostname,
+            allocation_id: params.allocation_id,
+        };
+        result_to_string(backend.list_hostname_pointers(&filter).await)
+    }
+
+    #[tool(
+        name = "ipam_hostname_history",
+        description = "Show the append-only change history for hostname pointers, optionally filtered by IP or hostname. Includes create/update/delete events with actor, timestamp, and before/after values."
+    )]
+    async fn ipam_hostname_history(
+        &self,
+        Parameters(params): Parameters<IpamHostnameHistoryParams>,
+    ) -> String {
+        let Some(backend) = &self.ipam else {
+            return IPAM_NOT_ENABLED.to_string();
+        };
+        let filter = HostnameHistoryFilter {
+            ip_address: params.ip,
+            hostname: params.hostname,
+        };
+        result_to_string(backend.list_hostname_history(&filter).await)
+    }
+
+    #[tool(
+        name = "ipam_hostname_delete",
+        description = "Delete a hostname pointer for the given IP and hostname. The live mapping is removed but the deletion is preserved in the append-only history."
+    )]
+    async fn ipam_hostname_delete(
+        &self,
+        Parameters(params): Parameters<IpamHostnameDeleteParams>,
+    ) -> String {
+        let Some(backend) = &self.ipam else {
+            return IPAM_NOT_ENABLED.to_string();
+        };
+        match backend
+            .delete_hostname_pointer(&params.ip, &params.hostname)
+            .await
+        {
+            Ok(()) => format!(
+                "Deleted hostname pointer {} -> {}",
+                params.ip, params.hostname
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
     }
 }
 

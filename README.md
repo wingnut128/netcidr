@@ -886,6 +886,10 @@ netcidr serve --ipam-enabled --ipam-db /path/to/ipam.db
 | `/ipam/allocations/{id}/tags` | `PUT` | Set tags on an allocation |
 | `/ipam/find-ip/{address}` | `GET` | Find allocations containing an IP |
 | `/ipam/find-resource/{resource_id}` | `GET` | Find allocations by resource ID |
+| `/ipam/hostnames` | `POST` | Create/update a hostname pointer |
+| `/ipam/hostnames` | `GET` | List hostname pointers (`?ip=&hostname=&allocation_id=`) |
+| `/ipam/hostnames` | `DELETE` | Delete a hostname pointer (`?ip=&hostname=`) |
+| `/ipam/hostnames/history` | `GET` | Hostname pointer change history (`?ip=&hostname=`) |
 | `/ipam/audit` | `GET` | Query audit log (filterable) |
 
 **Status:** Fully integrated — available via CLI (`netcidr ipam`), REST API (`netcidr serve --ipam-enabled`), and MCP server (`netcidr mcp-serve --ipam-db <path>`).

@@ -281,3 +281,66 @@ async fn idempotency_keys_are_isolated_per_tenant() {
         r_b.body["id"].as_str().unwrap()
     );
 }
+
+#[tokio::test]
+async fn hostname_pointers_are_isolated_per_tenant() {
+    let app = isolation_app().await;
+
+    // Both tenants set the same IP↔hostname pair.
+    for tenant in [TENANT_A, TENANT_B] {
+        let r = send(
+            &app,
+            "POST",
+            "/ipam/hostnames",
+            tenant,
+            Some(r#"{"ip_address":"10.0.0.1","hostname":"shared.example.com"}"#),
+            None,
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::OK, "set failed: {:?}", r.body);
+    }
+
+    // Each tenant sees only its own pointer.
+    let r = send(&app, "GET", "/ipam/hostnames", TENANT_A, None, None).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.body["count"], 1, "tenant A sees only its own pointer");
+
+    // B's history is invisible to A and vice-versa.
+    let r = send(
+        &app,
+        "GET",
+        "/ipam/hostnames/history?ip=10.0.0.1",
+        TENANT_B,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.body["count"], 1, "tenant B sees only its own history");
+
+    // A cannot delete B's pointer (cross-tenant ⇒ 404, no existence leak).
+    let r = send(
+        &app,
+        "POST",
+        "/ipam/hostnames",
+        TENANT_B,
+        Some(r#"{"ip_address":"10.0.0.2","hostname":"b-only.example.com"}"#),
+        None,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    let r = send(
+        &app,
+        "DELETE",
+        "/ipam/hostnames?ip=10.0.0.2&hostname=b-only.example.com",
+        TENANT_A,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(
+        r.status,
+        StatusCode::NOT_FOUND,
+        "cross-tenant hostname delete must 404"
+    );
+}
