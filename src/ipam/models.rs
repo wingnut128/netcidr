@@ -548,3 +548,123 @@ pub struct IdempotencyRecord {
     pub created_at: String,
     pub expires_at: String,
 }
+
+// ---------------------------------------------------------------------------
+// Hostname pointers
+// ---------------------------------------------------------------------------
+
+/// A tenant-scoped mapping of an IP address to a hostname. Many-to-many: an IP
+/// may carry several names and a name may move between IPs over time. The
+/// `(tenant_id, ip_address, hostname)` triple is unique.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
+pub struct HostnamePointer {
+    pub id: String,
+    pub tenant_id: String,
+    pub ip_address: String,
+    pub hostname: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allocation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    /// When this IP↔hostname association was first recorded (RFC3339).
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
+pub struct CreateHostnamePointer {
+    /// IP address (IPv4 or IPv6); normalized to canonical form on write.
+    pub ip_address: String,
+    /// Fully-qualified hostname (RFC 1123); lowercased on write.
+    pub hostname: String,
+    /// Optional allocation to associate this pointer with.
+    #[serde(default)]
+    pub allocation_id: Option<String>,
+    /// Optional free-form notes.
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::IntoParams))]
+pub struct HostnamePointerFilter {
+    pub ip_address: Option<String>,
+    pub hostname: Option<String>,
+    pub allocation_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
+pub struct HostnamePointerList {
+    pub pointers: Vec<HostnamePointer>,
+    pub count: usize,
+}
+
+/// The kind of change recorded in [`HostnamePointerHistoryEntry`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum ChangeKind {
+    Create,
+    Update,
+    Delete,
+}
+
+impl std::fmt::Display for ChangeKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Create => write!(f, "create"),
+            Self::Update => write!(f, "update"),
+            Self::Delete => write!(f, "delete"),
+        }
+    }
+}
+
+impl std::str::FromStr for ChangeKind {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "create" => Ok(Self::Create),
+            "update" => Ok(Self::Update),
+            "delete" => Ok(Self::Delete),
+            other => Err(format!("invalid change kind: {}", other)),
+        }
+    }
+}
+
+/// One append-only entry in a hostname pointer's change history. `previous_value`
+/// and `new_value` are JSON snapshots of the [`HostnamePointer`] (null for the
+/// missing side of a create/delete).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
+pub struct HostnamePointerHistoryEntry {
+    pub id: String,
+    pub tenant_id: String,
+    pub pointer_id: String,
+    pub ip_address: String,
+    pub hostname: String,
+    pub change_kind: ChangeKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_value: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_value: Option<String>,
+    /// Actor that made the change: OIDC sub/email, or `"cli"`.
+    pub actor: String,
+    pub changed_at: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::IntoParams))]
+pub struct HostnameHistoryFilter {
+    pub ip_address: Option<String>,
+    pub hostname: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
+pub struct HostnamePointerHistoryList {
+    pub entries: Vec<HostnamePointerHistoryEntry>,
+    pub count: usize,
+}

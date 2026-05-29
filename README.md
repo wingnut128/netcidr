@@ -837,6 +837,14 @@ netcidr ipam find-ip 10.0.1.50
 # View audit log
 netcidr ipam audit --limit 10
 
+# Hostname pointers — map IPs to hostnames with full change history
+netcidr ipam hostname set 10.0.1.5 web-01.example.com --notes "primary"
+netcidr ipam hostname set 10.0.1.5 app.example.com          # many-to-many
+netcidr ipam hostname get 10.0.1.5                          # current names on an IP
+netcidr ipam hostname list --hostname web-01.example.com
+netcidr ipam hostname history 10.0.1.5                      # append-only trail (IP or hostname)
+netcidr ipam hostname delete 10.0.1.5 app.example.com       # hard delete, kept in history
+
 # IPv6 IPAM — same commands, IPv6 CIDRs
 netcidr ipam cidr_block create 2001:db8::/32 --name "IPv6 Space"
 netcidr ipam allocate <cidr_block-id> 2001:db8:1::/48 --name "Site A"

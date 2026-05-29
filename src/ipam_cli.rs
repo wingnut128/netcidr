@@ -1,4 +1,6 @@
-use netcidr::cli::{AllocationCommands, CidrBlockCommands, IpamCommands, TagCommands};
+use netcidr::cli::{
+    AllocationCommands, CidrBlockCommands, HostnameCommands, IpamCommands, TagCommands,
+};
 use netcidr::error::Result;
 use netcidr::ipam::config::IpamConfig;
 use netcidr::ipam::models::*;
@@ -356,6 +358,84 @@ pub async fn handle_ipam_command(
                     .await?;
                 let alloc = ops.get_allocation(Tenant::LOCAL, &allocation_id).await?;
                 output_result(writer, output_file, &alloc);
+            }
+        },
+
+        IpamCommands::Hostname { command } => match command {
+            HostnameCommands::Set {
+                ip,
+                hostname,
+                allocation_id,
+                notes,
+            } => {
+                let pointer = ops
+                    .set_hostname_pointer(
+                        Tenant::LOCAL,
+                        &CreateHostnamePointer {
+                            ip_address: ip,
+                            hostname,
+                            allocation_id,
+                            notes,
+                        },
+                    )
+                    .await?;
+                output_result(writer, output_file, &pointer);
+            }
+            HostnameCommands::Get { ip } => {
+                let pointers = ops.get_hostname_pointers_for_ip(Tenant::LOCAL, &ip).await?;
+                let result = HostnamePointerList {
+                    count: pointers.len(),
+                    pointers,
+                };
+                output_result(writer, output_file, &result);
+            }
+            HostnameCommands::List {
+                ip,
+                hostname,
+                allocation_id,
+            } => {
+                let pointers = ops
+                    .list_hostname_pointers(
+                        Tenant::LOCAL,
+                        &HostnamePointerFilter {
+                            ip_address: ip,
+                            hostname,
+                            allocation_id,
+                        },
+                    )
+                    .await?;
+                let result = HostnamePointerList {
+                    count: pointers.len(),
+                    pointers,
+                };
+                output_result(writer, output_file, &result);
+            }
+            HostnameCommands::History { target } => {
+                // Auto-detect: a parseable IP filters by IP, else by hostname.
+                let filter = if target.parse::<std::net::IpAddr>().is_ok() {
+                    HostnameHistoryFilter {
+                        ip_address: Some(target),
+                        hostname: None,
+                    }
+                } else {
+                    HostnameHistoryFilter {
+                        ip_address: None,
+                        hostname: Some(target),
+                    }
+                };
+                let entries = ops.list_hostname_history(Tenant::LOCAL, &filter).await?;
+                let result = HostnamePointerHistoryList {
+                    count: entries.len(),
+                    entries,
+                };
+                output_result(writer, output_file, &result);
+            }
+            HostnameCommands::Delete { ip, hostname } => {
+                ops.delete_hostname_pointer(Tenant::LOCAL, &ip, &hostname)
+                    .await?;
+                if output_file.is_none() {
+                    print_stdout(&format!("Deleted hostname pointer {ip} -> {hostname}"));
+                }
             }
         },
     }

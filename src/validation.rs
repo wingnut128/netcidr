@@ -92,6 +92,86 @@ pub fn validate_ip_address(s: &str) -> Result<()> {
     Ok(())
 }
 
+/// Maximum total length of a hostname (RFC 1035 §3.1).
+const MAX_HOSTNAME_LENGTH: usize = 253;
+
+/// Validate and canonicalize an IP address: returns the parsed address in its
+/// canonical string form (e.g. `2001:DB8::1` → `2001:db8::1`, `010.0.0.1`
+/// rejected). Use this before storing an IP so equal addresses compare equal.
+pub fn normalize_ip_address(s: &str) -> Result<String> {
+    validate_ip_address(s)?;
+    if let Ok(v4) = s.parse::<Ipv4Addr>() {
+        return Ok(v4.to_string());
+    }
+    let v6 = s
+        .parse::<Ipv6Addr>()
+        .map_err(|_| NetcidrError::InvalidInput(format!("not a valid IP address: {}", s)))?;
+    Ok(v6.to_string())
+}
+
+/// Validate and canonicalize a hostname per RFC 1123: total length ≤ 253, each
+/// dot-separated label 1–63 chars of `[A-Za-z0-9-]` with no leading/trailing
+/// hyphen. Rejects control chars and path traversal. A single trailing dot is
+/// stripped and the result is lowercased.
+pub fn normalize_hostname(s: &str) -> Result<String> {
+    if has_control_chars(s) {
+        return Err(NetcidrError::InvalidInput(
+            "hostname contains control characters".to_string(),
+        ));
+    }
+    if has_path_traversal(s) {
+        return Err(NetcidrError::InvalidInput(
+            "hostname contains path traversal sequences".to_string(),
+        ));
+    }
+
+    // Tolerate a single canonical trailing dot (FQDN root).
+    let trimmed = s.strip_suffix('.').unwrap_or(s);
+
+    if trimmed.is_empty() {
+        return Err(NetcidrError::InvalidInput(
+            "hostname must not be empty".to_string(),
+        ));
+    }
+    if trimmed.len() > MAX_HOSTNAME_LENGTH {
+        return Err(NetcidrError::InputTooLong {
+            length: trimmed.len(),
+            limit: MAX_HOSTNAME_LENGTH,
+        });
+    }
+
+    for label in trimmed.split('.') {
+        if label.is_empty() || label.len() > 63 {
+            return Err(NetcidrError::InvalidInput(format!(
+                "hostname label must be 1-63 characters: '{}'",
+                label
+            )));
+        }
+        if !label
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        {
+            return Err(NetcidrError::InvalidInput(format!(
+                "hostname label '{}' contains invalid characters (allowed: A-Z a-z 0-9 -)",
+                label
+            )));
+        }
+        if label.starts_with('-') || label.ends_with('-') {
+            return Err(NetcidrError::InvalidInput(format!(
+                "hostname label '{}' must not start or end with a hyphen",
+                label
+            )));
+        }
+    }
+
+    Ok(trimmed.to_ascii_lowercase())
+}
+
+/// Validate a hostname without returning the normalized form.
+pub fn validate_hostname(s: &str) -> Result<()> {
+    normalize_hostname(s).map(|_| ())
+}
+
 /// Validate prefix length for the given IP version (4 or 6).
 pub fn validate_prefix_length(prefix: u8, ip_version: u8) -> Result<()> {
     let max = if ip_version == 4 { 32 } else { 128 };
@@ -436,5 +516,85 @@ mod tests {
     fn status_empty() {
         let err = sanitize_status("").unwrap_err();
         assert!(matches!(err, NetcidrError::InvalidInput(_)));
+    }
+
+    // -----------------------------------------------------------------------
+    // normalize_hostname / validate_hostname
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn hostname_accepts_valid_fqdn() {
+        assert_eq!(
+            normalize_hostname("Web-01.Example.COM").unwrap(),
+            "web-01.example.com"
+        );
+        assert_eq!(normalize_hostname("host").unwrap(), "host");
+        // Trailing FQDN dot is tolerated and stripped.
+        assert_eq!(
+            normalize_hostname("web-01.example.com.").unwrap(),
+            "web-01.example.com"
+        );
+    }
+
+    #[test]
+    fn hostname_rejects_empty() {
+        assert!(matches!(
+            normalize_hostname(""),
+            Err(NetcidrError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn hostname_rejects_too_long() {
+        let long = format!("{}.com", "a".repeat(300));
+        assert!(matches!(
+            normalize_hostname(&long),
+            Err(NetcidrError::InputTooLong { .. })
+        ));
+    }
+
+    #[test]
+    fn hostname_rejects_oversized_label() {
+        let label = "a".repeat(64);
+        assert!(matches!(
+            normalize_hostname(&format!("{label}.com")),
+            Err(NetcidrError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn hostname_rejects_leading_or_trailing_hyphen() {
+        assert!(normalize_hostname("-bad.example.com").is_err());
+        assert!(normalize_hostname("bad-.example.com").is_err());
+    }
+
+    #[test]
+    fn hostname_rejects_invalid_chars() {
+        assert!(normalize_hostname("under_score.example.com").is_err());
+        assert!(normalize_hostname("spa ce.example.com").is_err());
+    }
+
+    #[test]
+    fn hostname_rejects_control_and_traversal() {
+        assert!(normalize_hostname("evil\u{0}.com").is_err());
+        assert!(normalize_hostname("../etc/passwd").is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // normalize_ip_address
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ip_normalizes_canonical_form() {
+        assert_eq!(normalize_ip_address("10.0.0.5").unwrap(), "10.0.0.5");
+        assert_eq!(
+            normalize_ip_address("2001:DB8::0001").unwrap(),
+            "2001:db8::1"
+        );
+    }
+
+    #[test]
+    fn ip_rejects_garbage() {
+        assert!(normalize_ip_address("not-an-ip").is_err());
     }
 }

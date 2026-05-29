@@ -70,11 +70,13 @@ pub fn present(err: &NetcidrError) -> PresentedError {
         },
 
         // 404 — domain "not found"
-        CidrBlockNotFound(_) | AllocationNotFound(_) => PresentedError {
-            status: 404,
-            client_msg: err.to_string(),
-            log_level: LogLevel::None,
-        },
+        CidrBlockNotFound(_) | AllocationNotFound(_) | HostnamePointerNotFound(_) => {
+            PresentedError {
+                status: 404,
+                client_msg: err.to_string(),
+                log_level: LogLevel::None,
+            }
+        }
 
         // 404 — PAT not found; do NOT echo the caller-supplied id.
         PatNotFound(_) => PresentedError {

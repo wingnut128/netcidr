@@ -839,6 +839,73 @@ fn test_ipam_cidr_block_lifecycle() {
 }
 
 #[test]
+fn test_ipam_hostname_lifecycle() {
+    let db = "/tmp/netcidr-test-hostname.db";
+    let _ = std::fs::remove_file(db);
+
+    // Set (create) — hostname is normalized to lowercase.
+    let (stdout, _, success) = run_ipam(
+        db,
+        &[
+            "hostname",
+            "set",
+            "10.0.1.5",
+            "Web-01.Example.COM",
+            "--notes",
+            "primary",
+        ],
+    );
+    assert!(success);
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
+    assert_eq!(json["ip_address"], "10.0.1.5");
+    assert_eq!(json["hostname"], "web-01.example.com");
+
+    // A second hostname on the same IP (many-to-many).
+    let (_, _, success) = run_ipam(db, &["hostname", "set", "10.0.1.5", "app.example.com"]);
+    assert!(success);
+
+    // Get shows both current names.
+    let (stdout, _, success) = run_ipam(db, &["hostname", "get", "10.0.1.5"]);
+    assert!(success);
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
+    assert_eq!(json["count"], 2);
+
+    // Delete one.
+    let (stdout, _, success) = run_ipam(
+        db,
+        &["hostname", "delete", "10.0.1.5", "web-01.example.com"],
+    );
+    assert!(success);
+    assert!(stdout.contains("Deleted"));
+
+    // List now shows one live pointer.
+    let (stdout, _, success) = run_ipam(db, &["hostname", "list"]);
+    assert!(success);
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
+    assert_eq!(json["count"], 1);
+
+    // History (by IP) preserves create/create/delete (append-only).
+    let (stdout, _, success) = run_ipam(db, &["hostname", "history", "10.0.1.5"]);
+    assert!(success);
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
+    assert_eq!(json["count"], 3);
+    let kinds: Vec<&str> = json["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["change_kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, vec!["create", "create", "delete"]);
+
+    // Invalid hostname is rejected.
+    let (_, stderr, success) = run_ipam(db, &["hostname", "set", "10.0.1.9", "bad_host!"]);
+    assert!(!success);
+    assert!(stderr.contains("Invalid input"));
+
+    let _ = std::fs::remove_file(db);
+}
+
+#[test]
 fn test_ipam_allocation_workflow() {
     let db = "/tmp/netcidr-test-alloc.db";
     let _ = std::fs::remove_file(db);

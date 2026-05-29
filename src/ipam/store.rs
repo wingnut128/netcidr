@@ -56,6 +56,40 @@ pub trait IpamStore: Send + Sync {
     async fn set_tags(&self, tenant_id: &str, allocation_id: &str, tags: &[Tag]) -> Result<()>;
     async fn get_tags(&self, tenant_id: &str, allocation_id: &str) -> Result<Vec<Tag>>;
 
+    // --- hostname pointers ---
+    /// Upsert a hostname pointer for `(tenant_id, ip, hostname)`. Inserts when
+    /// new (recording a `create` history row), otherwise updates `notes`/
+    /// `allocation_id` (recording an `update` row). The live mutation and its
+    /// history row are written in a single transaction. `actor` is the OIDC
+    /// identity or `"cli"`.
+    async fn set_hostname_pointer(
+        &self,
+        tenant_id: &str,
+        actor: &str,
+        input: &CreateHostnamePointer,
+    ) -> Result<HostnamePointer>;
+    async fn list_hostname_pointers(
+        &self,
+        tenant_id: &str,
+        filter: &HostnamePointerFilter,
+    ) -> Result<Vec<HostnamePointer>>;
+    /// Remove the live pointer for `(tenant_id, ip, hostname)` and record a
+    /// `delete` history row (with the prior value) in the same transaction.
+    /// Returns `CidrBlockNotFound`-style `NotFound` if no such live pointer
+    /// exists for the tenant.
+    async fn delete_hostname_pointer(
+        &self,
+        tenant_id: &str,
+        actor: &str,
+        ip: &str,
+        hostname: &str,
+    ) -> Result<()>;
+    async fn list_hostname_history(
+        &self,
+        tenant_id: &str,
+        filter: &HostnameHistoryFilter,
+    ) -> Result<Vec<HostnamePointerHistoryEntry>>;
+
     // --- audit ---
     /// `entry.tenant_id` is the source of truth (already populated by caller).
     async fn append_audit(&self, entry: &AuditEntry) -> Result<()>;
