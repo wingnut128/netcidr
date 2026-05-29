@@ -2260,7 +2260,7 @@ dependencies = [
 
 [[package]]
 name = "netcidr"
-version = "0.26.3"
+version = "0.26.4"
 dependencies = [
  "anyhow",
  "async-trait",
