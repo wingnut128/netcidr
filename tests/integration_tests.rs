@@ -1,9 +1,16 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+/// Path to the binary under test. Cargo builds the `netcidr` bin (with the
+/// same feature set as the test harness) before running integration tests and
+/// exposes its path here. Invoking it directly avoids `cargo run`, which would
+/// re-walk the dependency graph and contend on Cargo's build-directory file
+/// lock on every call — under nextest's parallelism that serialized all 83
+/// integration tests and stretched the CI test step to ~29 minutes. (#226)
+const NETCIDR_BIN: &str = env!("CARGO_BIN_EXE_netcidr");
+
 fn run_netcidr(args: &[&str]) -> (String, String, bool) {
-    let output = Command::new("cargo")
-        .args(["run", "--quiet", "--"])
+    let output = Command::new(NETCIDR_BIN)
         .args(args)
         .output()
         .expect("Failed to run netcidr");
@@ -14,8 +21,7 @@ fn run_netcidr(args: &[&str]) -> (String, String, bool) {
 }
 
 fn run_netcidr_stdin(args: &[&str], input: &str) -> (String, String, bool) {
-    let mut child = Command::new("cargo")
-        .args(["run", "--quiet", "--"])
+    let mut child = Command::new(NETCIDR_BIN)
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
