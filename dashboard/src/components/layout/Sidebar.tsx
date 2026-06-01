@@ -63,6 +63,7 @@ export function Sidebar({
   const navItems = [
     ...baseNavItems,
     ...(ipamEnabled ? [{ to: "/ipam", label: "IPAM" }] : []),
+    ...(ipamEnabled ? [{ to: "/hostnames", label: "Hostnames" }] : []),
     ...(auth.status === "authenticated"
       ? [{ to: "/tokens", label: "Tokens" }]
       : []),
