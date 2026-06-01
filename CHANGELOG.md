@@ -7,7 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.26.4](https://github.com/wingnut128/netcidr/compare/v0.26.3...v0.26.4) - 2026-05-29
+## [0.26.5](https://github.com/wingnut128/netcidr/compare/v0.26.4...v0.26.5) - 2026-06-01
+
+### Fixed
+
+- **Startup crash (stack overflow) when Swagger is enabled.** `0.26.4` shipped recursive `ToSchema` types for the hierarchical split tree (`Ipv4SplitTreeNode`/`Ipv6SplitTreeNode`, each with `children: Vec<Self>`). With `enable_swagger` on (the default, and the Lambda deployment setting), building the OpenAPI document expanded these self-referential schemas inline without bound, overflowing the stack and aborting the process on startup — so every request returned an internal server error. The recursive fields are now annotated `#[schema(no_recursion)]`, which the build path never exercised in CI. Added a regression test that builds the full OpenAPI document (`ApiDoc::openapi()`) under the `swagger` feature so this class of recursion can never ship past CI again. Note: CI's test job now needs the spec build exercised — the new test runs whenever the `swagger` feature is enabled.
 
 ### Added
 
