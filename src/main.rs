@@ -527,6 +527,11 @@ async fn async_main(cli: Cli) {
             .await
             .unwrap();
 
+            // Flush any buffered OpenTelemetry spans before exit (no-op without
+            // the `otel` feature or when OTLP export is not configured). The
+            // guard's Drop also shuts the pipeline down.
+            _guard.flush();
+
             info!("Server shut down gracefully");
         }
         None => {

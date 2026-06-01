@@ -44,16 +44,33 @@ fn env_or<S: Into<String>>(key: &str, fallback: S) -> String {
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,tower_http=warn".into()),
-        )
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "info,tower_http=warn".into());
+    let fmt_layer = tracing_subscriber::fmt::layer()
         .json()
         .with_ansi(false)
         .with_target(true)
-        .without_time() // Lambda already adds timestamps to log lines.
-        .init();
+        .without_time(); // Lambda already adds timestamps to log lines.
+
+    let registry = tracing_subscriber::registry().with(filter).with(fmt_layer);
+
+    // Opt-in OTLP span export. When built without `otel` or with
+    // OTEL_EXPORTER_OTLP_ENDPOINT unset, no layer is attached (true no-op).
+    // The guard is held for the force_flush middleware below.
+    #[cfg(feature = "otel")]
+    let otel_guard: Option<Arc<netcidr::telemetry::OtelGuard>> = {
+        let (otel_layer, guard) = match netcidr::telemetry::otel_layer() {
+            Some((layer, g)) => (Some(layer), Some(Arc::new(g))),
+            None => (None, None),
+        };
+        registry.with(otel_layer).init();
+        guard
+    };
+    #[cfg(not(feature = "otel"))]
+    registry.init();
 
     // -----------------------------------------------------------------------
     // S3/SQLite sync — activated when NETCIDR_S3_BUCKET is set.
@@ -189,6 +206,24 @@ async fn main() -> Result<(), Error> {
                     {
                         tracing::error!(error = %e, "S3 push failed after write");
                     }
+                    response
+                }
+            },
+        ));
+    }
+
+    // Flush OTLP spans at the end of every invocation. The Lambda execution
+    // environment can freeze between invocations, so a batch exporter must be
+    // force-flushed per request to avoid losing in-flight spans. Added as the
+    // outermost layer so it runs after the response (and any S3 push) is done.
+    #[cfg(feature = "otel")]
+    if let Some(guard) = otel_guard {
+        router = router.layer(axum::middleware::from_fn(
+            move |req: axum::extract::Request, next: axum::middleware::Next| {
+                let guard = Arc::clone(&guard);
+                async move {
+                    let response = next.run(req).await;
+                    guard.force_flush();
                     response
                 }
             },
