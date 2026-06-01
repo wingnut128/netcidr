@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **CI: integration tests no longer shell out to `cargo run`.** `tests/integration_tests.rs` invoked the binary via `cargo run` on every CLI call, so under nextest's parallel execution all 83 integration tests serialized on Cargo's build-directory file lock — stretching the `Format, Lint & Test` step to ~29 minutes (each integration test reported 60–240s+ in nextest's SLOW warnings). The helpers now invoke the prebuilt binary directly via `env!("CARGO_BIN_EXE_netcidr")`: no per-call dependency-graph walk, no build-lock contention, and the binary matches the test harness's feature set. Locally the full integration suite dropped from being the dominant cost to ~2s. ([#226](https://github.com/wingnut128/netcidr/issues/226))
+
 ## [0.26.5](https://github.com/wingnut128/netcidr/compare/v0.26.4...v0.26.5) - 2026-06-01
 
 ### Fixed
