@@ -1471,3 +1471,38 @@ async fn dashboard() -> impl IntoResponse {
         include_str!("../dashboard/dist/index.html"),
     )
 }
+
+#[cfg(all(test, feature = "swagger"))]
+mod openapi_tests {
+    use super::*;
+    use utoipa::OpenApi;
+
+    /// Building the OpenAPI document must not stack-overflow. A recursive
+    /// `ToSchema` type (e.g. a tree node with `children: Vec<Self>`) makes the
+    /// utoipa generator expand the schema inline forever; `#[schema(no_recursion)]`
+    /// breaks that. This test forces the full spec build that the Swagger route
+    /// and the Lambda startup path perform, so the recursion regression can
+    /// never ship past CI again. (Lambda runs with `enable_swagger=true`, so a
+    /// spec-build overflow aborts the process and 500s every request.)
+    #[test]
+    fn openapi_spec_builds_without_overflow() {
+        let doc = ApiDoc::openapi();
+        let schemas = doc
+            .components
+            .as_ref()
+            .expect("components present")
+            .schemas
+            .clone();
+        // Sanity: the recursive split-tree schemas are present and the spec is
+        // non-trivial (proves we built the whole thing, not an early-out).
+        assert!(
+            schemas.contains_key("Ipv4SplitTreeNode"),
+            "Ipv4SplitTreeNode schema should be registered"
+        );
+        assert!(
+            schemas.contains_key("Ipv6SplitTreeNode"),
+            "Ipv6SplitTreeNode schema should be registered"
+        );
+        assert!(schemas.len() > 30, "expected a fully-populated schema set");
+    }
+}

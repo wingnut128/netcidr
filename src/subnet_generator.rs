@@ -93,6 +93,10 @@ pub struct Ipv4SplitTreeNode {
     /// The subnet at this level of the tree.
     pub subnet: Ipv4Subnet,
     /// Child subnets one level deeper (empty at the leaves).
+    // `no_recursion` stops the utoipa schema generator from expanding this
+    // self-referential field inline — without it, building the OpenAPI spec
+    // recurses forever and overflows the stack at startup.
+    #[cfg_attr(feature = "swagger", schema(no_recursion))]
     pub children: Vec<Ipv4SplitTreeNode>,
 }
 
@@ -116,6 +120,9 @@ pub struct Ipv6SplitTreeNode {
     /// The subnet at this level of the tree.
     pub subnet: Ipv6Subnet,
     /// Child subnets one level deeper (empty at the leaves).
+    // See `Ipv4SplitTreeNode::children` — `no_recursion` prevents an
+    // infinite schema-expansion stack overflow when building the OpenAPI spec.
+    #[cfg_attr(feature = "swagger", schema(no_recursion))]
     pub children: Vec<Ipv6SplitTreeNode>,
 }
 
