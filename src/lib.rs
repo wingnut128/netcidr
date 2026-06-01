@@ -40,6 +40,9 @@ pub mod error_presenter;
 pub mod logging;
 pub mod validation;
 
+#[cfg(feature = "otel")]
+pub mod telemetry;
+
 #[cfg(feature = "tui")]
 pub mod tui;
 

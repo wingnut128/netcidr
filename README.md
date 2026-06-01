@@ -912,6 +912,40 @@ netcidr serve --ipam-enabled --ipam-db /path/to/ipam.db
 
 The three allocation endpoints (`POST /ipam/cidr-blocks/{id}/allocate`, `/allocate-specific`, and `/ipam/batch/allocate`) accept an `Idempotency-Key: <opaque>` request header. Replays with the same key + same body return the original response (with `Idempotent-Replay: true`); replays with the same key + a different body return `409`. Cached records are scoped per-endpoint + per-cidr_block and expire after 24 hours.
 
+## Telemetry (OpenTelemetry / OTLP span export)
+
+netcidr can export its `tracing` spans to any OpenTelemetry (OTLP) collector — Honeycomb, Grafana Tempo, an OTel Collector, etc. It is **opt-in and off by default**: you must build with the `otel` feature *and* set `OTEL_EXPORTER_OTLP_ENDPOINT` at runtime. With either missing, no exporter is initialized and there is zero overhead (local dev and unconfigured deployments are unaffected).
+
+**Build with the feature:**
+
+```bash
+cargo build --release --features otel
+# or for Lambda:
+cargo lambda build --release --arm64 --bin lambda --features lambda,otel
+```
+
+**Configure with OTel-generic env vars** (vendor-portable — Honeycomb is just one configuration):
+
+| Env var | Purpose | Default |
+|---|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Collector base URL. **Setting this enables export.** | _(unset → disabled)_ |
+| `OTEL_EXPORTER_OTLP_HEADERS` | Auth/headers, e.g. `x-honeycomb-team=<key>` | _(none)_ |
+| `OTEL_SERVICE_NAME` | Service name on emitted spans | `netcidr` |
+| `OTEL_TRACES_SAMPLER_ARG` | Parent-based sampler ratio, `0.0`–`1.0` | `1.0` (100%) |
+
+**Honeycomb example:**
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT="https://api.honeycomb.io"
+export OTEL_EXPORTER_OTLP_HEADERS="x-honeycomb-team=<your-api-key>"
+export OTEL_SERVICE_NAME="netcidr"
+netcidr serve   # binary built with --features otel
+```
+
+Transport is HTTP/protobuf over reqwest + rustls (no gRPC/tonic, no native deps). `netcidr serve` uses a batch exporter (flushed on graceful shutdown); the Lambda binary uses a batch exporter with a per-invocation `force_flush()` so the frozen execution environment never loses buffered spans.
+
+**Privacy:** a fixed PII allowlist is **enforced at the export boundary** — a redacting exporter strips any attribute keyed like a credential or PII (`*email`, `sub`, `*token*`, `*secret*`, `database_url`, bearer/authorization, …) before spans leave the process. Email, OIDC sub, bearer tokens, PAT secrets, and `DATABASE_URL` are **never** exported, even though some spans record them for local CloudWatch logs. Exported request attributes are limited to `http.route`, `http.method`, `http.status_code`, `netcidr.tenant_id`, and `netcidr.role`. See [ADR-0004](docs/adr/0004-opt-in-otlp-span-export.md).
+
 ## AWS Lambda deployment
 
 netcidr ships a `lambda` binary that runs the same Axum router driven by the AWS Lambda runtime instead of a TCP listener.
