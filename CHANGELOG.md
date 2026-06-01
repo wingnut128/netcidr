@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.6](https://github.com/wingnut128/netcidr/compare/v0.26.5...v0.26.6) - 2026-06-01
+
+### Added
+
+- *(telemetry)* opt-in OpenTelemetry / OTLP span export ([#218](https://github.com/wingnut128/netcidr/pull/218)) ([#224](https://github.com/wingnut128/netcidr/pull/224))
+
+### Other
+
+- *(ci)* invoke prebuilt binary directly instead of `cargo run` ([#226](https://github.com/wingnut128/netcidr/pull/226)) ([#227](https://github.com/wingnut128/netcidr/pull/227))
+
 ### Added
 
 - **Opt-in OpenTelemetry / OTLP span export.** A new off-by-default `otel` Cargo feature exports the existing `tracing` `#[instrument]` spans to any OTLP collector (Honeycomb or otherwise) over HTTP/protobuf via reqwest+rustls — no gRPC/tonic, no native deps. The layer attaches only when built with `--features otel` **and** `OTEL_EXPORTER_OTLP_ENDPOINT` is set; otherwise no layer is attached and the SDK is never initialized (true no-op — local dev and unconfigured deployments pay zero overhead). Works in both `netcidr serve` (batch exporter, flush on graceful shutdown) and AWS Lambda (batch + per-invocation `force_flush()` middleware, so frozen execution environments never lose buffered spans). Configured via OTel-generic env vars (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`, `OTEL_TRACES_SAMPLER_ARG`); parent-based ratio sampling defaults to 100%. A **PII allowlist is enforced at the export boundary** — a redacting exporter strips any attribute keyed like a credential or PII (`*email`, `sub`, `*token*`, `*secret*`, `database_url`, …) before spans leave the process, so email/sub/bearer/PAT-secret/`DATABASE_URL` are never exported even though `#[instrument]` records some for CloudWatch. Measured pipeline init ~5 ms (well within the +50 ms cold-start budget); `cargo audit` shows no new advisories. See ADR-0004. Closes [#218](https://github.com/wingnut128/netcidr/issues/218).
