@@ -194,3 +194,49 @@ export interface RoleAssignmentList {
   users: RoleAssignment[];
   count: number;
 }
+
+// Hostname pointers (IP↔hostname mappings with change history).
+// Mirrors src/ipam/models.rs HostnamePointer / *List / *HistoryEntry.
+
+export interface HostnamePointer {
+  id: string;
+  tenant_id: string;
+  ip_address: string;
+  hostname: string;
+  allocation_id?: string;
+  notes?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface HostnamePointerList {
+  pointers: HostnamePointer[];
+  count: number;
+}
+
+export interface CreateHostnamePointer {
+  ip_address: string;
+  hostname: string;
+  allocation_id?: string;
+  notes?: string;
+}
+
+export type ChangeKind = "create" | "update" | "delete";
+
+export interface HostnamePointerHistoryEntry {
+  id: string;
+  tenant_id: string;
+  pointer_id: string;
+  ip_address: string;
+  hostname: string;
+  change_kind: ChangeKind;
+  previous_value?: string;
+  new_value?: string;
+  actor: string;
+  changed_at: string;
+}
+
+export interface HostnamePointerHistoryList {
+  entries: HostnamePointerHistoryEntry[];
+  count: number;
+}

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Dashboard Hostnames page.** Hostname pointers (shipped headless in the CLI/API/MCP) now have a dashboard UI at `/#/hostnames`: list current IP↔hostname pointers with filter-by-IP / filter-by-hostname, a set form (IP + hostname + optional allocation id / notes; create-or-update), per-row delete, and a per-pointer **History** modal showing the append-only change trail (create/update/delete, actor, timestamp). Visible whenever IPAM is enabled; reads need Reader and set/delete need Allocator, with the backend's role/validation errors surfaced inline. Completes the dashboard half of the hostname-pointers feature ([#228](https://github.com/wingnut128/netcidr/issues/228)).
+
 ## [0.26.6](https://github.com/wingnut128/netcidr/compare/v0.26.5...v0.26.6) - 2026-06-01
 
 ### Added

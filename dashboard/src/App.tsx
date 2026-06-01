@@ -6,6 +6,7 @@ import { Contains } from "./pages/Contains";
 import { Summarize } from "./pages/Summarize";
 import { FromRange } from "./pages/FromRange";
 import { Ipam } from "./pages/Ipam";
+import { Hostnames } from "./pages/Hostnames";
 import { Visualizer } from "./pages/Visualizer";
 import { AllowlistAdmin } from "./pages/AllowlistAdmin";
 import { UsersAdmin } from "./pages/UsersAdmin";
@@ -24,6 +25,7 @@ export function App() {
           <Route path="from-range" element={<FromRange />} />
           <Route path="visualizer" element={<Visualizer />} />
           <Route path="ipam" element={<Ipam />} />
+          <Route path="hostnames" element={<Hostnames />} />
           <Route path="tokens" element={<Tokens />} />
           <Route path="admin/allowlist" element={<AllowlistAdmin />} />
           <Route path="admin/users" element={<UsersAdmin />} />
