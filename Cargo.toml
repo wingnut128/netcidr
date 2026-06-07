@@ -60,7 +60,7 @@ utoipa-swagger-ui = { version = "9", features = ["axum"], optional = true }
 opentelemetry = { version = "0.31", optional = true }
 opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"], optional = true }
 opentelemetry-otlp = { version = "0.31", default-features = false, features = ["http-proto", "reqwest-client", "reqwest-rustls-webpki-roots", "trace"], optional = true }
-tracing-opentelemetry = { version = "0.32", optional = true }
+tracing-opentelemetry = { version = "0.33", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
