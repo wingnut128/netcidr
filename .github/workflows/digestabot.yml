@@ -40,7 +40,7 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - uses: chainguard-dev/digestabot@afe360aa3b0c29d88844138e8fa0349384398967 # v1.3.1
+      - uses: chainguard-dev/digestabot@33d0b78e580aa0c83fe188eb3dfad6611b662479 # v1.3.2
         with:
           title-for-pr: 'chore(docker): refresh pinned image digests'
           commit-message: |
