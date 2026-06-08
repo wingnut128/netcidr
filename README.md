@@ -651,6 +651,37 @@ curl http://localhost:8080/health
 If you need compose-level ordering, use `depends_on: { condition: service_started }` rather than
 `service_healthy`.
 
+### Publishing to a registry
+
+`just docker` builds the image tagged `netcidr:<version>` and `netcidr:latest` by default. To publish
+to a registry, override the `docker_image` variable on the command line (it's a plain just variable —
+no need to edit the justfile) and point it at your repository:
+
+```bash
+# Build both :<version> and :latest under your registry path
+just docker_image=ghcr.io/you/netcidr docker
+just docker_image=ghcr.io/you/netcidr docker-push
+```
+
+`just docker-push` pushes both the `:<version>` and `:latest` tags. Authenticate first with your
+registry's normal `docker login`.
+
+**Cloudsmith example.** The maintainer publishes to Cloudsmith
+(`docker.cloudsmith.io/cloudreaper/artifacts/netcidr`); `just docker-login` automates that login:
+
+```bash
+export CLOUDSMITH_API_KEY=...        # inject via your secrets manager, e.g. `op run -- just docker-push`
+just docker-login                    # Cloudsmith uses username `token` + your API key as the password
+
+img=docker.cloudsmith.io/cloudreaper/artifacts/netcidr
+just docker_image=$img docker
+just docker_image=$img docker-push
+```
+
+`docker-login` reads `CLOUDSMITH_API_KEY` (and optional `CLOUDSMITH_USER`, default `token`) from the
+environment and pipes the secret via `--password-stdin` — nothing is interpolated into the recipe or
+echoed to the terminal.
+
 For Kubernetes, use an `httpGet` probe against `/health` on port 8080 for both liveness and readiness:
 
 ```yaml

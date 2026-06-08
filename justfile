@@ -118,6 +118,15 @@ docker:
 docker-run:
     docker run --rm -p 8080:8080 {{docker_image}}:latest serve --address 0.0.0.0
 
+# Log in to the Cloudsmith registry (reads CLOUDSMITH_API_KEY / CLOUDSMITH_USER from the env)
+docker-login:
+    @printf '%s' "$CLOUDSMITH_API_KEY" | docker login docker.cloudsmith.io -u "${CLOUDSMITH_USER:-token}" --password-stdin
+
+# Push Docker image to registry (both :<version> and :latest tags)
+docker-push:
+    docker push {{docker_image}}:{{docker_tag}}
+    docker push {{docker_image}}:latest
+
 # ──────────────────────────────── Install ───────────────────────────────
 
 # Install binary locally (default features: swagger)

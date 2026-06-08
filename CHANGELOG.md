@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `just docker-push` and `just docker-login` recipes for publishing the Docker image. `docker-push` pushes both the `:<version>` and `:latest` tags; the registry target is the `docker_image` just variable (default `netcidr`), overridable on the command line (e.g. `just docker_image=ghcr.io/you/netcidr docker-push`). `docker-login` is a Cloudsmith convenience that authenticates using `CLOUDSMITH_API_KEY` (and optional `CLOUDSMITH_USER`, default `token`) from the environment via stdin.
+
 ## [0.26.8](https://github.com/wingnut128/netcidr/compare/v0.26.7...v0.26.8) - 2026-06-08
 
 ### Fixed
