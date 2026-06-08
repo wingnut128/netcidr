@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.8](https://github.com/wingnut128/netcidr/compare/v0.26.7...v0.26.8) - 2026-06-08
+
+### Fixed
+
+- *(deps)* bump rand to 0.8.6 to clear GHSA-cq8v-f236-94qc ([#240](https://github.com/wingnut128/netcidr/pull/240))
+- patch react-router-dom DoS vuln and bump opentelemetry group to 0.32 ([#238](https://github.com/wingnut128/netcidr/pull/238))
+
 ### Security
 
 - Bump `rand` from 0.8.5 to 0.8.6 to clear [GHSA-cq8v-f236-94qc](https://github.com/advisories/GHSA-cq8v-f236-94qc) (rand is unsound with a custom logger using `rand::rng()`). 0.8.6 is an API-identical soundness patch — no source changes. Direct `rand = "0.8.6"` bump plus a `--precise` lockfile update; transitive consumers (jsonwebtoken, num-bigint-dig via rsa) resolve up automatically.
