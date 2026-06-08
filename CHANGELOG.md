@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Bump `react-router-dom` from 7.14.2 to 7.17.0 in the dashboard, fixing high-severity DoS vulnerability GHSA-8x6r-g9mw-2r78
+- Bump `opentelemetry`, `opentelemetry_sdk`, `opentelemetry-otlp` from 0.31 to 0.32 and `tracing-opentelemetry` from 0.32 to 0.33; adapt `RedactingExporter::shutdown` and `force_flush` to the new `&self` receiver required by `SpanExporter` 0.32
+
 ## [0.26.7](https://github.com/wingnut128/netcidr/compare/v0.26.6...v0.26.7) - 2026-06-01
 
 ### Added
