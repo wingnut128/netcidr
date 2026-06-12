@@ -1,0 +1,7 @@
+# Bun configuration for the netcidr dashboard.
+# Hardening: future `bun add` writes exact versions (no `^` ranges), and
+# lifecycle (postinstall) scripts stay disabled unless a package is added to
+# `trustedDependencies` in package.json — Bun's secure default. Do not enable
+# postinstall scripts globally.
+[install]
+exact = true
