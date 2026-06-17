@@ -140,6 +140,13 @@ pub enum Commands {
         /// URL of a running netcidr API server (enables IPAM tools via HTTP proxy)
         #[arg(long, conflicts_with = "ipam_db")]
         api_url: Option<String>,
+
+        /// Bearer token for authenticating to the remote API (used with --api-url).
+        ///
+        /// Falls back to the NETCIDR_API_TOKEN environment variable. Without a
+        /// token the remote server must accept unauthenticated requests.
+        #[arg(long, requires = "api_url")]
+        api_token: Option<String>,
     },
 
     /// Administrative commands (audit queries, and more over time)

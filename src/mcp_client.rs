@@ -2,7 +2,8 @@
 //!
 //! Used by the MCP server when started with `--api-url` instead of `--ipam-db`.
 
-use reqwest::Client;
+use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
+use reqwest::{Client, Url};
 
 use crate::error::{NetcidrError, Result};
 use crate::ipam::models::*;
@@ -21,17 +22,45 @@ struct ApiError {
 }
 
 impl HttpIpamClient {
-    pub fn new(base_url: &str) -> Result<Self> {
+    pub fn new(base_url: &str, api_token: Option<&str>) -> Result<Self> {
         let base_url = base_url.trim_end_matches('/').to_string();
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
+        let mut builder = Client::builder().timeout(std::time::Duration::from_secs(30));
+
+        // Authenticate to the remote API with a bearer token when one is
+        // configured. Without it the remote must run unauthenticated, which
+        // widens its exposure. The header is marked sensitive so it is
+        // redacted from request logs.
+        if let Some(token) = api_token.map(str::trim).filter(|t| !t.is_empty()) {
+            let mut value = HeaderValue::from_str(&format!("Bearer {token}"))
+                .map_err(|_| NetcidrError::InvalidInput("invalid API token".to_string()))?;
+            value.set_sensitive(true);
+            let mut headers = HeaderMap::new();
+            headers.insert(AUTHORIZATION, value);
+            builder = builder.default_headers(headers);
+        }
+
+        let client = builder
             .build()
             .map_err(|e| NetcidrError::InvalidInput(format!("HTTP client error: {e}")))?;
         Ok(Self { client, base_url })
     }
 
+    /// Build a URL for a path that contains no caller-controlled segments.
     pub(crate) fn url(&self, path: &str) -> String {
         format!("{}/ipam{}", self.base_url, path)
+    }
+
+    /// Build a URL by appending caller-controlled path `segments` to the
+    /// `/ipam` base, percent-encoding each segment. This prevents a value
+    /// containing `/`, `?`, or `#` from injecting extra path segments or a
+    /// query string into the request to the remote API.
+    fn seg_url(&self, segments: &[&str]) -> Result<Url> {
+        let mut url = Url::parse(&format!("{}/ipam", self.base_url))
+            .map_err(|e| NetcidrError::InvalidInput(format!("invalid API base URL: {e}")))?;
+        url.path_segments_mut()
+            .map_err(|_| NetcidrError::InvalidInput("invalid API base URL".to_string()))?
+            .extend(segments);
+        Ok(url)
     }
 
     /// Map a non-success HTTP response from the upstream API to a
@@ -110,7 +139,7 @@ impl HttpIpamClient {
         });
         let resp = self
             .client
-            .post(self.url(&format!("/cidr-blocks/{}/allocate", request.cidr_block_id)))
+            .post(self.seg_url(&["cidr-blocks", &request.cidr_block_id, "allocate"])?)
             .json(&body)
             .send()
             .await
@@ -142,10 +171,7 @@ impl HttpIpamClient {
         });
         let resp = self
             .client
-            .post(self.url(&format!(
-                "/cidr-blocks/{}/allocate-specific",
-                input.cidr_block_id
-            )))
+            .post(self.seg_url(&["cidr-blocks", &input.cidr_block_id, "allocate-specific"])?)
             .json(&body)
             .send()
             .await
@@ -162,7 +188,7 @@ impl HttpIpamClient {
     pub async fn release_allocation(&self, id: &str) -> Result<Allocation> {
         let resp = self
             .client
-            .post(self.url(&format!("/allocations/{id}/release")))
+            .post(self.seg_url(&["allocations", id, "release"])?)
             .send()
             .await
             .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
@@ -195,7 +221,7 @@ impl HttpIpamClient {
         }
         let resp = self
             .client
-            .get(self.url(&format!("/cidr-blocks/{cidr_block_id}/allocations")))
+            .get(self.seg_url(&["cidr-blocks", cidr_block_id, "allocations"])?)
             .query(&query_params)
             .send()
             .await
@@ -226,7 +252,7 @@ impl HttpIpamClient {
         }
         let resp = self
             .client
-            .get(self.url(&format!("/cidr-blocks/{cidr_block_id}/free")))
+            .get(self.seg_url(&["cidr-blocks", cidr_block_id, "free"])?)
             .query(&query_params)
             .send()
             .await
@@ -243,7 +269,7 @@ impl HttpIpamClient {
     pub async fn utilization(&self, cidr_block_id: &str) -> Result<UtilizationReport> {
         let resp = self
             .client
-            .get(self.url(&format!("/cidr-blocks/{cidr_block_id}/utilization")))
+            .get(self.seg_url(&["cidr-blocks", cidr_block_id, "utilization"])?)
             .send()
             .await
             .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
@@ -263,7 +289,7 @@ impl HttpIpamClient {
     pub async fn find_by_ip(&self, address: &str) -> Result<Vec<Allocation>> {
         let resp = self
             .client
-            .get(self.url(&format!("/find-ip/{address}")))
+            .get(self.seg_url(&["find-ip", address])?)
             .send()
             .await
             .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
@@ -316,13 +342,13 @@ impl HttpIpamClient {
         &self,
         cidr_block_id: Option<&str>,
     ) -> Result<AllocationSummary> {
-        let mut url = self.url("/batch/summary");
-        if let Some(id) = cidr_block_id {
-            url = format!("{url}?cidr_block_id={id}");
-        }
+        let query: Vec<(&str, &str)> = cidr_block_id
+            .map(|id| vec![("cidr_block_id", id)])
+            .unwrap_or_default();
         let resp = self
             .client
-            .get(&url)
+            .get(self.url("/batch/summary"))
+            .query(&query)
             .send()
             .await
             .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
@@ -338,7 +364,7 @@ impl HttpIpamClient {
     pub async fn find_by_resource(&self, resource_id: &str) -> Result<Vec<Allocation>> {
         let resp = self
             .client
-            .get(self.url(&format!("/find-resource/{resource_id}")))
+            .get(self.seg_url(&["find-resource", resource_id])?)
             .send()
             .await
             .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
@@ -451,5 +477,59 @@ impl HttpIpamClient {
         } else {
             Err(Self::map_error(resp).await)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn client() -> HttpIpamClient {
+        HttpIpamClient::new("http://localhost:8080", None).unwrap()
+    }
+
+    #[test]
+    fn seg_url_builds_normal_path() {
+        let url = client()
+            .seg_url(&["allocations", "abc-123", "release"])
+            .unwrap();
+        assert_eq!(url.path(), "/ipam/allocations/abc-123/release");
+        assert!(url.query().is_none());
+    }
+
+    #[test]
+    fn seg_url_encodes_path_injection() {
+        // A value packed with delimiters must stay a single path segment: no
+        // extra segments, no injected query string, no fragment.
+        let url = client()
+            .seg_url(&["find-resource", "evil/../x?y=1#z"])
+            .unwrap();
+
+        let segments: Vec<&str> = url.path_segments().unwrap().collect();
+        assert_eq!(
+            segments,
+            vec!["ipam", "find-resource", "evil%2F..%2Fx%3Fy=1%23z"]
+        );
+        assert!(url.query().is_none(), "query must not be injected: {url}");
+        assert!(
+            url.fragment().is_none(),
+            "fragment must not be injected: {url}"
+        );
+    }
+
+    #[test]
+    fn new_accepts_valid_token() {
+        assert!(HttpIpamClient::new("http://localhost:8080", Some("ncdr_pat_abc")).is_ok());
+    }
+
+    #[test]
+    fn new_treats_blank_token_as_absent() {
+        assert!(HttpIpamClient::new("http://localhost:8080", Some("   ")).is_ok());
+    }
+
+    #[test]
+    fn new_rejects_token_with_control_chars() {
+        // A token with a newline can't form a valid header value.
+        assert!(HttpIpamClient::new("http://localhost:8080", Some("bad\ntoken")).is_err());
     }
 }

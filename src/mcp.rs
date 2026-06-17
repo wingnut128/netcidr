@@ -899,6 +899,8 @@ pub struct McpServerConfig<'a> {
     pub log_file: Option<&'a str>,
     pub ipam_db: Option<&'a str>,
     pub api_url: Option<&'a str>,
+    /// Bearer token for authenticating to the remote API (used with `api_url`).
+    pub api_token: Option<&'a str>,
     /// Allow the HTTP transport to bind to a non-loopback address.
     ///
     /// The MCP HTTP transport has no authentication, so by default we refuse
@@ -938,7 +940,7 @@ pub async fn run_mcp_server(config: McpServerConfig<'_>) -> crate::error::Result
             Some(McpIpamBackend::Local(Arc::new(IpamOps::new(store))))
         }
         (None, Some(url)) => {
-            let client = HttpIpamClient::new(url)?;
+            let client = HttpIpamClient::new(url, config.api_token)?;
             Some(McpIpamBackend::Remote(client))
         }
         (None, None) => None,
@@ -1787,7 +1789,7 @@ mod tests {
 
     #[test]
     fn test_http_client_new() {
-        let client = HttpIpamClient::new("http://localhost:8080").unwrap();
+        let client = HttpIpamClient::new("http://localhost:8080", None).unwrap();
         assert_eq!(
             client.url("/cidr-blocks"),
             "http://localhost:8080/ipam/cidr-blocks"
@@ -1796,7 +1798,7 @@ mod tests {
 
     #[test]
     fn test_http_client_strips_trailing_slash() {
-        let client = HttpIpamClient::new("http://localhost:8080/").unwrap();
+        let client = HttpIpamClient::new("http://localhost:8080/", None).unwrap();
         assert_eq!(
             client.url("/cidr-blocks"),
             "http://localhost:8080/ipam/cidr-blocks"
@@ -1816,6 +1818,7 @@ mod tests {
             log_file: None,
             ipam_db: Some("test.db"),
             api_url: Some("http://localhost:8080"),
+            api_token: None,
         }));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
