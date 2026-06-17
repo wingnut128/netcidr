@@ -309,8 +309,11 @@ just build-mcp
 # Start MCP server (Streamable HTTP on 127.0.0.1:3000)
 netcidr mcp-serve
 
-# Custom address and port
-netcidr mcp-serve --address 0.0.0.0 --port 4000
+# Custom port (loopback)
+netcidr mcp-serve --port 4000
+
+# Bind to a non-loopback address (see security note below — requires opt-in)
+netcidr mcp-serve --address 0.0.0.0 --port 4000 --allow-public-bind
 
 # Use stdio transport (for pipe-based clients like Claude Code)
 netcidr mcp-serve --transport stdio
@@ -322,6 +325,8 @@ netcidr mcp-serve --api-url http://localhost:8080
 # Run as a background daemon
 netcidr mcp-serve --daemonize --pid-file /var/run/netcidr-mcp.pid --log-file /var/log/netcidr-mcp.log
 ```
+
+> **Security:** the MCP HTTP transport has **no authentication** — any client that can reach the port can call every tool, including read/write IPAM operations. It therefore binds to loopback (`127.0.0.1`) by default and **refuses non-loopback binds** unless you pass `--allow-public-bind`. Only opt in when you have placed your own authentication in front of it (e.g. a reverse proxy or network policy). The `stdio` transport is unaffected (it runs under the parent process).
 
 #### Running as a Service
 

@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Harden dashboard package files (supply-chain).** Pinned every dashboard dependency in `dashboard/package.json` to an exact version (removed `^` caret ranges) matching the resolved `bun.lock`, so the manifest is the source of truth and nothing silently floats forward. Added a `packageManager` pin (`bun@1.3.14`) and an `engines` constraint, plus `dashboard/bunfig.toml` with `[install] exact = true` so future `bun add` invocations stay pinned. Lifecycle/postinstall scripts remain disabled by Bun's default (no `trustedDependencies`).
 - Bump dashboard `vite` from 8.0.10 to 8.0.16, clearing high-severity advisory [GHSA-fx2h-pf6j-xcff](https://github.com/advisories/GHSA-fx2h-pf6j-xcff) (`server.fs.deny` bypass via Windows alternate paths). The dev server isn't shipped in the embedded single-file build, but the bump unblocks the CI `bun audit` gate.
+- The MCP HTTP transport now refuses to bind to a non-loopback address unless the new `--allow-public-bind` flag is passed. The HTTP transport has no authentication, so a non-loopback bind previously exposed every IPAM tool (read and write) to any reachable client. The default bind (`127.0.0.1`) is unaffected; operators who intentionally front the server with their own auth (reverse proxy, network policy) can opt back in with `--allow-public-bind` ([#252](https://github.com/wingnut128/netcidr/issues/252)).
 
 ## [0.26.9](https://github.com/wingnut128/netcidr/compare/v0.26.8...v0.26.9) - 2026-06-08
 

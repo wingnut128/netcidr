@@ -372,7 +372,7 @@ fn resolve_email_list(env_var: &str, fallback: &[String]) -> Vec<String> {
     raw.into_iter().map(|s| s.to_ascii_lowercase()).collect()
 }
 
-fn is_loopback_bind_address(bind_address: &str) -> Result<bool> {
+pub(crate) fn is_loopback_bind_address(bind_address: &str) -> Result<bool> {
     let trimmed = bind_address.trim();
     let host = trimmed
         .strip_prefix('[')
