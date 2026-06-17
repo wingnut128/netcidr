@@ -2305,7 +2305,6 @@ dependencies = [
  "csv",
  "daemonize-me",
  "dirs",
- "hmac 0.12.1",
  "http-body-util",
  "ipnet",
  "jsonwebtoken",

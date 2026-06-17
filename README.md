@@ -849,7 +849,6 @@ The IPAM module provides library-level IP address allocation tracking with a plu
 **Storage backends:**
 
 - **SQLite** (default) — zero-config, WAL mode, r2d2 connection pooling, embedded schema migrations
-- **SQLite + S3** (Lambda) — SQLite synced to/from an S3 object; set `NETCIDR_S3_BUCKET` on the Lambda function (see [AWS Lambda deployment](#aws-lambda-deployment))
 - **PostgreSQL** — opt-in via `--features ipam-postgres`, uses `sqlx` with async connection pooling; configure with `--ipam-backend postgres --ipam-db-url <url>`
 - **Pluggable design** — the `IpamStore` async trait allows additional backends via feature flags
 
@@ -989,56 +988,24 @@ Transport is HTTP/protobuf over reqwest + rustls (no gRPC/tonic, no native deps)
 
 ## AWS Lambda deployment
 
-netcidr ships a `lambda` binary that runs the same Axum router driven by the AWS Lambda runtime instead of a TCP listener.
-
-### S3-backed SQLite (recommended, ~$0.01/mo)
-
-For small deployments, store the SQLite database in S3 instead of running an RDS instance (~$15/mo). The Lambda function pulls the database on cold start and pushes it back after every mutating request.
+netcidr ships a `lambda` binary that runs the same Axum router driven by the AWS Lambda runtime instead of a TCP listener. It uses a Postgres backend.
 
 **Build:**
 
 ```bash
-# SQLite + S3 backend (no Postgres dependency)
-cargo lambda build --release --arm64 --bin lambda --features lambda
-
-# Postgres backend (if you need Postgres)
 cargo lambda build --release --arm64 --bin lambda --features lambda,ipam-postgres
 ```
 
-**Required IAM permissions for the Lambda execution role:**
-
-```json
-{
-  "Effect": "Allow",
-  "Action": ["s3:GetObject", "s3:PutObject"],
-  "Resource": "arn:aws:s3:::YOUR-BUCKET/netcidr/netcidr.db"
-}
-```
-
-**Lambda environment variables (S3 mode):**
+**Lambda environment variables:**
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `NETCIDR_S3_BUCKET` | Yes | — | S3 bucket name (enables S3 sync) |
-| `NETCIDR_S3_KEY` | No | `netcidr/netcidr.db` | S3 object key |
-| `NETCIDR_DB` | No | `/tmp/netcidr.db` | Local path inside Lambda |
+| `NETCIDR_DATABASE_URL` | Yes | — | Postgres connection string |
+| `NETCIDR_IPAM_BACKEND` | No | `postgres` | IPAM backend |
 | `NETCIDR_AUTH_MODE` | No | `oidc` | `oidc`, `bearer`, or `none` |
 | `NETCIDR_IPAM_ENABLED` | No | `true` | Disable IPAM endpoints |
 
-**Important:** Set `reserved_concurrency = 1` on the Lambda function. Two concurrent containers each hold a separate copy of the database — the last push wins, so concurrent writes from two containers would lose one of them.
-
-**Cost estimate for a typical small team:**
-
-| Resource | Monthly cost |
-|---|---|
-| S3 storage (< 1 MB) | < $0.01 |
-| S3 PUT requests (~100/day) | < $0.01 |
-| Lambda (free tier covers millions of requests) | $0 |
-| **Total** | **~$0.01/mo** vs ~$15/mo for RDS |
-
-### Postgres backend (Lambda)
-
-Leave `NETCIDR_S3_BUCKET` unset and set `NETCIDR_DATABASE_URL` to a Postgres connection string. Consider RDS Proxy to manage connection pooling across Lambda invocations.
+Point `NETCIDR_DATABASE_URL` at a serverless Postgres (e.g. [Neon](https://neon.tech)) or RDS. For RDS, consider RDS Proxy to manage connection pooling across Lambda invocations.
 
 ## License
 

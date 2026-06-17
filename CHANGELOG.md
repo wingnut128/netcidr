@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- Removed the S3-backed SQLite persistence mode for the Lambda binary (`NETCIDR_S3_BUCKET`/`NETCIDR_S3_KEY`, the `s3_sync` module, and the `hmac` dependency). The Lambda binary now uses the Postgres backend exclusively (`NETCIDR_DATABASE_URL`). This removes the attack surface behind the S3 sync finding — no integrity check on pull, no client-side encryption, and a symlink-unsafe local DB path ([#254](https://github.com/wingnut128/netcidr/issues/254)).
+
 ### Security
 
 - **Harden dashboard package files (supply-chain).** Pinned every dashboard dependency in `dashboard/package.json` to an exact version (removed `^` caret ranges) matching the resolved `bun.lock`, so the manifest is the source of truth and nothing silently floats forward. Added a `packageManager` pin (`bun@1.3.14`) and an `engines` constraint, plus `dashboard/bunfig.toml` with `[install] exact = true` so future `bun add` invocations stay pinned. Lifecycle/postinstall scripts remain disabled by Bun's default (no `trustedDependencies`).
