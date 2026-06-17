@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.10](https://github.com/wingnut128/netcidr/compare/v0.26.9...v0.26.10) - 2026-06-17
+
+### Added
+
+- *(ipam)* add tenant_id to allocation_tags for defense-in-depth isolation ([#266](https://github.com/wingnut128/netcidr/pull/266))
+- *(ipam)* paginate list endpoints and cap audit limit ([#265](https://github.com/wingnut128/netcidr/pull/265))
+
+### Fixed
+
+- *(ipam)* restrict SQLite DB perms to 0600 and cap auto-allocate count ([#264](https://github.com/wingnut128/netcidr/pull/264))
+- *(mcp)* encode remote-client URLs and send bearer token ([#257](https://github.com/wingnut128/netcidr/pull/257))
+- *(mcp)* refuse non-loopback HTTP bind without --allow-public-bind ([#255](https://github.com/wingnut128/netcidr/pull/255))
+- *(dashboard)* bump vite 8.0.10 -> 8.0.16 to clear GHSA-fx2h-pf6j-xcff ([#256](https://github.com/wingnut128/netcidr/pull/256))
+
+### Other
+
+- *(deps)* bump the npm-minor-and-patch group in /dashboard with 7 updates ([#249](https://github.com/wingnut128/netcidr/pull/249))
+- remove S3-backed SQLite persistence for Lambda ([#258](https://github.com/wingnut128/netcidr/pull/258))
+- *(deps)* bump release-plz/action from 0.5.129 to 0.5.130 ([#248](https://github.com/wingnut128/netcidr/pull/248))
+- *(dashboard)* pin npm deps to exact versions and harden install config ([#247](https://github.com/wingnut128/netcidr/pull/247))
+
 ### Added
 
 - Pagination for the IPAM list endpoints. `GET /ipam/cidr-blocks`, `GET /ipam/cidr-blocks/{id}/allocations`, `GET /ipam/hostnames`, and `GET /ipam/hostnames/history` now accept `limit` and `offset` query params, applied as SQL `LIMIT`/`OFFSET` (SQLite and Postgres). The HTTP layer defaults `limit` to 100 and clamps it to a maximum of 1000, bounding response size and memory; CLI and internal callers remain unbounded ([#260](https://github.com/wingnut128/netcidr/issues/260)).
