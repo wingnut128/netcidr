@@ -40,6 +40,22 @@ impl SqliteStore {
             .build(manager)
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
+        // Restrict the database file to owner-only (0600). It holds all IPAM
+        // data (CIDR blocks, allocations, hostnames, audit log); the default
+        // umask would otherwise leave it world-readable on a shared host.
+        // The pool's eager connection has already created the file by now.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(db_path, std::fs::Permissions::from_mode(0o600)).map_err(
+                |e| {
+                    NetcidrError::DatabaseError(format!(
+                        "failed to restrict permissions on database file {db_path}: {e}"
+                    ))
+                },
+            )?;
+        }
+
         Ok(Self { pool })
     }
 
@@ -1503,6 +1519,17 @@ mod tests {
         store.initialize().await.unwrap();
         store.migrate().await.unwrap();
         store
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn new_creates_db_file_with_owner_only_perms() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("netcidr.db");
+        let _store = SqliteStore::new(db_path.to_str().unwrap()).unwrap();
+        let mode = std::fs::metadata(&db_path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "db file should be owner-only, got {mode:o}");
     }
 
     #[tokio::test]

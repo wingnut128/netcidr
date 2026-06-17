@@ -356,8 +356,8 @@ pub enum IpamCommands {
         /// Desired prefix length (e.g., 24 for /24)
         #[arg(short = 'p', long)]
         prefix: u8,
-        /// Number of blocks to allocate
-        #[arg(short = 'n', long, default_value = "1")]
+        /// Number of blocks to allocate (1-1000)
+        #[arg(short = 'n', long, default_value = "1", value_parser = clap::value_parser!(u32).range(1..=1000))]
         count: u32,
         /// Allocation name
         #[arg(long)]

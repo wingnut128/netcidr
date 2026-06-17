@@ -864,7 +864,7 @@ netcidr ipam cidr_block list --format text
 # Allocate a specific block
 netcidr ipam allocate <cidr_block-id> 10.0.1.0/24 --name "Web Tier" --environment production
 
-# Auto-allocate next available /24s
+# Auto-allocate next available /24s (-n / --count: 1-1000)
 netcidr ipam auto-allocate <cidr_block-id> -p 24 -n 3 --name "App Tier"
 
 # Check utilization

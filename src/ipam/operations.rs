@@ -287,6 +287,17 @@ impl IpamOps {
         let cidr_block_range = parse_range(&cidr_block.cidr)?;
         let count = request.count.unwrap_or(1);
 
+        // Bound the number of allocations a single auto-allocate can create.
+        // Each one is a DB write; an unbounded count would let a caller drive
+        // large CPU/memory/IO work. Enforced here so both the CLI and API go
+        // through the same limit.
+        const MAX_AUTO_ALLOCATE_COUNT: u32 = 1000;
+        if count > MAX_AUTO_ALLOCATE_COUNT {
+            return Err(NetcidrError::InvalidInput(format!(
+                "requested count {count} exceeds maximum of {MAX_AUTO_ALLOCATE_COUNT}"
+            )));
+        }
+
         // Validate prefix length is within range for the IP version
         let max_prefix: u8 = if cidr_block_range.is_v4 { 32 } else { 128 };
         if request.prefix_length > max_prefix {
@@ -3911,6 +3922,32 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, NetcidrError::IdempotencyConflict { .. }));
+    }
+
+    #[tokio::test]
+    async fn allocate_auto_rejects_count_over_max() {
+        let ops = test_ops().await;
+        let sn = idempotent_test_cidr_block(&ops).await;
+        let req = AutoAllocateRequest {
+            cidr_block_id: sn.id.clone(),
+            prefix_length: 24,
+            count: Some(1001),
+            status: None,
+            resource_id: None,
+            resource_type: None,
+            name: None,
+            description: None,
+            environment: None,
+            owner: None,
+            parent_allocation_id: None,
+            tags: None,
+            ttl_seconds: None,
+        };
+        let err = ops.allocate_auto(TEST_TENANT, &req).await.unwrap_err();
+        assert!(
+            err.to_string().contains("exceeds maximum"),
+            "expected count cap error, got: {err}"
+        );
     }
 
     #[tokio::test]
