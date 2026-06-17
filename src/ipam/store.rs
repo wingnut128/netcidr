@@ -3,6 +3,23 @@ use async_trait::async_trait;
 use crate::error::Result;
 use crate::ipam::models::*;
 
+/// Build a trailing `LIMIT … OFFSET …` SQL clause for a paginated list query.
+///
+/// `limit`/`offset` are `u32`, so the values are pure digits — formatting them
+/// directly into SQL carries no injection risk and keeps the clause backend
+/// agnostic (works for both the rusqlite and sqlx builders). `None`/`None`
+/// yields an empty string (unbounded, for CLI and internal callers); an offset
+/// without a limit uses `LIMIT -1` as SQLite/Postgres both require a limit
+/// before an offset.
+pub(crate) fn limit_offset_clause(limit: Option<u32>, offset: Option<u32>) -> String {
+    match (limit, offset) {
+        (Some(l), Some(o)) => format!(" LIMIT {l} OFFSET {o}"),
+        (Some(l), None) => format!(" LIMIT {l}"),
+        (None, Some(o)) => format!(" LIMIT -1 OFFSET {o}"),
+        (None, None) => String::new(),
+    }
+}
+
 /// Core storage abstraction for the IPAM persistence layer.
 ///
 /// All tenant-scoped methods take an explicit `tenant_id: &str` parameter so
@@ -24,6 +41,14 @@ pub trait IpamStore: Send + Sync {
     ) -> Result<CidrBlock>;
     async fn get_cidr_block(&self, tenant_id: &str, id: &str) -> Result<CidrBlock>;
     async fn list_cidr_blocks(&self, tenant_id: &str) -> Result<Vec<CidrBlock>>;
+    /// Like [`list_cidr_blocks`](Self::list_cidr_blocks) but with pagination for
+    /// the HTTP list endpoint. `limit`/`offset` of `None` means unbounded.
+    async fn list_cidr_blocks_page(
+        &self,
+        tenant_id: &str,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<Vec<CidrBlock>>;
     async fn delete_cidr_block(&self, tenant_id: &str, id: &str) -> Result<()>;
 
     // --- allocations ---

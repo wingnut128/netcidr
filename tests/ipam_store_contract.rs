@@ -1267,6 +1267,7 @@ macro_rules! store_contract_tests {
                     &HostnameHistoryFilter {
                         ip_address: Some("10.0.1.5".to_string()),
                         hostname: None,
+                        ..Default::default()
                     },
                 )
                 .await

@@ -264,13 +264,26 @@ impl IpamStore for PostgresStore {
     }
 
     async fn list_cidr_blocks(&self, tenant_id: &str) -> Result<Vec<CidrBlock>> {
-        let rows = sqlx::query(
-            "SELECT id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM cidr_blocks WHERE tenant_id = $1 ORDER BY created_at",
-        )
-        .bind(tenant_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        self.list_cidr_blocks_page(tenant_id, None, None).await
+    }
+
+    async fn list_cidr_blocks_page(
+        &self,
+        tenant_id: &str,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<Vec<CidrBlock>> {
+        let mut builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+            "SELECT id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM cidr_blocks WHERE tenant_id = ",
+        );
+        builder.push_bind(tenant_id);
+        builder.push(" ORDER BY created_at");
+        builder.push(crate::ipam::store::limit_offset_clause(limit, offset));
+        let rows = builder
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         Ok(rows
             .iter()
@@ -509,6 +522,10 @@ impl IpamStore for PostgresStore {
         }
 
         builder.push(" ORDER BY created_at");
+        builder.push(crate::ipam::store::limit_offset_clause(
+            filter.limit,
+            filter.offset,
+        ));
 
         let rows = builder
             .build()
@@ -823,6 +840,10 @@ impl IpamStore for PostgresStore {
             builder.push_bind(a.as_str());
         }
         builder.push(" ORDER BY hostname, ip_address");
+        builder.push(crate::ipam::store::limit_offset_clause(
+            filter.limit,
+            filter.offset,
+        ));
 
         let rows = builder
             .build()
@@ -916,6 +937,10 @@ impl IpamStore for PostgresStore {
             builder.push_bind(h.as_str());
         }
         builder.push(" ORDER BY changed_at");
+        builder.push(crate::ipam::store::limit_offset_clause(
+            filter.limit,
+            filter.offset,
+        ));
 
         let rows = builder
             .build()

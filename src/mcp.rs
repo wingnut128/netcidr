@@ -669,6 +669,7 @@ impl NetcidrMcp {
             resource_type: None,
             environment: params.environment,
             owner: params.owner,
+            ..Default::default()
         };
         result_to_string(backend.list_allocations(&filter).await)
     }
@@ -833,6 +834,7 @@ impl NetcidrMcp {
             ip_address: params.ip,
             hostname: params.hostname,
             allocation_id: params.allocation_id,
+            ..Default::default()
         };
         result_to_string(backend.list_hostname_pointers(&filter).await)
     }
@@ -851,6 +853,7 @@ impl NetcidrMcp {
         let filter = HostnameHistoryFilter {
             ip_address: params.ip,
             hostname: params.hostname,
+            ..Default::default()
         };
         result_to_string(backend.list_hostname_history(&filter).await)
     }

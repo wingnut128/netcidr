@@ -946,6 +946,8 @@ netcidr serve --ipam-enabled --ipam-db /path/to/ipam.db
 | `/admin/users` | `POST` | Grant/update a role (Admin) |
 | `/admin/users` | `DELETE` | Revoke a role (`?email=`, Admin; last-admin guarded) |
 
+**Pagination:** the list endpoints (`/ipam/cidr-blocks`, `/ipam/cidr-blocks/{id}/allocations`, `/ipam/hostnames`, `/ipam/hostnames/history`) accept `?limit=&offset=`. `limit` defaults to 100 and is capped at 1000; `offset` defaults to 0. The audit endpoint (`/ipam/audit`) likewise defaults and caps its `limit`.
+
 **Status:** Fully integrated — available via CLI (`netcidr ipam`), REST API (`netcidr serve --ipam-enabled`), and MCP server (`netcidr mcp-serve --ipam-db <path>`).
 
 #### Idempotency keys

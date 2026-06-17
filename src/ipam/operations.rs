@@ -144,6 +144,19 @@ impl IpamOps {
         self.store.list_cidr_blocks(tenant_id).await
     }
 
+    /// Paginated cidr_block listing for the HTTP list endpoint. `limit`/`offset`
+    /// of `None` means unbounded (the API always passes clamped values).
+    pub async fn list_cidr_blocks_page(
+        &self,
+        tenant_id: &str,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<Vec<CidrBlock>> {
+        self.store
+            .list_cidr_blocks_page(tenant_id, limit, offset)
+            .await
+    }
+
     pub async fn delete_cidr_block(&self, tenant_id: &str, id: &str) -> Result<()> {
         validation::validate_identifier(id)?;
         let sn = self.store.get_cidr_block(tenant_id, id).await?;
@@ -1163,6 +1176,8 @@ impl IpamOps {
                 .map(validation::normalize_hostname)
                 .transpose()?,
             allocation_id: filter.allocation_id.clone(),
+            limit: filter.limit,
+            offset: filter.offset,
         };
         self.store
             .list_hostname_pointers(tenant_id, &normalized)
@@ -1220,6 +1235,8 @@ impl IpamOps {
                 .as_deref()
                 .map(validation::normalize_hostname)
                 .transpose()?,
+            limit: filter.limit,
+            offset: filter.offset,
         };
         self.store
             .list_hostname_history(tenant_id, &normalized)
