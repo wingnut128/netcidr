@@ -39,12 +39,19 @@ impl PostgresStore {
         Utc::now().to_rfc3339()
     }
 
-    async fn load_tags_for_allocation(&self, allocation_id: &str) -> Result<Vec<Tag>> {
-        let rows = sqlx::query("SELECT key, value FROM allocation_tags WHERE allocation_id = $1")
-            .bind(allocation_id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+    async fn load_tags_for_allocation(
+        &self,
+        tenant_id: &str,
+        allocation_id: &str,
+    ) -> Result<Vec<Tag>> {
+        let rows = sqlx::query(
+            "SELECT key, value FROM allocation_tags WHERE allocation_id = $1 AND tenant_id = $2",
+        )
+        .bind(allocation_id)
+        .bind(tenant_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         Ok(rows
             .iter()
             .map(|row| Tag {
@@ -433,9 +440,10 @@ impl IpamStore for PostgresStore {
         if let Some(ref tags) = input.tags {
             for tag in tags {
                 sqlx::query(
-                    "INSERT INTO allocation_tags (allocation_id, key, value) VALUES ($1, $2, $3)",
+                    "INSERT INTO allocation_tags (allocation_id, tenant_id, key, value) VALUES ($1, $2, $3, $4)",
                 )
                 .bind(&id)
+                .bind(tenant_id)
                 .bind(&tag.key)
                 .bind(&tag.value)
                 .execute(&self.pool)
@@ -482,7 +490,7 @@ impl IpamStore for PostgresStore {
         .ok_or_else(|| NetcidrError::AllocationNotFound(id.to_string()))?;
 
         let mut alloc = Self::row_to_allocation(&row);
-        alloc.tags = self.load_tags_for_allocation(id).await?;
+        alloc.tags = self.load_tags_for_allocation(tenant_id, id).await?;
         Ok(alloc)
     }
 
@@ -535,7 +543,7 @@ impl IpamStore for PostgresStore {
 
         let mut allocations: Vec<Allocation> = rows.iter().map(Self::row_to_allocation).collect();
         for alloc in &mut allocations {
-            alloc.tags = self.load_tags_for_allocation(&alloc.id).await?;
+            alloc.tags = self.load_tags_for_allocation(tenant_id, &alloc.id).await?;
         }
         Ok(allocations)
     }
@@ -657,7 +665,7 @@ impl IpamStore for PostgresStore {
 
         let mut allocations: Vec<Allocation> = rows.iter().map(Self::row_to_allocation).collect();
         for alloc in &mut allocations {
-            alloc.tags = self.load_tags_for_allocation(&alloc.id).await?;
+            alloc.tags = self.load_tags_for_allocation(tenant_id, &alloc.id).await?;
         }
         Ok(allocations)
     }
@@ -668,17 +676,19 @@ impl IpamStore for PostgresStore {
         self.assert_allocation_in_tenant(tenant_id, allocation_id)
             .await?;
 
-        sqlx::query("DELETE FROM allocation_tags WHERE allocation_id = $1")
+        sqlx::query("DELETE FROM allocation_tags WHERE allocation_id = $1 AND tenant_id = $2")
             .bind(allocation_id)
+            .bind(tenant_id)
             .execute(&self.pool)
             .await
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         for tag in tags {
             sqlx::query(
-                "INSERT INTO allocation_tags (allocation_id, key, value) VALUES ($1, $2, $3)",
+                "INSERT INTO allocation_tags (allocation_id, tenant_id, key, value) VALUES ($1, $2, $3, $4)",
             )
             .bind(allocation_id)
+            .bind(tenant_id)
             .bind(&tag.key)
             .bind(&tag.value)
             .execute(&self.pool)
@@ -691,7 +701,8 @@ impl IpamStore for PostgresStore {
     async fn get_tags(&self, tenant_id: &str, allocation_id: &str) -> Result<Vec<Tag>> {
         self.assert_allocation_in_tenant(tenant_id, allocation_id)
             .await?;
-        self.load_tags_for_allocation(allocation_id).await
+        self.load_tags_for_allocation(tenant_id, allocation_id)
+            .await
     }
 
     // --- hostname pointers ---
