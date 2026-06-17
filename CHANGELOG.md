@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - **Harden dashboard package files (supply-chain).** Pinned every dashboard dependency in `dashboard/package.json` to an exact version (removed `^` caret ranges) matching the resolved `bun.lock`, so the manifest is the source of truth and nothing silently floats forward. Added a `packageManager` pin (`bun@1.3.14`) and an `engines` constraint, plus `dashboard/bunfig.toml` with `[install] exact = true` so future `bun add` invocations stay pinned. Lifecycle/postinstall scripts remain disabled by Bun's default (no `trustedDependencies`).
+- Bump dashboard `vite` from 8.0.10 to 8.0.16, clearing high-severity advisory [GHSA-fx2h-pf6j-xcff](https://github.com/advisories/GHSA-fx2h-pf6j-xcff) (`server.fs.deny` bypass via Windows alternate paths). The dev server isn't shipped in the embedded single-file build, but the bump unblocks the CI `bun audit` gate.
 
 ## [0.26.9](https://github.com/wingnut128/netcidr/compare/v0.26.8...v0.26.9) - 2026-06-08
 
