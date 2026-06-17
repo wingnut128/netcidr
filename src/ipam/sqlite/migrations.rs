@@ -12,6 +12,7 @@ pub const MIGRATIONS: &[(u32, &str)] = &[
     (9, MIGRATION_009),
     (10, MIGRATION_010),
     (11, MIGRATION_011),
+    (12, MIGRATION_012),
 ];
 
 const MIGRATION_001: &str = r#"
@@ -320,6 +321,38 @@ CREATE TABLE IF NOT EXISTS role_assignments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_role_assignments_role ON role_assignments(role);
+"#;
+
+// Adds tenant_id to allocation_tags so tag isolation no longer relies solely on
+// the parent-allocation pre-check + UUID unguessability. Backfills from the
+// parent allocation and enforces the match with triggers (mirroring the
+// allocations tenant-match invariant). The column is left nullable at the schema
+// level — SQLite can't add a NOT NULL column to an existing table — but the
+// triggers reject any NULL/mismatched tenant_id on insert/update.
+const MIGRATION_012: &str = r#"
+ALTER TABLE allocation_tags ADD COLUMN tenant_id TEXT;
+
+UPDATE allocation_tags
+SET tenant_id = (SELECT a.tenant_id FROM allocations a WHERE a.id = allocation_tags.allocation_id);
+
+CREATE INDEX idx_allocation_tags_tenant ON allocation_tags(tenant_id, allocation_id);
+
+CREATE TRIGGER trg_allocation_tags_tenant_match_insert
+    BEFORE INSERT ON allocation_tags
+    FOR EACH ROW
+    WHEN NEW.tenant_id IS NULL
+      OR NEW.tenant_id != (SELECT tenant_id FROM allocations WHERE id = NEW.allocation_id)
+    BEGIN
+        SELECT RAISE(ABORT, 'allocation_tags tenant_id must match parent allocation tenant_id');
+    END;
+CREATE TRIGGER trg_allocation_tags_tenant_match_update
+    BEFORE UPDATE OF tenant_id, allocation_id ON allocation_tags
+    FOR EACH ROW
+    WHEN NEW.tenant_id IS NULL
+      OR NEW.tenant_id != (SELECT tenant_id FROM allocations WHERE id = NEW.allocation_id)
+    BEGIN
+        SELECT RAISE(ABORT, 'allocation_tags tenant_id must match parent allocation tenant_id');
+    END;
 "#;
 
 #[cfg(test)]

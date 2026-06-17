@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The SQLite IPAM database file is now created with owner-only (`0600`) permissions on Unix, instead of inheriting the umask (typically world-readable `0644`). The database holds all CIDR blocks, allocations, hostnames, and the audit log ([#261](https://github.com/wingnut128/netcidr/issues/261)).
 - Auto-allocate now rejects a `count` above 1000 at both the CLI (`--count` value range) and the operations layer (covering the HTTP API), preventing an unbounded number of allocation writes from a single request ([#263](https://github.com/wingnut128/netcidr/issues/263)).
 - The IPAM list endpoints now bound their result sets via `limit`/`offset` pagination (default 100, max 1000), and the audit endpoint (`GET /ipam/audit`) defaults and clamps its `limit` so omitting it can no longer dump the entire audit log ([#260](https://github.com/wingnut128/netcidr/issues/260)).
+- `allocation_tags` now carries a `tenant_id` column (migration 012, SQLite + Postgres) — backfilled from the parent allocation, filtered on in tag reads/writes, and enforced by a tenant-match trigger. Previously cross-tenant tag isolation rested solely on an application-layer pre-check plus UUID unguessability; this adds DB-level defense-in-depth consistent with the other tenant-scoped tables ([#262](https://github.com/wingnut128/netcidr/issues/262)).
 
 ## [0.26.9](https://github.com/wingnut128/netcidr/compare/v0.26.8...v0.26.9) - 2026-06-08
 

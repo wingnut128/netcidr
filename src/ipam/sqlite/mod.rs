@@ -88,13 +88,16 @@ impl SqliteStore {
 
     fn load_tags_for_allocation(
         conn: &rusqlite::Connection,
+        tenant_id: &str,
         allocation_id: &str,
     ) -> Result<Vec<Tag>> {
         let mut stmt = conn
-            .prepare("SELECT key, value FROM allocation_tags WHERE allocation_id = ?1")
+            .prepare(
+                "SELECT key, value FROM allocation_tags WHERE allocation_id = ?1 AND tenant_id = ?2",
+            )
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         let tags = stmt
-            .query_map(params![allocation_id], |row| {
+            .query_map(params![allocation_id, tenant_id], |row| {
                 Ok(Tag {
                     key: row.get(0)?,
                     value: row.get(1)?,
@@ -451,8 +454,8 @@ impl IpamStore for SqliteStore {
         if let Some(ref tags) = input.tags {
             for tag in tags {
                 conn.execute(
-                    "INSERT INTO allocation_tags (allocation_id, key, value) VALUES (?1, ?2, ?3)",
-                    params![id, tag.key, tag.value],
+                    "INSERT INTO allocation_tags (allocation_id, tenant_id, key, value) VALUES (?1, ?2, ?3, ?4)",
+                    params![id, tenant_id, tag.key, tag.value],
                 )
                 .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
             }
@@ -496,7 +499,7 @@ impl IpamStore for SqliteStore {
                 rusqlite::Error::QueryReturnedNoRows => NetcidrError::AllocationNotFound(id.to_string()),
                 _ => NetcidrError::DatabaseError(e.to_string()),
             })?;
-        alloc.tags = Self::load_tags_for_allocation(&conn, id)?;
+        alloc.tags = Self::load_tags_for_allocation(&conn, tenant_id, id)?;
         Ok(alloc)
     }
 
@@ -568,7 +571,7 @@ impl IpamStore for SqliteStore {
         // Load tags for each allocation
         let mut allocations = rows;
         for alloc in &mut allocations {
-            alloc.tags = Self::load_tags_for_allocation(&conn, &alloc.id)?;
+            alloc.tags = Self::load_tags_for_allocation(&conn, tenant_id, &alloc.id)?;
         }
         Ok(allocations)
     }
@@ -639,7 +642,7 @@ impl IpamStore for SqliteStore {
                 Self::row_to_allocation,
             )
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        alloc.tags = Self::load_tags_for_allocation(&conn, id)?;
+        alloc.tags = Self::load_tags_for_allocation(&conn, tenant_id, id)?;
         Ok(alloc)
     }
 
@@ -676,7 +679,7 @@ impl IpamStore for SqliteStore {
                 Self::row_to_allocation,
             )
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        alloc.tags = Self::load_tags_for_allocation(&conn, id)?;
+        alloc.tags = Self::load_tags_for_allocation(&conn, tenant_id, id)?;
         Ok(alloc)
     }
 
@@ -718,7 +721,7 @@ impl IpamStore for SqliteStore {
 
         let mut allocations = rows;
         for alloc in &mut allocations {
-            alloc.tags = Self::load_tags_for_allocation(&conn, &alloc.id)?;
+            alloc.tags = Self::load_tags_for_allocation(&conn, tenant_id, &alloc.id)?;
         }
         Ok(allocations)
     }
@@ -730,15 +733,15 @@ impl IpamStore for SqliteStore {
         Self::assert_allocation_in_tenant(&conn, tenant_id, allocation_id)?;
 
         conn.execute(
-            "DELETE FROM allocation_tags WHERE allocation_id = ?1",
-            params![allocation_id],
+            "DELETE FROM allocation_tags WHERE allocation_id = ?1 AND tenant_id = ?2",
+            params![allocation_id, tenant_id],
         )
         .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
 
         for tag in tags {
             conn.execute(
-                "INSERT INTO allocation_tags (allocation_id, key, value) VALUES (?1, ?2, ?3)",
-                params![allocation_id, tag.key, tag.value],
+                "INSERT INTO allocation_tags (allocation_id, tenant_id, key, value) VALUES (?1, ?2, ?3, ?4)",
+                params![allocation_id, tenant_id, tag.key, tag.value],
             )
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         }
@@ -748,7 +751,7 @@ impl IpamStore for SqliteStore {
     async fn get_tags(&self, tenant_id: &str, allocation_id: &str) -> Result<Vec<Tag>> {
         let conn = self.conn()?;
         Self::assert_allocation_in_tenant(&conn, tenant_id, allocation_id)?;
-        Self::load_tags_for_allocation(&conn, allocation_id)
+        Self::load_tags_for_allocation(&conn, tenant_id, allocation_id)
     }
 
     // --- hostname pointers ---
@@ -1629,6 +1632,67 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(page.len(), 3, "limit must cap the allocation page");
+    }
+
+    #[tokio::test]
+    async fn allocation_tags_carry_tenant_and_trigger_enforces_match() {
+        let store = test_store().await;
+        let sn = store
+            .create_cidr_block(
+                TEST_TENANT,
+                &CreateCidrBlock {
+                    cidr: "10.0.0.0/8".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
+            .await
+            .unwrap();
+        let alloc = store
+            .create_allocation(
+                TEST_TENANT,
+                &CreateAllocation {
+                    cidr_block_id: sn.id.clone(),
+                    cidr: "10.0.0.0/24".to_string(),
+                    status: None,
+                    resource_id: None,
+                    resource_type: None,
+                    name: None,
+                    description: None,
+                    environment: None,
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: Some(vec![Tag {
+                        key: "env".to_string(),
+                        value: "prod".to_string(),
+                    }]),
+                    ttl_seconds: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        // Tags created via create_allocation are readable for the owning tenant
+        // (the tenant-filtered read still works with the new column).
+        let tags = store.get_tags(TEST_TENANT, &alloc.id).await.unwrap();
+        assert_eq!(tags.len(), 1);
+
+        // A different tenant cannot read or replace them (pre-check gate).
+        assert!(
+            store
+                .get_tags("other@example.com", &alloc.id)
+                .await
+                .is_err()
+        );
+
+        // DB-level defense-in-depth: the trigger rejects a tag row whose
+        // tenant_id does not match the parent allocation's, even via raw SQL.
+        let conn = store.conn().unwrap();
+        let res = conn.execute(
+            "INSERT INTO allocation_tags (allocation_id, tenant_id, key, value) VALUES (?1, ?2, ?3, ?4)",
+            params![alloc.id, "other@example.com", "x", "y"],
+        );
+        assert!(res.is_err(), "trigger must reject mismatched tenant_id");
     }
 
     #[cfg(unix)]

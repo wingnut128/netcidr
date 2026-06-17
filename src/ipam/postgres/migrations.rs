@@ -12,6 +12,7 @@ pub const MIGRATIONS: &[(u32, &str)] = &[
     (9, MIGRATION_009),
     (10, MIGRATION_010),
     (11, MIGRATION_011),
+    (12, MIGRATION_012),
 ];
 
 const MIGRATION_001: &str = r#"
@@ -320,6 +321,39 @@ CREATE TABLE IF NOT EXISTS role_assignments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_role_assignments_role ON role_assignments(role);
+"#;
+
+/// Adds tenant_id to allocation_tags so tag isolation no longer relies solely on
+/// the parent-allocation pre-check + UUID unguessability. Backfills from the
+/// parent allocation, enforces NOT NULL, and mirrors the allocations
+/// tenant-match invariant with a trigger. Mirrors SQLite migration 012.
+const MIGRATION_012: &str = r#"
+ALTER TABLE allocation_tags ADD COLUMN tenant_id TEXT;
+
+UPDATE allocation_tags
+SET tenant_id = a.tenant_id
+FROM allocations a
+WHERE a.id = allocation_tags.allocation_id;
+
+ALTER TABLE allocation_tags ALTER COLUMN tenant_id SET NOT NULL;
+
+CREATE INDEX idx_allocation_tags_tenant ON allocation_tags(tenant_id, allocation_id);
+
+CREATE OR REPLACE FUNCTION assert_alloc_tags_tenant_match() RETURNS trigger AS $$
+BEGIN
+    IF NEW.tenant_id IS DISTINCT FROM (SELECT tenant_id FROM allocations WHERE id = NEW.allocation_id) THEN
+        RAISE EXCEPTION 'allocation_tags tenant_id must match parent allocation tenant_id';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_allocation_tags_tenant_match_insert
+    BEFORE INSERT ON allocation_tags
+    FOR EACH ROW EXECUTE FUNCTION assert_alloc_tags_tenant_match();
+CREATE TRIGGER trg_allocation_tags_tenant_match_update
+    BEFORE UPDATE OF tenant_id, allocation_id ON allocation_tags
+    FOR EACH ROW EXECUTE FUNCTION assert_alloc_tags_tenant_match();
 "#;
 
 #[cfg(all(test, feature = "ipam-postgres"))]
