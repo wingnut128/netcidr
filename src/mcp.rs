@@ -899,6 +899,30 @@ pub struct McpServerConfig<'a> {
     pub log_file: Option<&'a str>,
     pub ipam_db: Option<&'a str>,
     pub api_url: Option<&'a str>,
+    /// Allow the HTTP transport to bind to a non-loopback address.
+    ///
+    /// The MCP HTTP transport has no authentication, so by default we refuse
+    /// any non-loopback bind. Setting this acknowledges that the operator has
+    /// placed their own auth (e.g. a reverse proxy or network policy) in front.
+    pub allow_public_bind: bool,
+}
+
+/// Decide whether the MCP HTTP transport is allowed to bind to `address`.
+///
+/// The HTTP transport exposes every IPAM tool with no authentication, so a
+/// non-loopback bind means anyone who can reach the port gets full IPAM
+/// access. We therefore fail closed: a non-loopback address is rejected unless
+/// `allow_public_bind` is set. Mirrors `config::validate_deployment`'s gate.
+pub fn check_http_bind_allowed(address: &str, allow_public_bind: bool) -> crate::error::Result<()> {
+    if crate::config::is_loopback_bind_address(address)? || allow_public_bind {
+        return Ok(());
+    }
+    Err(crate::error::NetcidrError::InvalidInput(format!(
+        "refusing to start the MCP HTTP server on non-loopback address '{address}': \
+         the MCP HTTP transport has no authentication, so anyone who can reach it gains \
+         full IPAM access. Bind to a loopback address (127.0.0.1 or ::1), or pass \
+         --allow-public-bind to override once you have your own auth in front."
+    )))
 }
 
 pub async fn run_mcp_server(config: McpServerConfig<'_>) -> crate::error::Result<()> {
@@ -930,6 +954,9 @@ pub async fn run_mcp_server(config: McpServerConfig<'_>) -> crate::error::Result
             run_mcp_stdio(ipam).await
         }
         crate::cli::McpTransport::Http => {
+            // Fail closed before any side effects (daemonizing, binding) if the
+            // unauthenticated HTTP transport would be exposed beyond loopback.
+            check_http_bind_allowed(config.address, config.allow_public_bind)?;
             if config.daemonize {
                 daemonize_process(config.pid_file, config.log_file)?;
             }
@@ -1022,6 +1049,45 @@ mod tests {
     // -------------------------------------------------------------------
     // Calculator tool tests
     // -------------------------------------------------------------------
+
+    #[test]
+    fn http_bind_allows_loopback_without_override() {
+        // Loopback binds are always allowed regardless of the override flag.
+        assert!(check_http_bind_allowed("127.0.0.1", false).is_ok());
+        assert!(check_http_bind_allowed("::1", false).is_ok());
+        assert!(check_http_bind_allowed("[::1]", false).is_ok());
+    }
+
+    #[test]
+    fn http_bind_refuses_public_without_override() {
+        // Non-loopback bind with no auth and no override must fail closed.
+        let err = check_http_bind_allowed("0.0.0.0", false)
+            .expect_err("non-loopback bind without override must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("0.0.0.0"),
+            "error should name the address: {msg}"
+        );
+        assert!(
+            msg.contains("--allow-public-bind"),
+            "error should point at the override: {msg}"
+        );
+
+        assert!(check_http_bind_allowed("192.168.1.10", false).is_err());
+    }
+
+    #[test]
+    fn http_bind_allows_public_with_override() {
+        // The explicit override lets an operator opt into a public bind.
+        assert!(check_http_bind_allowed("0.0.0.0", true).is_ok());
+        assert!(check_http_bind_allowed("192.168.1.10", true).is_ok());
+    }
+
+    #[test]
+    fn http_bind_rejects_unparseable_address() {
+        // An address we can't prove is loopback is rejected (mirrors `serve`).
+        assert!(check_http_bind_allowed("localhost", false).is_err());
+    }
 
     #[test]
     fn test_is_ipv6() {
@@ -1744,6 +1810,7 @@ mod tests {
             transport: crate::cli::McpTransport::Stdio,
             address: "127.0.0.1",
             port: 3000,
+            allow_public_bind: false,
             daemonize: false,
             pid_file: "/tmp/netcidr-test.pid",
             log_file: None,

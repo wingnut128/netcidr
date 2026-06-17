@@ -113,6 +113,14 @@ pub enum Commands {
         #[arg(short, long, default_value = "3000")]
         port: u16,
 
+        /// Allow the HTTP transport to bind to a non-loopback address.
+        ///
+        /// The MCP HTTP transport has no authentication; by default a
+        /// non-loopback bind is refused. Only set this when you have placed
+        /// your own auth (reverse proxy, network policy) in front of it.
+        #[arg(long)]
+        allow_public_bind: bool,
+
         /// Run as a background daemon (HTTP transport only)
         #[arg(long)]
         daemonize: bool,

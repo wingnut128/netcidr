@@ -100,11 +100,19 @@ fn main() {
         ref pid_file,
         ref log_file,
         ref transport,
+        ref address,
+        allow_public_bind,
         ..
     }) = cli.command
     {
         if *transport == netcidr::cli::McpTransport::Stdio {
             eprintln!("Error: --daemonize is only supported with HTTP transport");
+            std::process::exit(1);
+        }
+        // Fail closed before forking so the operator sees the error on the
+        // controlling terminal rather than a daemon that silently exits.
+        if let Err(e) = netcidr::mcp::check_http_bind_allowed(address, allow_public_bind) {
+            eprintln!("Error: {}", e);
             std::process::exit(1);
         }
         if let Err(e) = netcidr::mcp::daemonize_process(pid_file, log_file.as_deref()) {
@@ -295,6 +303,7 @@ async fn async_main(cli: Cli) {
             transport,
             address,
             port,
+            allow_public_bind,
             daemonize: _,
             pid_file,
             log_file,
@@ -305,6 +314,7 @@ async fn async_main(cli: Cli) {
                 transport,
                 address: &address,
                 port,
+                allow_public_bind,
                 // Daemonization already happened in main() before the tokio
                 // runtime was created, so we never daemonize inside the async
                 // context where it would corrupt the I/O reactor.
