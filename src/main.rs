@@ -309,7 +309,13 @@ async fn async_main(cli: Cli) {
             log_file,
             ipam_db,
             api_url,
+            api_token,
         }) => {
+            // Fall back to NETCIDR_API_TOKEN when --api-token is not passed
+            // (clap's `env` feature is not enabled, so resolve it here).
+            let api_token = api_token
+                .or_else(|| std::env::var("NETCIDR_API_TOKEN").ok())
+                .filter(|t| !t.trim().is_empty());
             let mcp_config = netcidr::mcp::McpServerConfig {
                 transport,
                 address: &address,
@@ -323,6 +329,7 @@ async fn async_main(cli: Cli) {
                 log_file: log_file.as_deref(),
                 ipam_db: ipam_db.as_deref(),
                 api_url: api_url.as_deref(),
+                api_token: api_token.as_deref(),
             };
             if let Err(e) = netcidr::mcp::run_mcp_server(mcp_config).await {
                 eprintln!("MCP server error: {}", e);

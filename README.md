@@ -322,11 +322,16 @@ netcidr mcp-serve --transport stdio
 netcidr mcp-serve --ipam-db /path/to/ipam.db
 netcidr mcp-serve --api-url http://localhost:8080
 
+# Authenticate to a remote API (token also read from NETCIDR_API_TOKEN)
+netcidr mcp-serve --api-url https://netcidr.example.com --api-token "$NETCIDR_API_TOKEN"
+
 # Run as a background daemon
 netcidr mcp-serve --daemonize --pid-file /var/run/netcidr-mcp.pid --log-file /var/log/netcidr-mcp.log
 ```
 
 > **Security:** the MCP HTTP transport has **no authentication** — any client that can reach the port can call every tool, including read/write IPAM operations. It therefore binds to loopback (`127.0.0.1`) by default and **refuses non-loopback binds** unless you pass `--allow-public-bind`. Only opt in when you have placed your own authentication in front of it (e.g. a reverse proxy or network policy). The `stdio` transport is unaffected (it runs under the parent process).
+>
+> When proxying to a remote API with `--api-url`, pass `--api-token` (or set `NETCIDR_API_TOKEN`) so the remote `netcidr serve` can authenticate the client instead of running unauthenticated.
 
 #### Running as a Service
 
