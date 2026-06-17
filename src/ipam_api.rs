@@ -186,6 +186,28 @@ impl AutoAllocateBody {
     }
 }
 
+/// Default number of rows a list endpoint returns when no `limit` is given.
+const DEFAULT_PAGE_LIMIT: u32 = 100;
+/// Hard ceiling on `limit` for any list endpoint, to bound response size and
+/// memory regardless of what a caller requests.
+const MAX_PAGE_LIMIT: u32 = 1000;
+
+/// Resolve a caller-supplied `limit` into an enforced page size: default when
+/// absent, clamped to `[1, MAX_PAGE_LIMIT]`.
+fn page_limit(limit: Option<u32>) -> u32 {
+    limit.unwrap_or(DEFAULT_PAGE_LIMIT).clamp(1, MAX_PAGE_LIMIT)
+}
+
+/// Pagination query params shared by the list endpoints.
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(IntoParams))]
+pub struct CidrBlockListQuery {
+    /// Max rows to return (default 100, max 1000)
+    pub limit: Option<u32>,
+    /// Rows to skip before returning results (default 0)
+    pub offset: Option<u32>,
+}
+
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "swagger", derive(IntoParams))]
 pub struct AllocationFilterQuery {
@@ -199,6 +221,10 @@ pub struct AllocationFilterQuery {
     pub environment: Option<String>,
     /// Filter by owner
     pub owner: Option<String>,
+    /// Max rows to return (default 100, max 1000)
+    pub limit: Option<u32>,
+    /// Rows to skip before returning results (default 0)
+    pub offset: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -221,7 +247,7 @@ pub struct AuditQuery {
     pub caller_email: Option<String>,
     /// Filter by the personal access token id that performed the action
     pub pat_id: Option<String>,
-    /// Maximum number of entries to return
+    /// Maximum number of entries to return (default 100, max 1000)
     pub limit: Option<u32>,
 }
 
@@ -234,6 +260,10 @@ pub struct HostnameListQuery {
     pub hostname: Option<String>,
     /// Filter by associated allocation ID
     pub allocation_id: Option<String>,
+    /// Max rows to return (default 100, max 1000)
+    pub limit: Option<u32>,
+    /// Rows to skip before returning results (default 0)
+    pub offset: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -243,6 +273,10 @@ pub struct HostnameHistoryQuery {
     pub ip: Option<String>,
     /// Filter history by hostname
     pub hostname: Option<String>,
+    /// Max rows to return (default 100, max 1000)
+    pub limit: Option<u32>,
+    /// Rows to skip before returning results (default 0)
+    pub offset: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -440,6 +474,7 @@ async fn ipam_create_cidr_block(
 #[cfg_attr(feature = "swagger", utoipa::path(
     get,
     path = "/ipam/cidr-blocks",
+    params(CidrBlockListQuery),
     responses(
         (status = 200, description = "List of cidr_blocks", body = CidrBlockList),
     ),
@@ -450,8 +485,12 @@ async fn ipam_list_cidr_blocks(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
     _: RequireReader,
+    Query(query): Query<CidrBlockListQuery>,
 ) -> impl IntoResponse {
-    match ops.list_cidr_blocks(tenant.as_str()).await {
+    match ops
+        .list_cidr_blocks_page(tenant.as_str(), Some(page_limit(query.limit)), query.offset)
+        .await
+    {
         Ok(cidr_blocks) => {
             let list = CidrBlockList {
                 count: cidr_blocks.len(),
@@ -646,6 +685,8 @@ async fn ipam_list_cidr_block_allocations(
         resource_type: query.resource_type,
         environment: query.environment,
         owner: query.owner,
+        limit: Some(page_limit(query.limit)),
+        offset: query.offset,
     };
     match ops.list_allocations(tenant.as_str(), &filter).await {
         Ok(allocations) => {
@@ -895,6 +936,8 @@ async fn ipam_list_hostnames(
         ip_address: query.ip,
         hostname: query.hostname,
         allocation_id: query.allocation_id,
+        limit: Some(page_limit(query.limit)),
+        offset: query.offset,
     };
     match ops.list_hostname_pointers(tenant.as_str(), &filter).await {
         Ok(pointers) => {
@@ -927,6 +970,8 @@ async fn ipam_hostname_history(
     let filter = HostnameHistoryFilter {
         ip_address: query.ip,
         hostname: query.hostname,
+        limit: Some(page_limit(query.limit)),
+        offset: query.offset,
     };
     match ops.list_hostname_history(tenant.as_str(), &filter).await {
         Ok(entries) => {
@@ -988,7 +1033,8 @@ async fn ipam_query_audit(
         action: query.action,
         caller_email: query.caller_email,
         pat_id: query.pat_id,
-        limit: query.limit,
+        // Default + clamp so omitting `limit` can't dump the whole audit log.
+        limit: Some(page_limit(query.limit)),
     };
     match ops.query_audit(tenant.as_str(), &filter).await {
         Ok(entries) => {
@@ -1088,5 +1134,21 @@ async fn ipam_batch_summary(
     {
         Ok(summary) => Json(summary).into_response(),
         Err(e) => ipam_error_response(e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn page_limit_defaults_and_clamps() {
+        assert_eq!(page_limit(None), DEFAULT_PAGE_LIMIT);
+        assert_eq!(page_limit(Some(50)), 50);
+        // Clamped up from 0 to the minimum of 1.
+        assert_eq!(page_limit(Some(0)), 1);
+        // Clamped down to the hard ceiling.
+        assert_eq!(page_limit(Some(u32::MAX)), MAX_PAGE_LIMIT);
+        assert_eq!(page_limit(Some(MAX_PAGE_LIMIT + 1)), MAX_PAGE_LIMIT);
     }
 }

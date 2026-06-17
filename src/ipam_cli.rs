@@ -203,6 +203,7 @@ pub async fn handle_ipam_command(
                             resource_type,
                             environment,
                             owner,
+                            ..Default::default()
                         },
                     )
                     .await?;
@@ -403,6 +404,7 @@ pub async fn handle_ipam_command(
                             ip_address: ip,
                             hostname,
                             allocation_id,
+                            ..Default::default()
                         },
                     )
                     .await?;
@@ -418,11 +420,13 @@ pub async fn handle_ipam_command(
                     HostnameHistoryFilter {
                         ip_address: Some(target),
                         hostname: None,
+                        ..Default::default()
                     }
                 } else {
                     HostnameHistoryFilter {
                         ip_address: None,
                         hostname: Some(target),
+                        ..Default::default()
                     }
                 };
                 let entries = ops.list_hostname_history(Tenant::LOCAL, &filter).await?;

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Pagination for the IPAM list endpoints. `GET /ipam/cidr-blocks`, `GET /ipam/cidr-blocks/{id}/allocations`, `GET /ipam/hostnames`, and `GET /ipam/hostnames/history` now accept `limit` and `offset` query params, applied as SQL `LIMIT`/`OFFSET` (SQLite and Postgres). The HTTP layer defaults `limit` to 100 and clamps it to a maximum of 1000, bounding response size and memory; CLI and internal callers remain unbounded ([#260](https://github.com/wingnut128/netcidr/issues/260)).
+
 ### Removed
 
 - Removed the S3-backed SQLite persistence mode for the Lambda binary (`NETCIDR_S3_BUCKET`/`NETCIDR_S3_KEY`, the `s3_sync` module, and the `hmac` dependency). The Lambda binary now uses the Postgres backend exclusively (`NETCIDR_DATABASE_URL`). This removes the attack surface behind the S3 sync finding — no integrity check on pull, no client-side encryption, and a symlink-unsafe local DB path ([#254](https://github.com/wingnut128/netcidr/issues/254)).
@@ -19,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The MCP remote IPAM client (`mcp-serve --api-url`) now percent-encodes caller-controlled path segments and builds query strings via the request builder, so an `id`/`resource_id`/`address` containing `/`, `?`, or `#` can no longer inject extra path segments or a query string into the upstream request. It also sends a bearer token via the new `--api-token` flag (or `NETCIDR_API_TOKEN`), letting the remote `netcidr serve` enforce authentication instead of running open; the token header is marked sensitive so it is redacted from logs ([#253](https://github.com/wingnut128/netcidr/issues/253)).
 - The SQLite IPAM database file is now created with owner-only (`0600`) permissions on Unix, instead of inheriting the umask (typically world-readable `0644`). The database holds all CIDR blocks, allocations, hostnames, and the audit log ([#261](https://github.com/wingnut128/netcidr/issues/261)).
 - Auto-allocate now rejects a `count` above 1000 at both the CLI (`--count` value range) and the operations layer (covering the HTTP API), preventing an unbounded number of allocation writes from a single request ([#263](https://github.com/wingnut128/netcidr/issues/263)).
+- The IPAM list endpoints now bound their result sets via `limit`/`offset` pagination (default 100, max 1000), and the audit endpoint (`GET /ipam/audit`) defaults and clamps its `limit` so omitting it can no longer dump the entire audit log ([#260](https://github.com/wingnut128/netcidr/issues/260)).
 
 ## [0.26.9](https://github.com/wingnut128/netcidr/compare/v0.26.8...v0.26.9) - 2026-06-08
 

@@ -304,9 +304,22 @@ impl IpamStore for SqliteStore {
     }
 
     async fn list_cidr_blocks(&self, tenant_id: &str) -> Result<Vec<CidrBlock>> {
+        self.list_cidr_blocks_page(tenant_id, None, None).await
+    }
+
+    async fn list_cidr_blocks_page(
+        &self,
+        tenant_id: &str,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<Vec<CidrBlock>> {
         let conn = self.conn()?;
+        let sql = format!(
+            "SELECT id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM cidr_blocks WHERE tenant_id = ?1 ORDER BY created_at{}",
+            crate::ipam::store::limit_offset_clause(limit, offset)
+        );
         let mut stmt = conn
-            .prepare("SELECT id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM cidr_blocks WHERE tenant_id = ?1 ORDER BY created_at")
+            .prepare(&sql)
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         let rows = stmt
             .query_map(params![tenant_id], |row| {
@@ -535,6 +548,10 @@ impl IpamStore for SqliteStore {
         }
 
         sql.push_str(" ORDER BY created_at");
+        sql.push_str(&crate::ipam::store::limit_offset_clause(
+            filter.limit,
+            filter.offset,
+        ));
 
         let params_refs: Vec<&dyn rusqlite::types::ToSql> =
             param_values.iter().map(|p| p.as_ref()).collect();
@@ -869,6 +886,10 @@ impl IpamStore for SqliteStore {
             sql.push_str(&format!(" AND allocation_id = ?{}", binds.len()));
         }
         sql.push_str(" ORDER BY hostname, ip_address");
+        sql.push_str(&crate::ipam::store::limit_offset_clause(
+            filter.limit,
+            filter.offset,
+        ));
 
         let mut stmt = conn
             .prepare(&sql)
@@ -962,6 +983,10 @@ impl IpamStore for SqliteStore {
             sql.push_str(&format!(" AND hostname = ?{}", binds.len()));
         }
         sql.push_str(" ORDER BY changed_at");
+        sql.push_str(&crate::ipam::store::limit_offset_clause(
+            filter.limit,
+            filter.offset,
+        ));
 
         let mut stmt = conn
             .prepare(&sql)
@@ -1519,6 +1544,91 @@ mod tests {
         store.initialize().await.unwrap();
         store.migrate().await.unwrap();
         store
+    }
+
+    #[tokio::test]
+    async fn list_pagination_limits_and_offsets() {
+        let store = test_store().await;
+
+        // Three cidr_blocks (ordered by created_at).
+        for cidr in ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"] {
+            store
+                .create_cidr_block(
+                    TEST_TENANT,
+                    &CreateCidrBlock {
+                        cidr: cidr.to_string(),
+                        name: None,
+                        description: None,
+                    },
+                )
+                .await
+                .unwrap();
+        }
+
+        // Unbounded (None) returns all three.
+        assert_eq!(
+            store
+                .list_cidr_blocks_page(TEST_TENANT, None, None)
+                .await
+                .unwrap()
+                .len(),
+            3
+        );
+        // limit caps the page.
+        assert_eq!(
+            store
+                .list_cidr_blocks_page(TEST_TENANT, Some(2), None)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+        // offset skips, so only the third remains.
+        assert_eq!(
+            store
+                .list_cidr_blocks_page(TEST_TENANT, Some(10), Some(2))
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // Allocations under the first block.
+        let block = &store.list_cidr_blocks(TEST_TENANT).await.unwrap()[0];
+        for i in 0..5u8 {
+            store
+                .create_allocation(
+                    TEST_TENANT,
+                    &CreateAllocation {
+                        cidr_block_id: block.id.clone(),
+                        cidr: format!("10.0.{i}.0/24"),
+                        status: None,
+                        resource_id: None,
+                        resource_type: None,
+                        name: None,
+                        description: None,
+                        environment: None,
+                        owner: None,
+                        parent_allocation_id: None,
+                        tags: None,
+                        ttl_seconds: None,
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        let page = store
+            .list_allocations(
+                TEST_TENANT,
+                &AllocationFilter {
+                    cidr_block_id: Some(block.id.clone()),
+                    limit: Some(3),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(page.len(), 3, "limit must cap the allocation page");
     }
 
     #[cfg(unix)]

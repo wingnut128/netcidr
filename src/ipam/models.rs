@@ -164,6 +164,11 @@ pub struct AllocationFilter {
     pub resource_type: Option<String>,
     pub environment: Option<String>,
     pub owner: Option<String>,
+    /// Max rows to return. `None` means unbounded (CLI/internal callers);
+    /// the HTTP API always sets a clamped value.
+    pub limit: Option<u32>,
+    /// Rows to skip before returning results. `None` is treated as 0.
+    pub offset: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -597,6 +602,10 @@ pub struct HostnamePointerFilter {
     pub ip_address: Option<String>,
     pub hostname: Option<String>,
     pub allocation_id: Option<String>,
+    /// Max rows to return. `None` means unbounded (CLI/internal callers).
+    pub limit: Option<u32>,
+    /// Rows to skip before returning results. `None` is treated as 0.
+    pub offset: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -664,6 +673,10 @@ pub struct HostnamePointerHistoryEntry {
 pub struct HostnameHistoryFilter {
     pub ip_address: Option<String>,
     pub hostname: Option<String>,
+    /// Max rows to return. `None` means unbounded (CLI/internal callers).
+    pub limit: Option<u32>,
+    /// Rows to skip before returning results. `None` is treated as 0.
+    pub offset: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
