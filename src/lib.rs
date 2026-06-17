@@ -51,9 +51,6 @@ pub mod mcp;
 #[cfg(feature = "mcp")]
 pub mod mcp_client;
 
-#[cfg(feature = "lambda")]
-pub mod s3_sync;
-
 // Public API re-exports
 pub use batch::{BatchResult, process_batch, process_batch_with_limit};
 pub use contains::ContainsResult;
