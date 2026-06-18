@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.13](https://github.com/wingnut128/netcidr/compare/v0.26.12...v0.26.13) - 2026-06-18
+
+### Added
+
+- *(auth)* cap active PATs per tenant — ENG-108 ([#270](https://github.com/wingnut128/netcidr/pull/270))
+
+### Fixed
+
+- *(api)* enable per-IP rate limiting under Lambda via X-Forwarded-For — ENG-103 ([#272](https://github.com/wingnut128/netcidr/pull/272))
+
 ### Security
 
 - *(auth)* cap active PATs per tenant (default 25, configurable via `max_pats_per_tenant`); `POST /me/tokens` returns 429 when the cap is reached (ENG-108)
