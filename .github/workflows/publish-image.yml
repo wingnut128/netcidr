@@ -48,12 +48,17 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
-      - name: Log in to Cloudsmith
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+      - name: Authenticate to Cloudsmith via OIDC
+        uses: cloudsmith-io/cloudsmith-cli-action@159f1619275d5d3147f059c3cc110938ec221d16 # v2.0.3
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.CLOUDSMITH_USER }}
-          password: ${{ secrets.CLOUDSMITH_API_KEY }}
+          oidc-namespace: cloudreaper
+          oidc-service-slug: ${{ secrets.CLOUDSMITH_USER }}
+          oidc-auth-only: 'true'
+
+      - name: Log in to Cloudsmith registry
+        env:
+          CS_USER: ${{ secrets.CLOUDSMITH_USER }}
+        run: echo "$CLOUDSMITH_API_KEY" | docker login docker.cloudsmith.io -u "$CS_USER" --password-stdin
 
       - name: Build and push by digest
         id: build
@@ -117,12 +122,17 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
-      - name: Log in to Cloudsmith
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+      - name: Authenticate to Cloudsmith via OIDC
+        uses: cloudsmith-io/cloudsmith-cli-action@159f1619275d5d3147f059c3cc110938ec221d16 # v2.0.3
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.CLOUDSMITH_USER }}
-          password: ${{ secrets.CLOUDSMITH_API_KEY }}
+          oidc-namespace: cloudreaper
+          oidc-service-slug: ${{ secrets.CLOUDSMITH_USER }}
+          oidc-auth-only: 'true'
+
+      - name: Log in to Cloudsmith registry
+        env:
+          CS_USER: ${{ secrets.CLOUDSMITH_USER }}
+        run: echo "$CLOUDSMITH_API_KEY" | docker login docker.cloudsmith.io -u "$CS_USER" --password-stdin
 
       - name: Generate image metadata
         id: meta
