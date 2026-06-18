@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- *(auth)* cap active PATs per tenant (default 25, configurable via `max_pats_per_tenant`); `POST /me/tokens` returns 429 when the cap is reached (ENG-108)
+
 ## [0.26.12](https://github.com/wingnut128/netcidr/compare/v0.26.11...v0.26.12) - 2026-06-18
 
 ### Fixed

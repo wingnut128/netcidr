@@ -86,6 +86,13 @@ pub fn present(err: &NetcidrError) -> PresentedError {
             log_level: LogLevel::None,
         },
 
+        // 429 — per-tenant active PAT cap exceeded.
+        PatLimitExceeded { .. } => PresentedError {
+            status: 429,
+            client_msg: err.to_string(),
+            log_level: LogLevel::None,
+        },
+
         // 409 — conflict
         AllocationConflict { .. } | CidrBlockHasActiveAllocations(_) | LastAdmin => {
             PresentedError {

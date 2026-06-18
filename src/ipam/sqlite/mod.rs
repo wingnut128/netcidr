@@ -1339,6 +1339,25 @@ impl IpamStore for SqliteStore {
 
     // --- personal access tokens ---
 
+    async fn pat_count_active_for_owner(
+        &self,
+        tenant_id: &str,
+        owner_sub: &str,
+        now_rfc3339: &str,
+    ) -> Result<u32> {
+        let conn = self.conn()?;
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM personal_access_tokens \
+                 WHERE tenant_id = ?1 AND owner_sub = ?2 \
+                   AND revoked_at IS NULL AND expires_at > ?3",
+                params![tenant_id, owner_sub, now_rfc3339],
+                |row| row.get(0),
+            )
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        Ok(count as u32)
+    }
+
     async fn pat_create(&self, input: &CreatePersonalAccessToken) -> Result<PersonalAccessToken> {
         let conn = self.conn()?;
         let id = uuid::Uuid::new_v4().to_string();
@@ -2557,5 +2576,71 @@ mod tests {
             .unwrap();
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].id, valid.id);
+    }
+
+    #[tokio::test]
+    async fn pat_count_active_excludes_revoked_and_expired() {
+        let store = test_store().await;
+        let now = "2026-06-01T00:00:00Z";
+
+        // Active
+        let active = store
+            .pat_create(&pat_input(
+                TEST_TENANT,
+                "sub-1",
+                "a1",
+                0x60,
+                "2099-01-01T00:00:00Z",
+            ))
+            .await
+            .unwrap();
+
+        // Expired
+        store
+            .pat_create(&pat_input(
+                TEST_TENANT,
+                "sub-1",
+                "e1",
+                0x61,
+                "2020-01-01T00:00:00Z",
+            ))
+            .await
+            .unwrap();
+
+        // Revoked
+        let rev = store
+            .pat_create(&pat_input(
+                TEST_TENANT,
+                "sub-1",
+                "r1",
+                0x62,
+                "2099-01-01T00:00:00Z",
+            ))
+            .await
+            .unwrap();
+        store
+            .pat_revoke(TEST_TENANT, "sub-1", &rev.id, now)
+            .await
+            .unwrap();
+
+        let count = store
+            .pat_count_active_for_owner(TEST_TENANT, "sub-1", now)
+            .await
+            .unwrap();
+        assert_eq!(
+            count, 1,
+            "only the non-expired non-revoked token should count"
+        );
+
+        // Revoke the last active one → count drops to zero.
+        store
+            .pat_revoke(TEST_TENANT, "sub-1", &active.id, now)
+            .await
+            .unwrap();
+        let count_after = store
+            .pat_count_active_for_owner(TEST_TENANT, "sub-1", now)
+            .await
+            .unwrap();
+        assert_eq!(count_after, 0);
     }
 }

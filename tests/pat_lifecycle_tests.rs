@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use netcidr::auth::{AuthMethod, AuthenticatedPrincipal, PrincipalKind, Role};
+use netcidr::error::NetcidrError;
 use netcidr::ipam::sqlite::SqliteStore;
 use netcidr::ipam::store::IpamStore;
 use netcidr::pat::PatPepper;
@@ -16,7 +17,7 @@ async fn lifecycle() -> (PatLifecycle, Arc<dyn IpamStore>, Arc<PatPepper>) {
     let store: Arc<dyn IpamStore> = Arc::new(store);
     let pepper = Arc::new(PatPepper::from_bytes(&[0xA5u8; 32]).unwrap());
     (
-        PatLifecycle::new(Arc::clone(&store), Arc::clone(&pepper)),
+        PatLifecycle::new(Arc::clone(&store), Arc::clone(&pepper), 25),
         store,
         pepper,
     )
@@ -242,4 +243,99 @@ async fn mint_for_principal_clamps_requested_role_to_callers_role() {
         Role::Reader,
         "admin narrowing to reader must be honored"
     );
+}
+
+#[tokio::test]
+async fn mint_is_rejected_when_active_pat_cap_is_reached() {
+    let store = SqliteStore::in_memory().unwrap();
+    store.initialize().await.unwrap();
+    store.migrate().await.unwrap();
+    let store: Arc<dyn IpamStore> = Arc::new(store);
+    let pepper = Arc::new(PatPepper::from_bytes(&[0xA5u8; 32]).unwrap());
+    // Use a cap of 2 to keep the test fast.
+    let lifecycle = PatLifecycle::new(Arc::clone(&store), Arc::clone(&pepper), 2);
+
+    let make_req = |n: u8| CreatePatRequest {
+        name: format!("tok-{n}"),
+        expires_in_days: Some(30),
+        role: None,
+    };
+
+    lifecycle
+        .mint_for_owner(&owner(), Role::Admin, make_req(1))
+        .await
+        .unwrap();
+    lifecycle
+        .mint_for_owner(&owner(), Role::Admin, make_req(2))
+        .await
+        .unwrap();
+
+    // Third mint must be rejected with PatLimitExceeded.
+    let err = lifecycle
+        .mint_for_owner(&owner(), Role::Admin, make_req(3))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, NetcidrError::PatLimitExceeded { count: 2, limit: 2 }),
+        "expected PatLimitExceeded {{count:2,limit:2}}, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn mint_succeeds_after_revoking_to_below_cap() {
+    let store = SqliteStore::in_memory().unwrap();
+    store.initialize().await.unwrap();
+    store.migrate().await.unwrap();
+    let store: Arc<dyn IpamStore> = Arc::new(store);
+    let pepper = Arc::new(PatPepper::from_bytes(&[0xA5u8; 32]).unwrap());
+    let lifecycle = PatLifecycle::new(Arc::clone(&store), Arc::clone(&pepper), 1);
+
+    let minted = lifecycle
+        .mint_for_owner(
+            &owner(),
+            Role::Admin,
+            CreatePatRequest {
+                name: "first".to_string(),
+                expires_in_days: Some(30),
+                role: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    // At cap — second mint fails.
+    assert!(
+        lifecycle
+            .mint_for_owner(
+                &owner(),
+                Role::Admin,
+                CreatePatRequest {
+                    name: "second".to_string(),
+                    expires_in_days: Some(30),
+                    role: None
+                },
+            )
+            .await
+            .is_err()
+    );
+
+    // Revoke the first token.
+    lifecycle
+        .revoke_for_owner(&owner(), &minted.summary.id)
+        .await
+        .unwrap();
+
+    // Now below cap — third mint succeeds.
+    lifecycle
+        .mint_for_owner(
+            &owner(),
+            Role::Admin,
+            CreatePatRequest {
+                name: "third".to_string(),
+                expires_in_days: Some(30),
+                role: None,
+            },
+        )
+        .await
+        .unwrap();
 }

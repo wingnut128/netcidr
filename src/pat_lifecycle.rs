@@ -64,11 +64,20 @@ pub enum VerifyPatError {
 pub struct PatLifecycle {
     store: Arc<dyn IpamStore>,
     pepper: Arc<PatPepper>,
+    max_pats_per_tenant: u32,
 }
 
 impl PatLifecycle {
-    pub fn new(store: Arc<dyn IpamStore>, pepper: Arc<PatPepper>) -> Self {
-        Self { store, pepper }
+    pub fn new(
+        store: Arc<dyn IpamStore>,
+        pepper: Arc<PatPepper>,
+        max_pats_per_tenant: u32,
+    ) -> Self {
+        Self {
+            store,
+            pepper,
+            max_pats_per_tenant,
+        }
     }
 
     pub async fn mint_for_owner(
@@ -79,8 +88,21 @@ impl PatLifecycle {
     ) -> Result<MintedPat> {
         let name = validate_name(&request.name)?;
         let days = validate_expires_in_days(request.expires_in_days)?;
-        let minted = pat::mint(self.pepper.as_ref());
         let now = chrono::Utc::now();
+        let now_rfc3339 = now.to_rfc3339();
+
+        let active = self
+            .store
+            .pat_count_active_for_owner(&owner.tenant_id, &owner.subject, &now_rfc3339)
+            .await?;
+        if active >= self.max_pats_per_tenant {
+            return Err(NetcidrError::PatLimitExceeded {
+                count: active,
+                limit: self.max_pats_per_tenant,
+            });
+        }
+
+        let minted = pat::mint(self.pepper.as_ref());
         let expires_at = (now + chrono::Duration::days(days as i64)).to_rfc3339();
 
         let row = self

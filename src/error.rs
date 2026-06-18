@@ -102,6 +102,11 @@ pub enum NetcidrError {
     #[error("Personal access token not found: {0}")]
     PatNotFound(String),
 
+    #[error(
+        "PAT limit reached: {count} active tokens (max {limit}); revoke a token to create a new one"
+    )]
+    PatLimitExceeded { count: u32, limit: u32 },
+
     /// An idempotency key was reused with a different request body for
     /// the same operation scope. The key is bound to the *first* payload
     /// it saw; reusing it for a new payload is almost always a client
