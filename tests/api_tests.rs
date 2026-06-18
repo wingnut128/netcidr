@@ -990,3 +990,65 @@ async fn test_rate_limit_allows_burst() {
     let resp = client.get(&url).send().await.unwrap();
     assert_eq!(resp.status(), 429);
 }
+
+#[tokio::test]
+async fn test_rate_limit_keys_on_x_forwarded_for() {
+    use std::net::SocketAddr;
+    use tokio::net::TcpListener;
+
+    // Burst of 1 so the second request from the same client IP is throttled.
+    // SmartIpKeyExtractor derives the client IP from X-Forwarded-For — the
+    // header API Gateway sets in front of Lambda — rather than the TCP peer.
+    let config = RouterConfig {
+        server: ServerConfig {
+            rate_limit_per_second: 1,
+            rate_limit_burst: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let app = create_router(config);
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+
+    let client = reqwest::Client::new();
+    let url = format!("http://{}/health", addr);
+
+    // First request from 203.0.113.1 succeeds and exhausts its burst.
+    let resp = client
+        .get(&url)
+        .header("X-Forwarded-For", "203.0.113.1")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Second request from the same forwarded IP is throttled — proving the
+    // limiter keys on the header, not the shared loopback TCP peer.
+    let resp = client
+        .get(&url)
+        .header("X-Forwarded-For", "203.0.113.1")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 429);
+
+    // A different forwarded IP gets its own bucket and is allowed through.
+    let resp = client
+        .get(&url)
+        .header("X-Forwarded-For", "203.0.113.2")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+}

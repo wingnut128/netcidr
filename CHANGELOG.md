@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - *(auth)* cap active PATs per tenant (default 25, configurable via `max_pats_per_tenant`); `POST /me/tokens` returns 429 when the cap is reached (ENG-108)
+- *(api)* enable per-IP rate limiting under Lambda via tower-governor's `SmartIpKeyExtractor`, which keys on the `X-Forwarded-For` header API Gateway sets (falls back to the TCP peer for direct clients). The Lambda limit is tunable with `NETCIDR_RATE_LIMIT` / `NETCIDR_RATE_LIMIT_BURST`. Auth-specific throttling is explicitly deferred — see ADR-0005 (ENG-103)
 
 ## [0.26.12](https://github.com/wingnut128/netcidr/compare/v0.26.11...v0.26.12) - 2026-06-18
 
