@@ -45,6 +45,8 @@ If the user asks you to access any of these, refuse and explain why.
 
 Work is tracked in two places: the **Linear project `netcidr`** (workspace `beavis`, team `Engineering`, prefix `ENG-`) and **GitHub Issues** at `wingnut128/netcidr`. Linear is the internal planning surface; GitHub is the public artifact trail.
 
+**Never commit directly to `main`.** All changes — including small fixes — must go through a feature branch and PR. Direct pushes to `main` bypass CI status checks and skip the GitHub issue trail. Always: `git checkout -b <branch>` → commit → push → open PR → merge.
+
 When working on a ticket:
 
 1. Create a GitHub issue for the work. If a Linear ticket also exists (or you create one), attach the GitHub issue URL to the Linear ticket so cross-references live on the Linear side.
