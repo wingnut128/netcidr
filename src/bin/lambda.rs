@@ -23,6 +23,15 @@ fn env_or<S: Into<String>>(key: &str, fallback: S) -> String {
     std::env::var(key).unwrap_or_else(|_| fallback.into())
 }
 
+/// Parse a numeric environment variable, falling back to `fallback` when the
+/// variable is unset or cannot be parsed.
+fn env_parse<T: std::str::FromStr>(key: &str, fallback: T) -> T {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(fallback)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     use tracing_subscriber::layer::SubscriberExt;
@@ -64,11 +73,13 @@ async fn main() -> Result<(), Error> {
         ipam_db: None,
         ipam_db_url: std::env::var("NETCIDR_DATABASE_URL").ok(),
         enable_swagger: env_or("NETCIDR_ENABLE_SWAGGER", "true") == "true",
-        // Disable the per-IP rate limiter under Lambda. tower_governor needs
-        // ConnectInfo<SocketAddr> from a real TCP peer, which lambda_http
-        // doesn't provide — every request would 500 with "Unable To Extract
-        // Key!". AWS Lambda's own concurrency limits cover throttling.
-        rate_limit_per_second: 0,
+        // Per-IP rate limiting works under Lambda because the router uses
+        // SmartIpKeyExtractor, which reads the client IP from the
+        // X-Forwarded-For header that API Gateway sets (lambda_http provides
+        // no ConnectInfo). Tunable without a redeploy via NETCIDR_RATE_LIMIT
+        // (requests/sec, 0 disables) and NETCIDR_RATE_LIMIT_BURST.
+        rate_limit_per_second: env_parse("NETCIDR_RATE_LIMIT", 20),
+        rate_limit_burst: env_parse("NETCIDR_RATE_LIMIT_BURST", 50),
         ..ServerConfig::default()
     };
 

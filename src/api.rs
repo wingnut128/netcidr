@@ -12,6 +12,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tower_governor::GovernorLayer;
 use tower_governor::governor::GovernorConfigBuilder;
+use tower_governor::key_extractor::SmartIpKeyExtractor;
 use tower_http::cors::CorsLayer;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
@@ -582,13 +583,20 @@ pub fn create_router(config: RouterConfig) -> Router {
         ));
 
     // Per-IP rate limiting via tower-governor (disabled when rate_limit_per_second == 0).
-    // Requires ConnectInfo<SocketAddr> — the server must use
-    // `into_make_service_with_connect_info::<SocketAddr>()`.
+    // SmartIpKeyExtractor derives the client IP from the X-Forwarded-For,
+    // X-Real-IP, or Forwarded headers (set by a trusted proxy such as API
+    // Gateway), falling back to ConnectInfo<SocketAddr> for direct TCP
+    // clients. This lets the limiter run under Lambda, where lambda_http
+    // provides no ConnectInfo but API Gateway always sets X-Forwarded-For.
+    // For `netcidr serve`, the server must use
+    // `into_make_service_with_connect_info::<SocketAddr>()` so the fallback
+    // works for clients that send no forwarding header.
     let router =
         if let Some(replenish_ms) = 1000u64.checked_div(config.server.rate_limit_per_second) {
             match GovernorConfigBuilder::default()
                 .per_millisecond(replenish_ms)
                 .burst_size(config.server.rate_limit_burst)
+                .key_extractor(SmartIpKeyExtractor)
                 .finish()
             {
                 Some(governor_config) => router.layer(GovernorLayer::new(governor_config)),

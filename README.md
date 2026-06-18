@@ -1007,8 +1007,12 @@ cargo lambda build --release --arm64 --bin lambda --features lambda,ipam-postgre
 | `NETCIDR_IPAM_BACKEND` | No | `postgres` | IPAM backend |
 | `NETCIDR_AUTH_MODE` | No | `oidc` | `oidc`, `bearer`, or `none` |
 | `NETCIDR_IPAM_ENABLED` | No | `true` | Disable IPAM endpoints |
+| `NETCIDR_RATE_LIMIT` | No | `20` | Sustained per-IP requests/sec (`0` disables) |
+| `NETCIDR_RATE_LIMIT_BURST` | No | `50` | Per-IP burst allowance |
 
 Point `NETCIDR_DATABASE_URL` at a serverless Postgres (e.g. [Neon](https://neon.tech)) or RDS. For RDS, consider RDS Proxy to manage connection pooling across Lambda invocations.
+
+**Per-IP rate limiting under Lambda.** The router derives the client IP from the `X-Forwarded-For` header (via tower-governor's `SmartIpKeyExtractor`), so the limiter works behind API Gateway even though `lambda_http` provides no TCP peer address. This is only trustworthy because **API Gateway is a trusted proxy that overwrites `X-Forwarded-For`** with the real client IP — never expose the Lambda Function URL directly, or callers could spoof the header to evade throttling. For `netcidr serve` (direct TCP), clients that send no forwarding header fall back to the connection's peer IP. Tune the limit per environment with `NETCIDR_RATE_LIMIT` / `NETCIDR_RATE_LIMIT_BURST` without redeploying.
 
 ## License
 
