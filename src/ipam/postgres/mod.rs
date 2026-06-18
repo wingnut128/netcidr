@@ -1246,6 +1246,27 @@ impl IpamStore for PostgresStore {
 
     // --- personal access tokens ---
 
+    async fn pat_count_active_for_owner(
+        &self,
+        tenant_id: &str,
+        owner_sub: &str,
+        now_rfc3339: &str,
+    ) -> Result<u32> {
+        let row = sqlx::query(
+            "SELECT COUNT(*) FROM personal_access_tokens \
+             WHERE tenant_id = $1 AND owner_sub = $2 \
+               AND revoked_at IS NULL AND expires_at > $3",
+        )
+        .bind(tenant_id)
+        .bind(owner_sub)
+        .bind(now_rfc3339)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        let count: i64 = row.get(0);
+        Ok(count as u32)
+    }
+
     async fn pat_create(&self, input: &CreatePersonalAccessToken) -> Result<PersonalAccessToken> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = Self::now();

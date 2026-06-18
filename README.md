@@ -488,6 +488,7 @@ rate_limit_per_second = 20    # Sustained rate limit per IP (default: 20; 0 = di
 rate_limit_burst = 50         # Burst allowance per IP (default: 50)
 timeout_seconds = 30          # Request timeout (default: 30s)
 enable_swagger = false        # Swagger UI at /swagger-ui (default: false)
+max_pats_per_tenant = 25      # Max active PATs per tenant (default: 25; POST /me/tokens returns 429 when reached)
 ```
 
 **Security defaults**: All endpoints are protected by per-IP rate limiting, request body size limits, request timeouts, restrictive CORS (no origins allowed by default), and security headers (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Cache-Control: no-store`).

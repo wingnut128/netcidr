@@ -157,6 +157,15 @@ pub trait IpamStore: Send + Sync {
 
     // --- personal access tokens ---
 
+    /// Count active (non-revoked, non-expired) PATs for `(tenant_id, owner_sub)`.
+    /// `now_rfc3339` is the caller's "now" used in the expiry predicate.
+    async fn pat_count_active_for_owner(
+        &self,
+        tenant_id: &str,
+        owner_sub: &str,
+        now_rfc3339: &str,
+    ) -> Result<u32>;
+
     /// Insert a new PAT row. Caller has already computed `prefix` and
     /// `token_hash`; the store trusts those inputs and parameterizes them.
     async fn pat_create(&self, input: &CreatePersonalAccessToken) -> Result<PersonalAccessToken>;

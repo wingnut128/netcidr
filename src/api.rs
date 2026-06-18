@@ -518,6 +518,7 @@ pub fn create_router(config: RouterConfig) -> Router {
             let lifecycle = Arc::new(crate::pat_lifecycle::PatLifecycle::new(
                 ops.store_arc(),
                 Arc::clone(pepper),
+                config.server.max_pats_per_tenant,
             ));
             let me_router = crate::me_api::create_me_router()
                 .layer(Extension(lifecycle))

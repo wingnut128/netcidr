@@ -86,6 +86,9 @@ pub struct ServerConfig {
     pub allow_public_bind: bool,
     /// Require authentication when binding the HTTP API to a non-loopback address.
     pub require_auth_for_public_bind: bool,
+    /// Maximum number of active (non-revoked, non-expired) PATs per tenant.
+    /// Callers that exceed this cap receive 429 and must revoke a token first.
+    pub max_pats_per_tenant: u32,
 }
 
 impl Default for ServerConfig {
@@ -112,6 +115,7 @@ impl Default for ServerConfig {
             oidc_reader_emails: Vec::new(),
             allow_public_bind: false,
             require_auth_for_public_bind: true,
+            max_pats_per_tenant: 25,
         }
     }
 }
