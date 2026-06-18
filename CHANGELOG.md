@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.12](https://github.com/wingnut128/netcidr/compare/v0.26.11...v0.26.12) - 2026-06-18
+
+### Fixed
+
+- *(dashboard)* use delVoid for CIDR block delete to handle 204 No Content
+
+### Other
+
+- prohibit direct commits to main in CLAUDE.md
+
 ## [0.26.11](https://github.com/wingnut128/netcidr/compare/v0.26.10...v0.26.11) - 2026-06-18
 
 ### Other
