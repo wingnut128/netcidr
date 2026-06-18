@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { get, post, patch, put, del } from "../api";
+import { get, post, patch, put, delVoid } from "../api";
 import type {
   CidrBlock,
   CidrBlockList,
@@ -159,7 +159,7 @@ export function useIpam() {
     async (id: string) => {
       if (!confirm("Delete this CIDR block?")) return;
       try {
-        await del(`/ipam/cidr-blocks/${id}`);
+        await delVoid(`/ipam/cidr-blocks/${id}`);
         await loadAll();
         if (filters.cidr_blockId === id) {
           setFiltersState((f) => ({ ...f, cidr_blockId: "" }));
