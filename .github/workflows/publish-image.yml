@@ -32,7 +32,7 @@ jobs:
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}
       REGISTRY: docker.cloudsmith.io
-      IMAGE: docker.cloudsmith.io/cloudreaper/artifacts/netcidr
+      IMAGE: docker.cloudsmith.io/cloudreaper/netcidr/netcidr
     steps:
       - name: Validate tag format
         run: |
@@ -62,6 +62,8 @@ jobs:
           context: .
           platforms: ${{ matrix.platform }}
           push: true
+          build-args: |
+            FEATURES=mcp,tui,ipam-postgres
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true
 
       - name: Attest build provenance
@@ -96,7 +98,7 @@ jobs:
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}
       REGISTRY: docker.cloudsmith.io
-      IMAGE: docker.cloudsmith.io/cloudreaper/artifacts/netcidr
+      IMAGE: docker.cloudsmith.io/cloudreaper/netcidr/netcidr
     steps:
       - name: Validate tag format
         run: |
