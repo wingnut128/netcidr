@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use netcidr::auth::{AuthMethod, AuthenticatedPrincipal, PrincipalKind, Role};
+use netcidr::error::NetcidrError;
 use netcidr::ipam::sqlite::SqliteStore;
 use netcidr::ipam::store::IpamStore;
 use netcidr::pat::PatPepper;
-use netcidr::error::NetcidrError;
 use netcidr::pat_lifecycle::{self, CreatePatRequest, PatLifecycle, PatOwner, VerifyPatError};
 
 const OWNER_EMAIL: &str = "owner@example.com";
@@ -261,8 +261,14 @@ async fn mint_is_rejected_when_active_pat_cap_is_reached() {
         role: None,
     };
 
-    lifecycle.mint_for_owner(&owner(), Role::Admin, make_req(1)).await.unwrap();
-    lifecycle.mint_for_owner(&owner(), Role::Admin, make_req(2)).await.unwrap();
+    lifecycle
+        .mint_for_owner(&owner(), Role::Admin, make_req(1))
+        .await
+        .unwrap();
+    lifecycle
+        .mint_for_owner(&owner(), Role::Admin, make_req(2))
+        .await
+        .unwrap();
 
     // Third mint must be rejected with PatLimitExceeded.
     let err = lifecycle
@@ -288,30 +294,47 @@ async fn mint_succeeds_after_revoking_to_below_cap() {
         .mint_for_owner(
             &owner(),
             Role::Admin,
-            CreatePatRequest { name: "first".to_string(), expires_in_days: Some(30), role: None },
+            CreatePatRequest {
+                name: "first".to_string(),
+                expires_in_days: Some(30),
+                role: None,
+            },
         )
         .await
         .unwrap();
 
     // At cap — second mint fails.
-    assert!(lifecycle
-        .mint_for_owner(
-            &owner(),
-            Role::Admin,
-            CreatePatRequest { name: "second".to_string(), expires_in_days: Some(30), role: None },
-        )
-        .await
-        .is_err());
+    assert!(
+        lifecycle
+            .mint_for_owner(
+                &owner(),
+                Role::Admin,
+                CreatePatRequest {
+                    name: "second".to_string(),
+                    expires_in_days: Some(30),
+                    role: None
+                },
+            )
+            .await
+            .is_err()
+    );
 
     // Revoke the first token.
-    lifecycle.revoke_for_owner(&owner(), &minted.summary.id).await.unwrap();
+    lifecycle
+        .revoke_for_owner(&owner(), &minted.summary.id)
+        .await
+        .unwrap();
 
     // Now below cap — third mint succeeds.
     lifecycle
         .mint_for_owner(
             &owner(),
             Role::Admin,
-            CreatePatRequest { name: "third".to_string(), expires_in_days: Some(30), role: None },
+            CreatePatRequest {
+                name: "third".to_string(),
+                expires_in_days: Some(30),
+                role: None,
+            },
         )
         .await
         .unwrap();

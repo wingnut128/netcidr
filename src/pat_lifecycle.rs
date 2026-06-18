@@ -68,8 +68,16 @@ pub struct PatLifecycle {
 }
 
 impl PatLifecycle {
-    pub fn new(store: Arc<dyn IpamStore>, pepper: Arc<PatPepper>, max_pats_per_tenant: u32) -> Self {
-        Self { store, pepper, max_pats_per_tenant }
+    pub fn new(
+        store: Arc<dyn IpamStore>,
+        pepper: Arc<PatPepper>,
+        max_pats_per_tenant: u32,
+    ) -> Self {
+        Self {
+            store,
+            pepper,
+            max_pats_per_tenant,
+        }
     }
 
     pub async fn mint_for_owner(

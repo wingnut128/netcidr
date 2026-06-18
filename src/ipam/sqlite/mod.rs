@@ -2585,31 +2585,58 @@ mod tests {
 
         // Active
         let active = store
-            .pat_create(&pat_input(TEST_TENANT, "sub-1", "a1", 0x60, "2099-01-01T00:00:00Z"))
+            .pat_create(&pat_input(
+                TEST_TENANT,
+                "sub-1",
+                "a1",
+                0x60,
+                "2099-01-01T00:00:00Z",
+            ))
             .await
             .unwrap();
 
         // Expired
         store
-            .pat_create(&pat_input(TEST_TENANT, "sub-1", "e1", 0x61, "2020-01-01T00:00:00Z"))
+            .pat_create(&pat_input(
+                TEST_TENANT,
+                "sub-1",
+                "e1",
+                0x61,
+                "2020-01-01T00:00:00Z",
+            ))
             .await
             .unwrap();
 
         // Revoked
         let rev = store
-            .pat_create(&pat_input(TEST_TENANT, "sub-1", "r1", 0x62, "2099-01-01T00:00:00Z"))
+            .pat_create(&pat_input(
+                TEST_TENANT,
+                "sub-1",
+                "r1",
+                0x62,
+                "2099-01-01T00:00:00Z",
+            ))
             .await
             .unwrap();
-        store.pat_revoke(TEST_TENANT, "sub-1", &rev.id, now).await.unwrap();
+        store
+            .pat_revoke(TEST_TENANT, "sub-1", &rev.id, now)
+            .await
+            .unwrap();
 
         let count = store
             .pat_count_active_for_owner(TEST_TENANT, "sub-1", now)
             .await
             .unwrap();
-        assert_eq!(count, 1, "only the non-expired non-revoked token should count");
+        assert_eq!(
+            count, 1,
+            "only the non-expired non-revoked token should count"
+        );
 
         // Revoke the last active one → count drops to zero.
-        store.pat_revoke(TEST_TENANT, "sub-1", &active.id, now).await.unwrap();
+        store
+            .pat_revoke(TEST_TENANT, "sub-1", &active.id, now)
+            .await
+            .unwrap();
         let count_after = store
             .pat_count_active_for_owner(TEST_TENANT, "sub-1", now)
             .await
