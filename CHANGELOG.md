@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.11](https://github.com/wingnut128/netcidr/compare/v0.26.10...v0.26.11) - 2026-06-18
+
+### Other
+
+- replace Cloudsmith API key auth with OIDC
+- fix Cloudsmith image path and add ipam-postgres feature flags
+- add Cloudsmith multi-arch image publish workflow
+- add kill chain x STRIDE threat analysis report
+- add STRIDE threat model report
+
 ## [0.26.10](https://github.com/wingnut128/netcidr/compare/v0.26.9...v0.26.10) - 2026-06-17
 
 ### Added
