@@ -20,7 +20,7 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-appender = "0.2"
-tower-http = { version = "0.6", features = ["trace", "timeout", "cors", "set-header", "limit"] }
+tower-http = { version = "0.7", features = ["trace", "timeout", "cors", "set-header", "limit"] }
 tower_governor = "0.8"
 toml = "1.1"
 csv = "1"
