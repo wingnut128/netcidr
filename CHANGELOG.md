@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.1](https://github.com/wingnut128/netcidr/compare/v0.27.0...v0.27.1) - 2026-06-22
+
+### Other
+
+- *(deps)* bump actions/checkout from 6.0.3 to 7.0.0
+- *(deps)* bump react-router-dom from 7.17.0 to 7.18.0 in /dashboard in the npm-minor-and-patch group ([#275](https://github.com/wingnut128/netcidr/pull/275))
+- *(deps)* bump ratatui ([#276](https://github.com/wingnut128/netcidr/pull/276))
+- *(deps)* bump tower-http from 0.6.11 to 0.7.0 ([#278](https://github.com/wingnut128/netcidr/pull/278))
+
 ## [0.27.0](https://github.com/wingnut128/netcidr/compare/v0.26.12...v0.27.0) - 2026-06-18
 
 ### Security
