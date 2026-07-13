@@ -78,7 +78,7 @@ RUN touch src/main.rs && \
 # guarantees reproducibility. Chainguard's `static` image is not versioned
 # beyond `:latest` / `:latest-glibc`, so `:latest` is the recommended tag per
 # their docs. Digestabot refreshes the digest on a schedule (.github/workflows/digestabot.yml).
-FROM cgr.dev/chainguard/static:latest@sha256:77d8b8925dc27970ec2f48243f44c7a260d52c49cd778288e4ee97566e0cb75b
+FROM cgr.dev/chainguard/static:latest@sha256:60582b2ae6074f641094af0f370d4ab241aab271858a66223dcde7eee9f51638
 
 COPY --from=builder /app/target/release/netcidr /usr/local/bin/netcidr
 
