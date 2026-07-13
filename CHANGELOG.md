@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.2](https://github.com/wingnut128/netcidr/compare/v0.27.1...v0.27.2) - 2026-07-13
+
+### Other
+
+- *(deps)* bump rmcp from 1.7.0 to 2.2.0 ([#297](https://github.com/wingnut128/netcidr/pull/297))
+- *(deps)* bump actions/cache from 5.0.5 to 6.1.0 ([#281](https://github.com/wingnut128/netcidr/pull/281))
+- *(deps)* bump the npm-minor-and-patch group across 1 directory with 5 updates ([#288](https://github.com/wingnut128/netcidr/pull/288))
+- *(deps)* bump github/codeql-action/analyze from 4.36.2 to 4.37.0 ([#293](https://github.com/wingnut128/netcidr/pull/293))
+- *(deps)* bump github/codeql-action/upload-sarif ([#294](https://github.com/wingnut128/netcidr/pull/294))
+- *(deps)* bump github/codeql-action/init from 4.36.3 to 4.37.0 ([#292](https://github.com/wingnut128/netcidr/pull/292))
+- *(deps)* bump the cargo-minor-and-patch group across 1 directory with 3 updates ([#289](https://github.com/wingnut128/netcidr/pull/289))
+- *(deps)* bump cmov from 0.5.3 to 0.5.4 ([#290](https://github.com/wingnut128/netcidr/pull/290))
+- *(deps)* bump docker/setup-buildx-action from 4.1.0 to 4.2.0 ([#284](https://github.com/wingnut128/netcidr/pull/284))
+- *(deps)* bump docker/build-push-action from 7.2.0 to 7.3.0 ([#287](https://github.com/wingnut128/netcidr/pull/287))
+- *(deps)* bump github/codeql-action/init from 4.36.2 to 4.36.3 ([#286](https://github.com/wingnut128/netcidr/pull/286))
+- *(deps)* bump docker/metadata-action from 6.1.0 to 6.2.0 ([#285](https://github.com/wingnut128/netcidr/pull/285))
+- *(deps)* bump actions/attest-build-provenance from 4.1.0 to 4.1.1 ([#280](https://github.com/wingnut128/netcidr/pull/280))
+
 ## [0.27.1](https://github.com/wingnut128/netcidr/compare/v0.27.0...v0.27.1) - 2026-06-22
 
 ### Other
