@@ -12,7 +12,7 @@ use serde::Deserialize;
 #[cfg(feature = "swagger")]
 use utoipa::{IntoParams, ToSchema};
 
-use crate::authorization::{RequireAdmin, RequireAllocator, RequireReader};
+use crate::authorization::{RequireAdmin, RequireAllocator, RequirePlatformAdmin, RequireReader};
 use crate::error::NetcidrError;
 use crate::error_presenter::{LogLevel, present};
 use crate::ipam::idempotency;
@@ -355,15 +355,16 @@ pub fn create_ipam_router() -> Router {
         .route("/batch/summary", get(ipam_batch_summary))
 }
 
-/// Admin router (role-email management). Mounted at the root so paths are
-/// `/admin/users`; all handlers are `RequireAdmin`-gated. Role membership is
-/// global, so the injected tenant is used only for the audit row.
+/// Admin router (users directory, ADR-0006). Mounted at the root so paths
+/// are `/admin/users`; all handlers are `RequirePlatformAdmin`-gated — a
+/// tenant-space `Admin` gets 403. User records are global, so the injected
+/// tenant is used only for the audit row.
 pub fn create_admin_router() -> Router {
     Router::new().route(
         "/admin/users",
         get(admin_list_users)
-            .post(admin_grant_user)
-            .delete(admin_revoke_user),
+            .post(admin_upsert_user)
+            .delete(admin_delete_user),
     )
 }
 
@@ -371,7 +372,8 @@ pub fn create_admin_router() -> Router {
     get,
     path = "/admin/users",
     responses(
-        (status = 200, description = "Role assignments", body = RoleAssignmentList),
+        (status = 200, description = "User directory (email, role, status)", body = UserList),
+        (status = 403, description = "Caller is not a platform admin"),
     ),
     security(("bearerAuth" = [])),
     tag = "auth"
@@ -379,11 +381,11 @@ pub fn create_admin_router() -> Router {
 async fn admin_list_users(
     Extension(ops): Extension<Arc<IpamOps>>,
     _tenant: crate::tenant::Tenant,
-    _: RequireAdmin,
+    _: RequirePlatformAdmin,
 ) -> impl IntoResponse {
-    match ops.list_role_assignments().await {
+    match ops.list_users().await {
         Ok(users) => {
-            let list = RoleAssignmentList {
+            let list = UserList {
                 count: users.len(),
                 users,
             };
@@ -396,25 +398,27 @@ async fn admin_list_users(
 #[cfg_attr(feature = "swagger", utoipa::path(
     post,
     path = "/admin/users",
-    request_body = GrantRoleRequest,
+    request_body = UpsertUserRequest,
     responses(
-        (status = 200, description = "Role granted/updated", body = RoleAssignment),
+        (status = 200, description = "User created or updated", body = UserRecord),
         (status = 400, description = "Invalid email", body = IpamErrorResponse),
+        (status = 403, description = "Caller is not a platform admin"),
+        (status = 409, description = "Refused: would remove the last active platform admin", body = IpamErrorResponse),
     ),
     security(("bearerAuth" = [])),
     tag = "auth"
 ))]
-async fn admin_grant_user(
+async fn admin_upsert_user(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
-    _: RequireAdmin,
-    Json(body): Json<GrantRoleRequest>,
+    _: RequirePlatformAdmin,
+    Json(body): Json<UpsertUserRequest>,
 ) -> impl IntoResponse {
     match ops
-        .grant_role(tenant.as_str(), &body.email, body.role)
+        .upsert_user(tenant.as_str(), &body.email, body.role, body.status)
         .await
     {
-        Ok(assignment) => Json(assignment).into_response(),
+        Ok(user) => Json(user).into_response(),
         Err(e) => ipam_error_response(e),
     }
 }
@@ -424,20 +428,21 @@ async fn admin_grant_user(
     path = "/admin/users",
     params(DeleteUserQuery),
     responses(
-        (status = 204, description = "Role revoked"),
-        (status = 404, description = "No assignment for email", body = IpamErrorResponse),
-        (status = 409, description = "Refused: last admin", body = IpamErrorResponse),
+        (status = 204, description = "User removed (tenant data untouched)"),
+        (status = 403, description = "Caller is not a platform admin"),
+        (status = 404, description = "No user for email", body = IpamErrorResponse),
+        (status = 409, description = "Refused: last active platform admin", body = IpamErrorResponse),
     ),
     security(("bearerAuth" = [])),
     tag = "auth"
 ))]
-async fn admin_revoke_user(
+async fn admin_delete_user(
     Extension(ops): Extension<Arc<IpamOps>>,
     tenant: crate::tenant::Tenant,
-    _: RequireAdmin,
+    _: RequirePlatformAdmin,
     Query(query): Query<DeleteUserQuery>,
 ) -> impl IntoResponse {
-    match ops.revoke_role(tenant.as_str(), &query.email).await {
+    match ops.delete_user(tenant.as_str(), &query.email).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => ipam_error_response(e),
     }

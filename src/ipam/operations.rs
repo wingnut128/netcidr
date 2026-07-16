@@ -1243,71 +1243,16 @@ impl IpamOps {
             .await
     }
 
-    // --- role assignments (global RBAC membership) ---
-
-    /// List all role assignments (global; not tenant-scoped).
-    pub async fn list_role_assignments(&self) -> Result<Vec<RoleAssignment>> {
-        self.store.list_role_assignments().await
-    }
-
-    /// Grant (or change) a role for an email. `tenant_id` scopes only the audit
-    /// row (the acting admin's tenant); the assignment itself is global.
-    pub async fn grant_role(
-        &self,
-        tenant_id: &str,
-        email: &str,
-        role: crate::auth::Role,
-    ) -> Result<RoleAssignment> {
-        validation::validate_email(email)?;
-        let actor = Self::current_actor();
-        let assignment = self
-            .store
-            .upsert_role_assignment(&email.to_ascii_lowercase(), role, &actor)
-            .await?;
-        self.audit(
-            tenant_id,
-            "grant_role",
-            "role_assignment",
-            &assignment.email,
-            Some(&format!("role={}", role.as_str())),
-        )
-        .await?;
-        Ok(assignment)
-    }
-
-    /// Revoke an email's role. Guards: refuse to remove the last remaining
-    /// admin, and refuse to let an authenticated caller revoke their own admin.
-    pub async fn revoke_role(&self, tenant_id: &str, email: &str) -> Result<()> {
-        let needle = email.to_ascii_lowercase();
-        let current = self.store.get_role_for_email(&needle).await?;
-
-        if current == Some(crate::auth::Role::Admin) {
-            // Self-revoke guard (CLI actor is "cli" and never matches an email).
-            let ctx = crate::audit_context::current();
-            if let Some(caller) = ctx.caller_email.as_deref()
-                && caller.eq_ignore_ascii_case(&needle)
-            {
-                return Err(NetcidrError::InvalidInput(
-                    "cannot revoke your own admin role".to_string(),
-                ));
-            }
-            // Last-admin guard.
-            if self.store.count_admin_roles().await? <= 1 {
-                return Err(NetcidrError::LastAdmin);
-            }
-        }
-
-        self.store.delete_role_assignment(&needle).await?;
-        self.audit(tenant_id, "revoke_role", "role_assignment", &needle, None)
-            .await?;
-        Ok(())
-    }
-
     // --- users directory (unified allowlist + roles; ADR-0006) ---
 
     /// List all user records (global; not tenant-scoped).
     pub async fn list_users(&self) -> Result<Vec<UserRecord>> {
         self.store.list_users().await
+    }
+
+    /// Fetch a single user record by email, or `None` if absent.
+    pub async fn get_user(&self, email: &str) -> Result<Option<UserRecord>> {
+        self.store.get_user(&email.to_ascii_lowercase()).await
     }
 
     /// Create or update a user record. `tenant_id` scopes only the audit row
