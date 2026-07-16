@@ -452,6 +452,12 @@ fn format_response<T: Serialize + TextOutput + CsvOutput>(
 pub fn create_router(config: RouterConfig) -> Router {
     let config_ext = Arc::new(config.server.clone());
     let mut auth_config = config.server.auth_config();
+    // Whenever IPAM is enabled, the users directory (allowlist + roles)
+    // lives in its store — attach it unconditionally so resolution reads
+    // the DB even in deployments without a PAT pepper (ADR-0006).
+    if let Some(ops) = &config.ipam_ops {
+        auth_config = auth_config.with_user_store(ops.store_arc());
+    }
     // If both a PAT-capable store and pepper are present, attach them so
     // `Bearer ncdr_pat_…` tokens authenticate through `verify_pat`. The
     // store comes from IpamOps (the only persistent store in the binary);
@@ -1372,12 +1378,16 @@ struct FeaturesResponse {
 struct MeResponse {
     /// Verified email of the signed-in principal (may be null for bearer tokens).
     email: Option<String>,
-    /// Whether the email passes the configured allowlist.
+    /// Whether the email is admitted by the users directory (or the env
+    /// allowlist in store-less deployments). `false` for disabled users.
     is_allowlisted: bool,
-    /// Whether the email matches the admin allowlist.
+    /// Whether the caller's role is at least `admin` (tenant-space admin).
     is_admin: bool,
-    /// First configured admin email — surfaced so unallowlisted users have
-    /// someone to contact for access. Null when no admins are configured.
+    /// Whether the caller's role is `platform_admin` (user-directory
+    /// management).
+    is_platform_admin: bool,
+    /// A platform admin's email — surfaced so unallowlisted users have
+    /// someone to contact for access. Null when none are configured.
     admin_contact: Option<String>,
 }
 
@@ -1416,13 +1426,15 @@ async fn me_handler(
         }
     };
     let email = principal.email.clone();
-    let is_allowlisted = auth_config.email_is_allowed(email.as_deref());
+    let is_allowlisted = auth_config.email_is_allowed(email.as_deref()).await;
     let is_admin = auth_config.is_admin(email.as_deref()).await;
-    let admin_contact = auth_config.admin_emails().first().cloned();
+    let is_platform_admin = auth_config.is_platform_admin(email.as_deref()).await;
+    let admin_contact = auth_config.admin_contact().await;
     Json(MeResponse {
         email,
         is_allowlisted,
         is_admin,
+        is_platform_admin,
         admin_contact,
     })
     .into_response()

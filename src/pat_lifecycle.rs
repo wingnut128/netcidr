@@ -156,11 +156,18 @@ impl PatLifecycle {
         let owner =
             owner_from_principal(principal).ok_or(MintForPrincipalError::NoVerifiedEmail)?;
         // Stamp the row with the caller's resolved role unless they asked
-        // for a narrower one. The verifier re-clamps `min(owner_role, pat_role)`
+        // for a narrower one, and never above Admin: PATs are capped at the
+        // tenant-admin tier (ADR-0006) so platform-level access is never
+        // mintable as a long-lived token (the DB CHECK also rejects
+        // 'platform_admin'). The verifier re-clamps `min(owner_role, pat_role)`
         // on every use, so even an explicit `Role::Admin` from a non-admin
         // caller cannot widen privileges — but storing it would be misleading,
         // so we clamp at mint time too. Belt and suspenders.
-        let role = request.role.unwrap_or(principal.role).min(principal.role);
+        let role = request
+            .role
+            .unwrap_or(principal.role)
+            .min(principal.role)
+            .min(Role::Admin);
         self.mint_for_owner(&owner, role, request)
             .await
             .map_err(MintForPrincipalError::Lifecycle)
@@ -219,7 +226,7 @@ fn owner_from_principal(principal: &AuthenticatedPrincipal) -> Option<PatOwner> 
 pub async fn verify_bearer_token(
     store: &Arc<dyn IpamStore>,
     pepper: &PatPepper,
-    allowed_emails: &[String],
+    enforce_allowlist: bool,
     token: &str,
 ) -> std::result::Result<VerifiedPat, VerifyPatError> {
     let hash = pat::hash_for_lookup(token, pepper).ok_or(VerifyPatError::Unauthorized)?;
@@ -230,11 +237,19 @@ pub async fn verify_bearer_token(
         .map_err(|_| VerifyPatError::Unauthorized)?
         .ok_or(VerifyPatError::Unauthorized)?;
 
-    if !allowed_emails.is_empty() {
-        let needle = row.owner_email.to_ascii_lowercase();
-        if !allowed_emails.iter().any(|e| e == &needle) {
+    // The owner must still be admitted by the users directory (ADR-0006):
+    // a disabled row is always rejected — disabling a user kills their
+    // PATs immediately — and in closed mode (`enforce_allowlist`) an
+    // active row must exist. Open mode admits owners with no row,
+    // matching the OIDC semantics. Store errors fail closed.
+    match store.get_user(&row.owner_email).await {
+        Ok(Some(user)) if user.status == crate::ipam::models::UserStatus::Disabled => {
             return Err(VerifyPatError::Unauthorized);
         }
+        Ok(Some(_)) => {}
+        Ok(None) if enforce_allowlist => return Err(VerifyPatError::Unauthorized),
+        Ok(None) => {}
+        Err(_) => return Err(VerifyPatError::Unauthorized),
     }
 
     let verified = VerifiedPat {

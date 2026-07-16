@@ -134,6 +134,10 @@ async fn build_harness(allowed_emails: Vec<String>) -> Harness {
     };
     server.oidc_allowed_emails = allowed_emails;
 
+    // Mirror production startup: seed the users directory from the env
+    // lists so allowlisted users have active rows (ADR-0006).
+    netcidr::ipam::bootstrap::seed_users(&store, &server).await;
+
     let router = create_router(RouterConfig {
         server,
         ipam_ops: Some(ops),
@@ -483,4 +487,80 @@ async fn list_isolation_between_owners() {
     let (_, body_b) = req(&h.router, "GET", "/me/tokens", &token_b, None).await;
     let list_b: serde_json::Value = serde_json::from_str(&body_b).unwrap();
     assert_eq!(list_b["count"], 1, "B should see 1 token: {body_b}");
+}
+
+#[tokio::test]
+async fn disabled_user_oidc_session_is_forbidden_and_reenabling_restores_access() {
+    // ADR-0006: disabling a user's directory row locks out their live OIDC
+    // session at the middleware (403), without touching their data;
+    // re-enabling restores access with the same role.
+    let h = build_harness(vec![USER_A_EMAIL.to_string()]).await;
+    let token = sign_id_token(USER_A_SUB, USER_A_EMAIL);
+
+    // Baseline: the seeded active row admits the session.
+    let (status, body) = req(&h.router, "GET", "/ipam/cidr-blocks", &token, None).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+
+    // Disable → immediate 403 (allowlist gate, not a role surprise).
+    h.store
+        .upsert_user(
+            USER_A_EMAIL,
+            netcidr::auth::Role::Reader,
+            netcidr::ipam::models::UserStatus::Disabled,
+            "test",
+        )
+        .await
+        .unwrap();
+    let (status, body) = req(&h.router, "GET", "/ipam/cidr-blocks", &token, None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "body: {body}");
+
+    // Re-enable → access restored.
+    h.store
+        .upsert_user(
+            USER_A_EMAIL,
+            netcidr::auth::Role::Reader,
+            netcidr::ipam::models::UserStatus::Active,
+            "test",
+        )
+        .await
+        .unwrap();
+    let (status, body) = req(&h.router, "GET", "/ipam/cidr-blocks", &token, None).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+}
+
+#[tokio::test]
+async fn mint_requests_for_platform_admin_pats_are_clamped_to_admin() {
+    // PATs are capped at the tenant-admin tier (ADR-0006): a platform
+    // admin asking for a platform_admin PAT gets an admin one instead —
+    // platform powers are never mintable as a long-lived token.
+    let h = build_harness(vec![USER_A_EMAIL.to_string()]).await;
+    h.store
+        .upsert_user(
+            USER_A_EMAIL,
+            netcidr::auth::Role::PlatformAdmin,
+            netcidr::ipam::models::UserStatus::Active,
+            "test",
+        )
+        .await
+        .unwrap();
+    let token = sign_id_token(USER_A_SUB, USER_A_EMAIL);
+
+    let (status, body) = req(
+        &h.router,
+        "POST",
+        "/me/tokens",
+        &token,
+        Some(serde_json::json!({
+            "name": "escalation-attempt",
+            "expires_in_days": 30,
+            "role": "platform_admin"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "body: {body}");
+    let created: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        created["role"], "admin",
+        "platform_admin mint request must clamp to admin: {body}"
+    );
 }

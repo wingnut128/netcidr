@@ -30,9 +30,10 @@ pub const TENANT_HEADER: &str = "X-Test-Tenant";
 
 /// Header read by [`inject_test_tenant`] to override the role on the
 /// injected [`AuthenticatedPrincipal`]. Accepts `reader` / `allocator` /
-/// `admin` (case-insensitive). Missing or unrecognised values fall through
-/// to [`Role::Admin`] — the production back-compat default that keeps every
-/// existing integration test passing without changes.
+/// `admin` / `platform_admin` (case-insensitive). Missing or unrecognised
+/// values fall through to [`Role::Admin`] — the production back-compat
+/// default that keeps every existing integration test passing without
+/// changes.
 pub const ROLE_HEADER: &str = "X-Test-Role";
 
 /// Default tenant for non-isolation tests.
@@ -43,6 +44,7 @@ fn parse_role(s: &str) -> Option<Role> {
         "reader" => Some(Role::Reader),
         "allocator" => Some(Role::Allocator),
         "admin" => Some(Role::Admin),
+        "platform_admin" => Some(Role::PlatformAdmin),
         _ => None,
     }
 }

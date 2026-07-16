@@ -147,8 +147,19 @@ require_role_extractor!(
 require_role_extractor!(
     RequireAdmin,
     Role::Admin,
-    "Require role == `Admin`. Denies callers configured as `Reader` or \
-     `Allocator` with 403."
+    "Require role >= `Admin` (tenant-space admin). Denies callers \
+     configured as `Reader` or `Allocator` with 403; `PlatformAdmin` \
+     passes."
+);
+
+require_role_extractor!(
+    RequirePlatformAdmin,
+    Role::PlatformAdmin,
+    "Require role == `PlatformAdmin` — the platform-owner tier that \
+     manages the users directory (`/admin/users`). Denies every lower \
+     tier, including tenant-space `Admin`, with 403. PATs are capped at \
+     `Admin` (ADR-0006), so this extractor is only satisfiable by an \
+     interactive OIDC session or the bearer-mode carve-out."
 );
 
 #[cfg(test)]
