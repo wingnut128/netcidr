@@ -468,36 +468,10 @@ async fn async_main(cli: Cli) {
                 .await
                 .expect("Failed to initialize IPAM store");
 
-                // Bootstrap role membership: seed the role_assignments table
-                // from the env lists on first start (no-op once any rows
-                // exist). After seeding, the DB is the source of truth.
-                {
-                    use netcidr::auth::Role;
-                    let mut seeds: Vec<(String, Role)> = Vec::new();
-                    seeds.extend(
-                        server_config
-                            .admin_emails()
-                            .into_iter()
-                            .map(|e| (e, Role::Admin)),
-                    );
-                    seeds.extend(
-                        server_config
-                            .allocator_emails()
-                            .into_iter()
-                            .map(|e| (e, Role::Allocator)),
-                    );
-                    seeds.extend(
-                        server_config
-                            .reader_emails()
-                            .into_iter()
-                            .map(|e| (e, Role::Reader)),
-                    );
-                    match store.seed_role_assignments_if_empty(&seeds).await {
-                        Ok(n) if n > 0 => info!("seeded {n} role assignment(s) from env lists"),
-                        Ok(_) => {}
-                        Err(e) => warn!(error = %e, "role assignment bootstrap seed failed"),
-                    }
-                }
+                // Bootstrap the users directory from the env lists — a
+                // one-shot seed (marker-guarded); the DB is the source of
+                // truth thereafter. Shared with the Lambda binary.
+                netcidr::ipam::bootstrap::seed_users(&store, &server_config).await;
 
                 info!("IPAM enabled, backend: {}", server_config.ipam_backend);
                 println!("IPAM endpoints enabled at /ipam/");

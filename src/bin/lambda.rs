@@ -98,32 +98,10 @@ async fn main() -> Result<(), Error> {
         )
         .await?;
 
-        // Bootstrap role membership from the env lists on first start
-        // (no-op once the table has rows). DB is source of truth thereafter.
-        {
-            use netcidr::auth::Role;
-            let mut seeds: Vec<(String, Role)> = Vec::new();
-            seeds.extend(server.admin_emails().into_iter().map(|e| (e, Role::Admin)));
-            seeds.extend(
-                server
-                    .allocator_emails()
-                    .into_iter()
-                    .map(|e| (e, Role::Allocator)),
-            );
-            seeds.extend(
-                server
-                    .reader_emails()
-                    .into_iter()
-                    .map(|e| (e, Role::Reader)),
-            );
-            match store.seed_role_assignments_if_empty(&seeds).await {
-                Ok(n) if n > 0 => {
-                    tracing::info!("seeded {n} role assignment(s) from env lists")
-                }
-                Ok(_) => {}
-                Err(e) => tracing::warn!(error = %e, "role assignment bootstrap seed failed"),
-            }
-        }
+        // Bootstrap the users directory from the env lists — a one-shot
+        // seed (marker-guarded); the DB is the source of truth thereafter.
+        // Shared with `netcidr serve`.
+        netcidr::ipam::bootstrap::seed_users(&store, &server).await;
 
         Some(Arc::new(netcidr::ipam::operations::IpamOps::new(store)))
     } else {
