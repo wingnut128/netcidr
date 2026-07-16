@@ -189,6 +189,25 @@ async fn reader_denied_query_audit() {
 }
 
 #[tokio::test]
+async fn platform_admin_passes_admin_gates_via_ord() {
+    // PlatformAdmin > Admin in the Ord chain, so every Admin-gated route
+    // admits it without extra wiring (ADR-0006).
+    let app = app().await;
+    let (status, body) = send_as(
+        &app,
+        "POST",
+        "/ipam/cidr-blocks",
+        Some("platform_admin"),
+        Some(r#"{"cidr":"10.0.0.0/8"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "body: {body}");
+
+    let (status, _body) = send_as(&app, "GET", "/ipam/audit", Some("platform_admin"), None).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
 async fn no_role_header_defaults_to_admin() {
     // PR1 back-compat: no X-Test-Role header → default Admin → all routes work.
     // This is what keeps every other integration test in this repo green.

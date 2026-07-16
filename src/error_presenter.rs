@@ -73,7 +73,6 @@ pub fn present(err: &NetcidrError) -> PresentedError {
         CidrBlockNotFound(_)
         | AllocationNotFound(_)
         | HostnamePointerNotFound(_)
-        | RoleAssignmentNotFound(_)
         | UserNotFound(_) => PresentedError {
             status: 404,
             client_msg: err.to_string(),
@@ -95,14 +94,13 @@ pub fn present(err: &NetcidrError) -> PresentedError {
         },
 
         // 409 — conflict
-        AllocationConflict { .. }
-        | CidrBlockHasActiveAllocations(_)
-        | LastAdmin
-        | LastPlatformAdmin => PresentedError {
-            status: 409,
-            client_msg: err.to_string(),
-            log_level: LogLevel::None,
-        },
+        AllocationConflict { .. } | CidrBlockHasActiveAllocations(_) | LastPlatformAdmin => {
+            PresentedError {
+                status: 409,
+                client_msg: err.to_string(),
+                log_level: LogLevel::None,
+            }
+        }
 
         // 409 — idempotency-key reuse. Don't echo the key or scope back
         // to the caller; the safe message is sufficient and the key may

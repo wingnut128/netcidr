@@ -84,14 +84,8 @@ pub enum NetcidrError {
     #[error("Hostname pointer not found: {0}")]
     HostnamePointerNotFound(String),
 
-    #[error("Role assignment not found: {0}")]
-    RoleAssignmentNotFound(String),
-
     #[error("User not found: {0}")]
     UserNotFound(String),
-
-    #[error("cannot revoke the last remaining admin")]
-    LastAdmin,
 
     #[error("cannot remove, disable, or demote the last active platform admin")]
     LastPlatformAdmin,

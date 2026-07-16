@@ -61,9 +61,8 @@ use crate::summarize::{summarize_ipv4_with_limit, summarize_ipv6_with_limit};
 use crate::ipam::models::{
     Allocation, AllocationList, AllocationStatus, AuditEntry, AuditList, ChangeKind, CidrBlock,
     CidrBlockList, CreateCidrBlock, CreateHostnamePointer, FreeBlock, FreeBlocksReport,
-    GrantRoleRequest, HostnamePointer, HostnamePointerHistoryEntry, HostnamePointerHistoryList,
-    HostnamePointerList, RoleAssignment, RoleAssignmentList, Tag, UpdateAllocation,
-    UtilizationReport,
+    HostnamePointer, HostnamePointerHistoryEntry, HostnamePointerHistoryList, HostnamePointerList,
+    Tag, UpdateAllocation, UpsertUserRequest, UserList, UserRecord, UserStatus, UtilizationReport,
 };
 #[cfg(feature = "swagger")]
 use crate::ipam_api::{AllocateSpecificRequest, AutoAllocateBody, IpamErrorResponse, TagsBody};
@@ -122,7 +121,6 @@ impl Modify for SecurityAddon {
         batch_handler,
         features_handler,
         me_handler,
-        allowlist_handler,
         crate::me_api::create_token,
         crate::me_api::list_tokens,
         crate::me_api::revoke_token,
@@ -147,8 +145,8 @@ impl Modify for SecurityAddon {
         crate::ipam_api::ipam_hostname_history,
         crate::ipam_api::ipam_delete_hostname,
         crate::ipam_api::admin_list_users,
-        crate::ipam_api::admin_grant_user,
-        crate::ipam_api::admin_revoke_user,
+        crate::ipam_api::admin_upsert_user,
+        crate::ipam_api::admin_delete_user,
     ),
     components(
         schemas(
@@ -158,7 +156,7 @@ impl Modify for SecurityAddon {
             ContainsResult, Ipv4SummaryResult, Ipv6SummaryResult, Ipv4FromRangeResult,
             Ipv6FromRangeResult, SubnetQuery, SplitQuery, ContainsQuery, SummarizeQuery,
             FromRangeQuery, BatchRequest, BatchResult, ErrorResponse, VersionResponse,
-            FeaturesResponse, MeResponse, AllowlistResponse,
+            FeaturesResponse, MeResponse,
             crate::me_api::CreateTokenRequest, crate::me_api::CreateTokenResponse,
             crate::me_api::TokenListResponse,
             crate::ipam::models::PersonalAccessTokenSummary,
@@ -168,7 +166,7 @@ impl Modify for SecurityAddon {
             FreeBlock, FreeBlocksReport, IpamErrorResponse,
             HostnamePointer, CreateHostnamePointer, HostnamePointerList,
             HostnamePointerHistoryEntry, HostnamePointerHistoryList, ChangeKind,
-            RoleAssignment, RoleAssignmentList, GrantRoleRequest, Role,
+            UserRecord, UserList, UpsertUserRequest, UserStatus, Role,
         )
     ),
     modifiers(&SecurityAddon),
@@ -555,12 +553,11 @@ pub fn create_router(config: RouterConfig) -> Router {
         .route("/features", get(features_handler))
         .layer(Extension(features));
 
-    // /me + admin allowlist read endpoint. Both are auth-aware but live
-    // outside the /ipam middleware (so an unallowlisted user can hit /me
-    // and get a 200 with `is_allowlisted: false` instead of a 403).
+    // /me is auth-aware but lives outside the /ipam middleware (so an
+    // unallowlisted or disabled user can hit it and get a 200 with
+    // `is_allowlisted: false` instead of a 403).
     let router = router
         .route("/me", get(me_handler))
-        .route("/admin/allowlist", get(allowlist_handler))
         .layer(Extension(auth_config.clone()));
 
     #[cfg(feature = "swagger")]
@@ -1391,20 +1388,6 @@ struct MeResponse {
     admin_contact: Option<String>,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(feature = "swagger", derive(ToSchema))]
-struct AllowlistResponse {
-    /// Email addresses authorized to call /ipam/*.
-    emails: Vec<String>,
-    /// Email addresses with administrative access.
-    admins: Vec<String>,
-    /// How the allowlist is managed. Currently always "env" — sourced from
-    /// the NETCIDR_OIDC_ALLOWED_EMAILS environment variable / config file.
-    /// To add or remove an email, edit `samconfig.toml.tpl` (or the deploy
-    /// equivalent) and redeploy.
-    management: &'static str,
-}
-
 #[cfg_attr(feature = "swagger", utoipa::path(
     get,
     path = "/me",
@@ -1436,36 +1419,6 @@ async fn me_handler(
         is_admin,
         is_platform_admin,
         admin_contact,
-    })
-    .into_response()
-}
-
-#[cfg_attr(feature = "swagger", utoipa::path(
-    get,
-    path = "/admin/allowlist",
-    responses(
-        (status = 200, description = "Current allowlist + admin list", body = AllowlistResponse),
-        (status = 401, description = "Missing or invalid bearer token"),
-        (status = 403, description = "Caller is not an admin"),
-    ),
-    security(("bearerAuth" = [])),
-    tag = "auth"
-))]
-async fn allowlist_handler(
-    Extension(auth_config): Extension<crate::auth::AuthConfig>,
-    request: axum::extract::Request,
-) -> Response {
-    let principal = match auth_config.authenticate(request.headers()).await {
-        Some(p) => p,
-        None => return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response(),
-    };
-    if !auth_config.is_admin(principal.email.as_deref()).await {
-        return (StatusCode::FORBIDDEN, "Admin access required").into_response();
-    }
-    Json(AllowlistResponse {
-        emails: auth_config.allowed_emails().to_vec(),
-        admins: auth_config.admin_emails().to_vec(),
-        management: "env",
     })
     .into_response()
 }

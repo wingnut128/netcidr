@@ -487,19 +487,41 @@ pub async fn handle_admin_command(
         }
 
         AdminCommands::User { command } => match command {
-            AdminUserCommands::Grant { email, role } => {
-                let assignment = ops.grant_role(Tenant::LOCAL, &email, role).await?;
-                output_result(writer, output_file, &assignment);
+            AdminUserCommands::Add { email, role } => {
+                let user = ops
+                    .upsert_user(Tenant::LOCAL, &email, role, UserStatus::Active)
+                    .await?;
+                output_result(writer, output_file, &user);
             }
-            AdminUserCommands::Revoke { email } => {
-                ops.revoke_role(Tenant::LOCAL, &email).await?;
+            AdminUserCommands::Disable { email } => {
+                let current = ops
+                    .get_user(&email)
+                    .await?
+                    .ok_or_else(|| netcidr::error::NetcidrError::UserNotFound(email.clone()))?;
+                let user = ops
+                    .upsert_user(Tenant::LOCAL, &email, current.role, UserStatus::Disabled)
+                    .await?;
+                output_result(writer, output_file, &user);
+            }
+            AdminUserCommands::Enable { email } => {
+                let current = ops
+                    .get_user(&email)
+                    .await?
+                    .ok_or_else(|| netcidr::error::NetcidrError::UserNotFound(email.clone()))?;
+                let user = ops
+                    .upsert_user(Tenant::LOCAL, &email, current.role, UserStatus::Active)
+                    .await?;
+                output_result(writer, output_file, &user);
+            }
+            AdminUserCommands::Remove { email } => {
+                ops.delete_user(Tenant::LOCAL, &email).await?;
                 if output_file.is_none() {
-                    print_stdout(&format!("Revoked role for {email}"));
+                    print_stdout(&format!("Removed user {email}"));
                 }
             }
             AdminUserCommands::List => {
-                let users = ops.list_role_assignments().await?;
-                let result = RoleAssignmentList {
+                let users = ops.list_users().await?;
+                let result = UserList {
                     count: users.len(),
                     users,
                 };

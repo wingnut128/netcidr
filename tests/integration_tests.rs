@@ -912,11 +912,11 @@ fn test_ipam_hostname_lifecycle() {
 }
 
 #[test]
-fn test_admin_user_role_management() {
+fn test_admin_user_directory_management() {
     let db = "/tmp/netcidr-test-admin-users.db";
     let _ = std::fs::remove_file(db);
 
-    // Grant an admin and a reader.
+    // Add a platform admin ("grant" alias) and a reader ("add").
     let (stdout, _, success) = run_netcidr(&[
         "admin",
         "--db",
@@ -925,19 +925,20 @@ fn test_admin_user_role_management() {
         "grant",
         "root@example.com",
         "--role",
-        "admin",
+        "platform_admin",
     ]);
     assert!(success);
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
     assert_eq!(json["email"], "root@example.com");
-    assert_eq!(json["role"], "admin");
+    assert_eq!(json["role"], "platform_admin");
+    assert_eq!(json["status"], "active");
 
     let (_, _, success) = run_netcidr(&[
         "admin",
         "--db",
         db,
         "user",
-        "grant",
+        "add",
         "ro@example.com",
         "--role",
         "reader",
@@ -950,17 +951,34 @@ fn test_admin_user_role_management() {
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
     assert_eq!(json["count"], 2);
 
-    // Revoke the reader.
+    // Disable, then re-enable the reader — role survives the round trip.
     let (stdout, _, success) =
-        run_netcidr(&["admin", "--db", db, "user", "revoke", "ro@example.com"]);
+        run_netcidr(&["admin", "--db", db, "user", "disable", "ro@example.com"]);
     assert!(success);
-    assert!(stdout.contains("Revoked"));
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
+    assert_eq!(json["status"], "disabled");
+    assert_eq!(json["role"], "reader");
+    let (stdout, _, success) =
+        run_netcidr(&["admin", "--db", db, "user", "enable", "ro@example.com"]);
+    assert!(success);
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
+    assert_eq!(json["status"], "active");
 
-    // Last-admin guard: revoking the only admin fails.
+    // Remove the reader ("revoke" alias also accepted).
+    let (stdout, _, success) =
+        run_netcidr(&["admin", "--db", db, "user", "remove", "ro@example.com"]);
+    assert!(success);
+    assert!(stdout.contains("Removed"));
+
+    // Last-platform-admin guard: removing or disabling the only one fails.
     let (_, stderr, success) =
         run_netcidr(&["admin", "--db", db, "user", "revoke", "root@example.com"]);
     assert!(!success);
-    assert!(stderr.contains("last remaining admin"));
+    assert!(stderr.contains("last active platform admin"));
+    let (_, stderr, success) =
+        run_netcidr(&["admin", "--db", db, "user", "disable", "root@example.com"]);
+    assert!(!success);
+    assert!(stderr.contains("last active platform admin"));
 
     let _ = std::fs::remove_file(db);
 }
