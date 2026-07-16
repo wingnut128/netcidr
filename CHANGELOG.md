@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(auth)* `NETCIDR_ALLOWLIST_MODE=open|closed` (config: `allowlist_mode`) pins the sign-in mode explicitly. Unset keeps the derived behavior (empty allowlist = open). Pinning `closed` lets deployments delete the now-inert email env vars after the first-boot seed without silently flipping open; invalid values fail startup ([#300](https://github.com/wingnut128/netcidr/issues/300), PR5)
+
 ### Removed
 
 - **BREAKING (dashboard)**: the read-only Allowlist page is gone; the platform-admin-only **Users** page is the single directory surface (add/disable/enable/remove users, change roles, status badges, guard errors inline). Sidebar "Users" is gated on the new `/me.is_platform_admin` ([#300](https://github.com/wingnut128/netcidr/issues/300), PR4)

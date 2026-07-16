@@ -159,6 +159,11 @@ pub struct AuthConfig {
     /// With no store (bearer-only / non-IPAM deploys) both fall back to the
     /// in-memory env lists.
     user_store: Option<Arc<dyn IpamStore>>,
+    /// Explicit allowlist mode. `None` derives from `allowed_emails`
+    /// non-emptiness (the pre-flag behavior); `Some` pins it, letting a
+    /// deployment drop the email env vars post-seed without silently
+    /// flipping open. See `NETCIDR_ALLOWLIST_MODE` / ADR-0006.
+    allowlist_mode: Option<crate::config::AllowlistMode>,
 }
 
 impl std::fmt::Debug for AuthConfig {
@@ -174,6 +179,7 @@ impl std::fmt::Debug for AuthConfig {
             .field("pat_store", &self.pat_store.as_ref().map(|_| "<set>"))
             .field("pat_pepper", &self.pat_pepper.as_ref().map(|_| "<set>"))
             .field("user_store", &self.user_store.as_ref().map(|_| "<set>"))
+            .field("allowlist_mode", &self.allowlist_mode)
             .finish()
     }
 }
@@ -199,7 +205,16 @@ impl AuthConfig {
             pat_store: None,
             pat_pepper: None,
             user_store: None,
+            allowlist_mode: None,
         }
+    }
+
+    /// Pin the allowlist mode explicitly (env `NETCIDR_ALLOWLIST_MODE` /
+    /// config `allowlist_mode`). Without this, mode derives from the
+    /// allowed-emails list's non-emptiness.
+    pub fn with_allowlist_mode(mut self, mode: crate::config::AllowlistMode) -> Self {
+        self.allowlist_mode = Some(mode);
+        self
     }
 
     /// Attach the IPAM store + pepper used by the PAT verifier. Set on
@@ -320,8 +335,19 @@ impl AuthConfig {
     /// verbatim. `email = None` (static bearer) keeps the PlatformAdmin
     /// carve-out for role and the "denied in closed mode" rule for the
     /// allowlist.
+    /// The effective open/closed decision: an explicitly pinned mode wins;
+    /// otherwise an empty allowed-emails list means open (pre-flag
+    /// behavior).
+    fn open_mode(&self) -> bool {
+        match self.allowlist_mode {
+            Some(crate::config::AllowlistMode::Open) => true,
+            Some(crate::config::AllowlistMode::Closed) => false,
+            None => self.allowed_emails.is_empty(),
+        }
+    }
+
     async fn resolve_access(&self, email: Option<&str>) -> (Role, bool) {
-        let open_mode = self.allowed_emails.is_empty();
+        let open_mode = self.open_mode();
         let Some(email) = email else {
             return (Role::PlatformAdmin, open_mode);
         };
@@ -453,14 +479,9 @@ impl AuthConfig {
         {
             if let (Some(store), Some(pepper)) = (self.pat_store.as_ref(), self.pat_pepper.as_ref())
             {
-                verify_pat(
-                    store,
-                    pepper.as_ref(),
-                    !self.allowed_emails.is_empty(),
-                    token,
-                )
-                .await
-                .ok()
+                verify_pat(store, pepper.as_ref(), !self.open_mode(), token)
+                    .await
+                    .ok()
             } else {
                 None
             }
@@ -493,10 +514,12 @@ impl AuthConfig {
         self.resolve_access(email).await.1
     }
 
-    /// In-memory env-list allowlist check — the no-store fallback. Empty
-    /// allowlist disables the check entirely (open mode).
+    /// In-memory env-list allowlist check — the no-store fallback. Open
+    /// mode admits anyone; closed mode requires list membership (an
+    /// explicitly-closed deployment with an empty list denies all —
+    /// operator misconfiguration fails safe).
     fn email_allowed_from_env(&self, email: &str) -> bool {
-        if self.allowed_emails.is_empty() {
+        if self.open_mode() {
             return true;
         }
         let needle = email.to_ascii_lowercase();
@@ -524,14 +547,7 @@ pub async fn require_auth(config: AuthConfig, mut request: Request, next: Next) 
                 // misconfiguration.
                 return unauthorized(config.mode);
             };
-            match verify_pat(
-                store,
-                pepper.as_ref(),
-                !config.allowed_emails.is_empty(),
-                token,
-            )
-            .await
-            {
+            match verify_pat(store, pepper.as_ref(), !config.open_mode(), token).await {
                 Ok(p) => Some(p),
                 Err(_) => return unauthorized(config.mode),
             }
@@ -1263,6 +1279,56 @@ mod tests {
         let config = AuthConfig::oidc(Some("aud".to_string()));
         assert!(config.email_allowed(Some("anyone@example.com")).await);
         assert!(config.email_allowed(None).await);
+    }
+
+    #[tokio::test]
+    async fn explicit_closed_mode_overrides_empty_allowlist() {
+        // The post-cleanup deployment shape: email env vars removed, mode
+        // pinned closed. An empty list must NOT flip the deployment open.
+        let config = AuthConfig::oidc(Some("aud".to_string()))
+            .with_allowlist_mode(crate::config::AllowlistMode::Closed);
+        assert!(!config.email_allowed(Some("anyone@example.com")).await);
+        assert!(!config.email_allowed(None).await);
+    }
+
+    #[tokio::test]
+    async fn explicit_open_mode_overrides_populated_allowlist() {
+        let config = AuthConfig::oidc(Some("aud".to_string()))
+            .with_allowed_emails(vec!["alice@example.com".to_string()])
+            .with_allowlist_mode(crate::config::AllowlistMode::Open);
+        assert!(config.email_allowed(Some("stranger@example.com")).await);
+    }
+
+    #[tokio::test]
+    async fn closed_mode_with_store_admits_only_active_directory_rows() {
+        // The exact post-cleanup production shape: no email env vars at
+        // all, mode pinned closed, users directory as source of truth.
+        use crate::ipam::models::UserStatus;
+        use crate::ipam::store::IpamStore;
+        let store = crate::ipam::sqlite::SqliteStore::in_memory().unwrap();
+        store.initialize().await.unwrap();
+        store.migrate().await.unwrap();
+        let store: Arc<dyn IpamStore> = Arc::new(store);
+        store
+            .upsert_user("alice@example.com", Role::Reader, UserStatus::Active, "t")
+            .await
+            .unwrap();
+        store
+            .upsert_user(
+                "mallory@example.com",
+                Role::Reader,
+                UserStatus::Disabled,
+                "t",
+            )
+            .await
+            .unwrap();
+
+        let config = AuthConfig::oidc(Some("aud".to_string()))
+            .with_user_store(store)
+            .with_allowlist_mode(crate::config::AllowlistMode::Closed);
+        assert!(config.email_allowed(Some("alice@example.com")).await);
+        assert!(!config.email_allowed(Some("mallory@example.com")).await);
+        assert!(!config.email_allowed(Some("stranger@example.com")).await);
     }
 
     #[test]
