@@ -718,3 +718,82 @@ pub struct GrantRoleRequest {
     pub email: String,
     pub role: Role,
 }
+
+// ---------------------------------------------------------------------------
+// Users directory (unified allowlist + role membership; ADR-0006)
+// ---------------------------------------------------------------------------
+
+/// Whether a user may authenticate. `Disabled` is a soft remove: the user's
+/// tenant data stays intact and re-enabling restores access (spec
+/// 2026-05-02); a disabled user's sessions and PATs are rejected at the
+/// allowlist gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum UserStatus {
+    #[default]
+    Active,
+    Disabled,
+}
+
+impl UserStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            UserStatus::Active => "active",
+            UserStatus::Disabled => "disabled",
+        }
+    }
+}
+
+impl std::str::FromStr for UserStatus {
+    type Err = crate::error::NetcidrError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "active" => Ok(UserStatus::Active),
+            "disabled" => Ok(UserStatus::Disabled),
+            other => Err(crate::error::NetcidrError::InvalidInput(format!(
+                "invalid user status {other:?}: expected one of active|disabled"
+            ))),
+        }
+    }
+}
+
+/// One row in the unified users directory. Replaces both the env allowlist
+/// and [`RoleAssignment`]: "allowlisted" = an active row exists; the role
+/// lives on the same record. Not tenant-scoped — an email maps to one role
+/// system-wide (data isolation is handled separately via tenant scoping).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
+pub struct UserRecord {
+    pub email: String,
+    pub role: Role,
+    pub status: UserStatus,
+    pub created_at: String,
+    pub updated_at: String,
+    /// Email of the platform admin who created the row, `"cli"` for CLI
+    /// writes, or `"bootstrap"` for env-seeded / migration-copied rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
+pub struct UserList {
+    pub users: Vec<UserRecord>,
+    pub count: usize,
+}
+
+/// Create-or-update request for a user row. `role` and `status` default to
+/// `reader` / `active` so "add to the allowlist" is just `{ "email": … }`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
+pub struct UpsertUserRequest {
+    pub email: String,
+    #[serde(default)]
+    pub role: Role,
+    #[serde(default)]
+    pub status: UserStatus,
+}

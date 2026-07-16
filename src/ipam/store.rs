@@ -138,6 +138,37 @@ pub trait IpamStore: Send + Sync {
         seeds: &[(String, crate::auth::Role)],
     ) -> Result<u64>;
 
+    // --- users directory (unified allowlist + roles; global, ADR-0006) ---
+    /// Fetch a user row by email, or `None` if no row exists.
+    async fn get_user(&self, email: &str) -> Result<Option<UserRecord>>;
+    async fn list_users(&self) -> Result<Vec<UserRecord>>;
+    /// Insert or update a user row. `actor` records who made the change
+    /// (stamped into `created_by` on insert, `updated_by` on update).
+    async fn upsert_user(
+        &self,
+        email: &str,
+        role: crate::auth::Role,
+        status: UserStatus,
+        actor: &str,
+    ) -> Result<UserRecord>;
+    /// Hard-delete a user row. Returns `UserNotFound` if no row exists.
+    /// Tenant data is untouched (tenant_id is just the email string).
+    async fn delete_user(&self, email: &str) -> Result<()>;
+    /// Number of rows with `role = 'platform_admin' AND status = 'active'` —
+    /// used for the last-platform-admin guard.
+    async fn count_active_platform_admins(&self) -> Result<u64>;
+    /// Seed the users table from `(email, role, status)` triples exactly once,
+    /// guarded by the `bootstrap_markers` table (key `users_env_seed`) rather
+    /// than table emptiness — migration 013 copies `role_assignments` in, so
+    /// the table is non-empty on upgraded deployments, yet allowlist-only
+    /// emails still need a one-time top-up. Existing rows are never
+    /// overwritten (`ON CONFLICT DO NOTHING`). Returns the number of rows
+    /// inserted; 0 forever after the marker is written.
+    async fn seed_users_once(
+        &self,
+        seeds: &[(String, crate::auth::Role, UserStatus)],
+    ) -> Result<u64>;
+
     // --- audit ---
     /// `entry.tenant_id` is the source of truth (already populated by caller).
     async fn append_audit(&self, entry: &AuditEntry) -> Result<()>;

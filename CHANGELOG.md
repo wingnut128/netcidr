@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(ipam)* unified users directory schema (migration 013): a `users` table (email, role, status, audit fields) that will replace both the env allowlist and `role_assignments`; new `platform_admin` role tier above `admin`; store-layer CRUD + marker-guarded one-shot bootstrap seeding on both SQLite and Postgres backends. Existing `admin` role rows are promoted to `platform_admin` in-migration; `role_assignments` is kept frozen for binary-rollback safety. No behavior change yet — the auth path still reads the env allowlist and `role_assignments` ([#300](https://github.com/wingnut128/netcidr/issues/300), PR1)
+
 ## [0.27.2](https://github.com/wingnut128/netcidr/compare/v0.27.1...v0.27.2) - 2026-07-13
 
 ### Other

@@ -132,6 +132,20 @@ fn pg_row_to_hostname_pointer(row: &sqlx::postgres::PgRow) -> HostnamePointer {
     }
 }
 
+fn pg_row_to_user(row: &sqlx::postgres::PgRow) -> Result<UserRecord> {
+    let role_str: String = row.get("role");
+    let status_str: String = row.get("status");
+    Ok(UserRecord {
+        email: row.get("email"),
+        role: role_str.parse::<crate::auth::Role>()?,
+        status: status_str.parse::<UserStatus>()?,
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+        created_by: row.get("created_by"),
+        updated_by: row.get("updated_by"),
+    })
+}
+
 fn pg_row_to_hostname_history(row: &sqlx::postgres::PgRow) -> HostnamePointerHistoryEntry {
     let kind_str: String = row.get("change_kind");
     HostnamePointerHistoryEntry {
@@ -1086,6 +1100,136 @@ impl IpamStore for PostgresStore {
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
             seeded += res.rows_affected();
         }
+        tx.commit()
+            .await
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        Ok(seeded)
+    }
+
+    // --- users directory (unified allowlist + roles; ADR-0006) ---
+
+    async fn get_user(&self, email: &str) -> Result<Option<UserRecord>> {
+        let needle = email.to_ascii_lowercase();
+        let row = sqlx::query(
+            "SELECT email, role, status, created_at, updated_at, created_by, updated_by \
+             FROM users WHERE email = $1",
+        )
+        .bind(&needle)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        match row {
+            Some(r) => Ok(Some(pg_row_to_user(&r)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn list_users(&self) -> Result<Vec<UserRecord>> {
+        let rows = sqlx::query(
+            "SELECT email, role, status, created_at, updated_at, created_by, updated_by \
+             FROM users ORDER BY email",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        rows.iter().map(pg_row_to_user).collect()
+    }
+
+    async fn upsert_user(
+        &self,
+        email: &str,
+        role: crate::auth::Role,
+        status: UserStatus,
+        actor: &str,
+    ) -> Result<UserRecord> {
+        let needle = email.to_ascii_lowercase();
+        let now = Self::now();
+        let row = sqlx::query(
+            "INSERT INTO users (email, role, status, created_at, updated_at, created_by) \
+             VALUES ($1, $2, $3, $4, $4, $5) \
+             ON CONFLICT(email) DO UPDATE SET \
+                 role = $2, status = $3, updated_at = $4, updated_by = $5 \
+             RETURNING email, role, status, created_at, updated_at, created_by, updated_by",
+        )
+        .bind(&needle)
+        .bind(role.as_str())
+        .bind(status.as_str())
+        .bind(&now)
+        .bind(actor)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        pg_row_to_user(&row)
+    }
+
+    async fn delete_user(&self, email: &str) -> Result<()> {
+        let needle = email.to_ascii_lowercase();
+        let res = sqlx::query("DELETE FROM users WHERE email = $1")
+            .bind(&needle)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        if res.rows_affected() == 0 {
+            return Err(NetcidrError::UserNotFound(email.to_string()));
+        }
+        Ok(())
+    }
+
+    async fn count_active_platform_admins(&self) -> Result<u64> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM users \
+             WHERE role = 'platform_admin' AND status = 'active'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        Ok(n as u64)
+    }
+
+    async fn seed_users_once(
+        &self,
+        seeds: &[(String, crate::auth::Role, UserStatus)],
+    ) -> Result<u64> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        let marker: Option<String> =
+            sqlx::query_scalar("SELECT key FROM bootstrap_markers WHERE key = 'users_env_seed'")
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        if marker.is_some() {
+            return Ok(0);
+        }
+        let now = Self::now();
+        let mut seeded = 0u64;
+        for (email, role, status) in seeds {
+            let needle = email.to_ascii_lowercase();
+            // First-write-wins if env lists overlap (admin > allocator > reader
+            // order is the caller's responsibility). Never overwrites rows
+            // copied from role_assignments by migration 013.
+            let res = sqlx::query(
+                "INSERT INTO users (email, role, status, created_at, updated_at, created_by) \
+                 VALUES ($1, $2, $3, $4, $4, 'bootstrap') ON CONFLICT(email) DO NOTHING",
+            )
+            .bind(&needle)
+            .bind(role.as_str())
+            .bind(status.as_str())
+            .bind(&now)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+            seeded += res.rows_affected();
+        }
+        sqlx::query(
+            "INSERT INTO bootstrap_markers (key, applied_at) VALUES ('users_env_seed', $1)",
+        )
+        .bind(&now)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         tx.commit()
             .await
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;

@@ -87,8 +87,14 @@ pub enum NetcidrError {
     #[error("Role assignment not found: {0}")]
     RoleAssignmentNotFound(String),
 
+    #[error("User not found: {0}")]
+    UserNotFound(String),
+
     #[error("cannot revoke the last remaining admin")]
     LastAdmin,
+
+    #[error("cannot remove, disable, or demote the last active platform admin")]
+    LastPlatformAdmin,
 
     #[error("CIDR block {0} has active allocations and cannot be deleted")]
     CidrBlockHasActiveAllocations(String),

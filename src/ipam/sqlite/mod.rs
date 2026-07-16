@@ -1153,6 +1153,207 @@ impl IpamStore for SqliteStore {
         Ok(seeded)
     }
 
+    // --- users directory (unified allowlist + roles; ADR-0006) ---
+
+    async fn get_user(&self, email: &str) -> Result<Option<UserRecord>> {
+        let conn = self.conn()?;
+        let needle = email.to_ascii_lowercase();
+        let row: Option<(
+            String,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+        )> = conn
+            .query_row(
+                "SELECT email, role, status, created_at, updated_at, created_by, updated_by \
+                 FROM users WHERE email = ?1",
+                params![needle],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        match row {
+            Some((email, role, status, created_at, updated_at, created_by, updated_by)) => {
+                Ok(Some(UserRecord {
+                    email,
+                    role: role.parse::<crate::auth::Role>()?,
+                    status: status.parse::<UserStatus>()?,
+                    created_at,
+                    updated_at,
+                    created_by,
+                    updated_by,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn list_users(&self) -> Result<Vec<UserRecord>> {
+        let conn = self.conn()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT email, role, status, created_at, updated_at, created_by, updated_by \
+                 FROM users ORDER BY email",
+            )
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                ))
+            })
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        rows.into_iter()
+            .map(
+                |(email, role, status, created_at, updated_at, created_by, updated_by)| {
+                    Ok(UserRecord {
+                        email,
+                        role: role.parse::<crate::auth::Role>()?,
+                        status: status.parse::<UserStatus>()?,
+                        created_at,
+                        updated_at,
+                        created_by,
+                        updated_by,
+                    })
+                },
+            )
+            .collect()
+    }
+
+    async fn upsert_user(
+        &self,
+        email: &str,
+        role: crate::auth::Role,
+        status: UserStatus,
+        actor: &str,
+    ) -> Result<UserRecord> {
+        let conn = self.conn()?;
+        let needle = email.to_ascii_lowercase();
+        let now = Self::now();
+        conn.execute(
+            "INSERT INTO users (email, role, status, created_at, updated_at, created_by) \
+             VALUES (?1, ?2, ?3, ?4, ?4, ?5) \
+             ON CONFLICT(email) DO UPDATE SET \
+                 role = ?2, status = ?3, updated_at = ?4, updated_by = ?5",
+            params![needle, role.as_str(), status.as_str(), now, actor],
+        )
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        // Read back to return canonical audit fields (created_* unchanged on update).
+        let (created_at, updated_at, created_by, updated_by): (
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+        ) = conn
+            .query_row(
+                "SELECT created_at, updated_at, created_by, updated_by \
+                 FROM users WHERE email = ?1",
+                params![needle],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        Ok(UserRecord {
+            email: needle,
+            role,
+            status,
+            created_at,
+            updated_at,
+            created_by,
+            updated_by,
+        })
+    }
+
+    async fn delete_user(&self, email: &str) -> Result<()> {
+        let conn = self.conn()?;
+        let needle = email.to_ascii_lowercase();
+        let deleted = conn
+            .execute("DELETE FROM users WHERE email = ?1", params![needle])
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        if deleted == 0 {
+            return Err(NetcidrError::UserNotFound(email.to_string()));
+        }
+        Ok(())
+    }
+
+    async fn count_active_platform_admins(&self) -> Result<u64> {
+        let conn = self.conn()?;
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM users \
+                 WHERE role = 'platform_admin' AND status = 'active'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        Ok(n as u64)
+    }
+
+    async fn seed_users_once(
+        &self,
+        seeds: &[(String, crate::auth::Role, UserStatus)],
+    ) -> Result<u64> {
+        let mut conn = self.conn()?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        let marker: Option<String> = tx
+            .query_row(
+                "SELECT key FROM bootstrap_markers WHERE key = 'users_env_seed'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        if marker.is_some() {
+            return Ok(0);
+        }
+        let now = Self::now();
+        let mut seeded = 0u64;
+        for (email, role, status) in seeds {
+            let needle = email.to_ascii_lowercase();
+            // First-write-wins if env lists overlap (admin > allocator > reader
+            // order is the caller's responsibility). Never overwrites rows
+            // copied from role_assignments by migration 013.
+            let n = tx
+                .execute(
+                    "INSERT INTO users (email, role, status, created_at, updated_at, created_by) \
+                     VALUES (?1, ?2, ?3, ?4, ?4, 'bootstrap') ON CONFLICT(email) DO NOTHING",
+                    params![needle, role.as_str(), status.as_str(), now],
+                )
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+            seeded += n as u64;
+        }
+        tx.execute(
+            "INSERT INTO bootstrap_markers (key, applied_at) VALUES ('users_env_seed', ?1)",
+            params![now],
+        )
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        tx.commit()
+            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        Ok(seeded)
+    }
+
     // --- audit ---
 
     async fn append_audit(&self, entry: &AuditEntry) -> Result<()> {

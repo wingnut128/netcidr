@@ -13,6 +13,7 @@ pub const MIGRATIONS: &[(u32, &str)] = &[
     (10, MIGRATION_010),
     (11, MIGRATION_011),
     (12, MIGRATION_012),
+    (13, MIGRATION_013),
 ];
 
 const MIGRATION_001: &str = r#"
@@ -354,6 +355,43 @@ CREATE TRIGGER trg_allocation_tags_tenant_match_insert
 CREATE TRIGGER trg_allocation_tags_tenant_match_update
     BEFORE UPDATE OF tenant_id, allocation_id ON allocation_tags
     FOR EACH ROW EXECUTE FUNCTION assert_alloc_tags_tenant_match();
+"#;
+
+/// Unified users directory (ADR-0006). Mirrors SQLite migration 013: copies
+/// role_assignments in (promoting 'admin' → 'platform_admin' to preserve
+/// user-management capability), keeps role_assignments frozen for binary
+/// rollback, and adds bootstrap_markers for the one-shot env seed.
+const MIGRATION_013: &str = r#"
+CREATE TABLE IF NOT EXISTS users (
+    email       TEXT PRIMARY KEY,
+    role        TEXT NOT NULL DEFAULT 'reader'
+                CHECK (role IN ('reader', 'allocator', 'admin', 'platform_admin')),
+    status      TEXT NOT NULL DEFAULT 'active'
+                CHECK (status IN ('active', 'disabled')),
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    created_by  TEXT,
+    updated_by  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_role   ON users(role);
+CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
+
+INSERT INTO users (email, role, status, created_at, updated_at, created_by)
+SELECT email,
+       CASE role WHEN 'admin' THEN 'platform_admin' ELSE role END,
+       'active',
+       created_at,
+       updated_at,
+       created_by
+FROM role_assignments
+WHERE true
+ON CONFLICT (email) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS bootstrap_markers (
+    key        TEXT PRIMARY KEY,
+    applied_at TEXT NOT NULL
+);
 "#;
 
 #[cfg(all(test, feature = "ipam-postgres"))]
