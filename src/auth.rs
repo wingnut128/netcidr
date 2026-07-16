@@ -14,6 +14,7 @@ use tokio::sync::RwLock;
 use tracing::warn;
 
 use crate::config::AuthMode;
+use crate::ipam::models::UserStatus;
 use crate::ipam::store::IpamStore;
 use crate::pat::PatPepper;
 use crate::pat_lifecycle;
@@ -152,6 +153,12 @@ pub struct AuthConfig {
     /// otherwise PAT-shaped tokens fall through to a generic 401.
     pat_store: Option<Arc<dyn IpamStore>>,
     pat_pepper: Option<Arc<PatPepper>>,
+    /// Optional store backing the users directory (ADR-0006). Set whenever
+    /// IPAM is enabled — independent of the PAT pepper, unlike `pat_store` —
+    /// so role resolution and the allowlist check read the `users` table.
+    /// With no store (bearer-only / non-IPAM deploys) both fall back to the
+    /// in-memory env lists.
+    user_store: Option<Arc<dyn IpamStore>>,
 }
 
 impl std::fmt::Debug for AuthConfig {
@@ -166,6 +173,7 @@ impl std::fmt::Debug for AuthConfig {
             .field("reader_emails", &self.reader_emails)
             .field("pat_store", &self.pat_store.as_ref().map(|_| "<set>"))
             .field("pat_pepper", &self.pat_pepper.as_ref().map(|_| "<set>"))
+            .field("user_store", &self.user_store.as_ref().map(|_| "<set>"))
             .finish()
     }
 }
@@ -190,6 +198,7 @@ impl AuthConfig {
             reader_emails: Vec::new(),
             pat_store: None,
             pat_pepper: None,
+            user_store: None,
         }
     }
 
@@ -199,6 +208,22 @@ impl AuthConfig {
         self.pat_store = Some(store);
         self.pat_pepper = Some(pepper);
         self
+    }
+
+    /// Attach the IPAM store backing the users directory. Set whenever IPAM
+    /// is enabled — even without a PAT pepper — so the allowlist check and
+    /// role resolution read the `users` table instead of the env lists.
+    pub fn with_user_store(mut self, store: Arc<dyn IpamStore>) -> Self {
+        self.user_store = Some(store);
+        self
+    }
+
+    /// The store used for user-directory reads. Prefers the explicitly
+    /// attached `user_store`; falls back to `pat_store` so existing wiring
+    /// (and tests) that only attach the PAT backend keep DB-backed
+    /// resolution.
+    fn user_store(&self) -> Option<&Arc<dyn IpamStore>> {
+        self.user_store.as_ref().or(self.pat_store.as_ref())
     }
 
     pub fn has_pat_backend(&self) -> bool {
@@ -262,32 +287,61 @@ impl AuthConfig {
     ///
     /// **Bearer-token mode is the documented exception.** Static
     /// bearer-token principals carry `email = None` and resolve to
-    /// [`Role::Admin`] unconditionally. Rationale: bearer mode is the
-    /// single-operator service-token model — the operator who provisioned
-    /// `NETCIDR_API_TOKEN` owns the token and is expected to have full
-    /// access. Silently dropping bearer-mode callers to Reader on the
-    /// PR2 default-flip would break every existing service-to-service
-    /// write call without warning, with no per-token override available
-    /// (bearer tokens carry no identity beyond the shared secret). See
-    /// ADR-0002 for the design discussion.
+    /// [`Role::PlatformAdmin`] unconditionally. Rationale: bearer mode is
+    /// the single-operator service-token model — the operator who
+    /// provisioned `NETCIDR_API_TOKEN` owns the token and is expected to
+    /// have full access, including user management. Silently dropping
+    /// bearer-mode callers to a lower tier on a policy flip would break
+    /// existing service-to-service calls without warning, with no
+    /// per-token override available (bearer tokens carry no identity
+    /// beyond the shared secret). See ADR-0002 and ADR-0006 for the
+    /// design discussion.
     pub async fn role_for_email(&self, email: Option<&str>) -> Role {
+        self.resolve_access(email).await.0
+    }
+
+    /// Resolve `(role, allowlisted)` for an email in a single store
+    /// round-trip — the hot-path helper behind [`Self::role_for_email`],
+    /// [`Self::email_allowed`], and `require_auth`.
+    ///
+    /// With a store attached, both answers come from the caller's `users`
+    /// row (ADR-0006):
+    /// - `status = 'disabled'` → denied, always — an explicit deny beats
+    ///   the open-mode default.
+    /// - **Open mode** (env allowlist empty, matching the pre-DB
+    ///   semantics): any verified principal is allowed; role = row's role
+    ///   if present, else [`Role::default`].
+    /// - **Closed mode**: allowed iff an active row exists.
+    /// - A store read error fails closed (denied) — this is a security
+    ///   boundary.
+    ///
+    /// With no store (bearer-only / non-IPAM deploys) both answers fall
+    /// back to the in-memory env lists, preserving pre-DB behavior
+    /// verbatim. `email = None` (static bearer) keeps the PlatformAdmin
+    /// carve-out for role and the "denied in closed mode" rule for the
+    /// allowlist.
+    async fn resolve_access(&self, email: Option<&str>) -> (Role, bool) {
+        let open_mode = self.allowed_emails.is_empty();
         let Some(email) = email else {
-            return Role::Admin;
+            return (Role::PlatformAdmin, open_mode);
         };
-        // When an IPAM store is attached, role membership lives in the DB
-        // (`role_assignments`), seeded once from the env lists at startup —
-        // so the DB is the source of truth and changes survive restarts and
-        // are visible across instances. With no store (bearer-only / non-IPAM
-        // deploys) fall back to the in-memory env lists.
-        if let Some(store) = &self.pat_store {
-            return store
-                .get_role_for_email(email)
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_default();
+        if let Some(store) = self.user_store() {
+            return match store.get_user(email).await {
+                Ok(Some(user)) => match user.status {
+                    UserStatus::Disabled => (user.role, false),
+                    UserStatus::Active => (user.role, true),
+                },
+                Ok(None) => (Role::default(), open_mode),
+                Err(e) => {
+                    warn!(error = %e, "user directory read failed; denying access");
+                    (Role::default(), false)
+                }
+            };
         }
-        self.role_for_email_from_env(email)
+        (
+            self.role_for_email_from_env(email),
+            self.email_allowed_from_env(email),
+        )
     }
 
     /// In-memory env-list resolution (admin > allocator > reader > default).
@@ -353,12 +407,36 @@ impl AuthConfig {
 
     pub async fn is_admin(&self, email: Option<&str>) -> bool {
         // No-email principals (static bearer) are never "admin" for the
-        // purposes of the /me and /admin/allowlist surfaces, regardless of
-        // the bearer carve-out in `role_for_email`.
+        // purposes of the /me surface, regardless of the bearer carve-out
+        // in `role_for_email`. PlatformAdmin passes: it is a superset of
+        // the tenant-admin tier.
         match email {
-            Some(_) => self.role_for_email(email).await == Role::Admin,
+            Some(_) => self.role_for_email(email).await >= Role::Admin,
             None => false,
         }
+    }
+
+    pub async fn is_platform_admin(&self, email: Option<&str>) -> bool {
+        // Same no-email exception as `is_admin`.
+        match email {
+            Some(_) => self.role_for_email(email).await == Role::PlatformAdmin,
+            None => false,
+        }
+    }
+
+    /// A contact address for access requests: the first active platform
+    /// admin in the users directory, falling back to the first env-configured
+    /// admin email for store-less deployments.
+    pub async fn admin_contact(&self) -> Option<String> {
+        if let Some(store) = self.user_store()
+            && let Ok(users) = store.list_users().await
+            && let Some(admin) = users
+                .iter()
+                .find(|u| u.role == Role::PlatformAdmin && u.status == UserStatus::Active)
+        {
+            return Some(admin.email.clone());
+        }
+        self.admin_emails.first().cloned()
     }
 
     /// Validate the request's bearer token without enforcing the email
@@ -375,9 +453,14 @@ impl AuthConfig {
         {
             if let (Some(store), Some(pepper)) = (self.pat_store.as_ref(), self.pat_pepper.as_ref())
             {
-                verify_pat(store, pepper.as_ref(), &self.allowed_emails, token)
-                    .await
-                    .ok()
+                verify_pat(
+                    store,
+                    pepper.as_ref(),
+                    !self.allowed_emails.is_empty(),
+                    token,
+                )
+                .await
+                .ok()
             } else {
                 None
             }
@@ -394,8 +477,8 @@ impl AuthConfig {
         }
     }
 
-    pub fn email_is_allowed(&self, email: Option<&str>) -> bool {
-        self.email_allowed(email)
+    pub async fn email_is_allowed(&self, email: Option<&str>) -> bool {
+        self.email_allowed(email).await
     }
 
     pub fn enabled(&self) -> bool {
@@ -406,17 +489,18 @@ impl AuthConfig {
         self.mode
     }
 
-    fn email_allowed(&self, email: Option<&str>) -> bool {
+    async fn email_allowed(&self, email: Option<&str>) -> bool {
+        self.resolve_access(email).await.1
+    }
+
+    /// In-memory env-list allowlist check — the no-store fallback. Empty
+    /// allowlist disables the check entirely (open mode).
+    fn email_allowed_from_env(&self, email: &str) -> bool {
         if self.allowed_emails.is_empty() {
             return true;
         }
-        match email {
-            Some(addr) => self
-                .allowed_emails
-                .iter()
-                .any(|allowed| allowed == &addr.to_ascii_lowercase()),
-            None => false,
-        }
+        let needle = email.to_ascii_lowercase();
+        self.allowed_emails.iter().any(|allowed| allowed == &needle)
     }
 }
 
@@ -440,7 +524,14 @@ pub async fn require_auth(config: AuthConfig, mut request: Request, next: Next) 
                 // misconfiguration.
                 return unauthorized(config.mode);
             };
-            match verify_pat(store, pepper.as_ref(), &config.allowed_emails, token).await {
+            match verify_pat(
+                store,
+                pepper.as_ref(),
+                !config.allowed_emails.is_empty(),
+                token,
+            )
+            .await
+            {
                 Ok(p) => Some(p),
                 Err(_) => return unauthorized(config.mode),
             }
@@ -463,16 +554,23 @@ pub async fn require_auth(config: AuthConfig, mut request: Request, next: Next) 
         return unauthorized(config.mode);
     };
 
-    // Attach the resolved role *after* identity verification but *before*
-    // the allowlist check, so a downgraded admin who was just removed from
-    // the allowlist still gets a clean 403 from the email check below (not
-    // a confusing role-derivation surprise).
-    let principal = config.finalize_principal(principal).await;
+    // Resolve role + allowlist status in one user-directory read. The role
+    // is attached *after* identity verification but *before* the allowlist
+    // check, so a downgraded admin who was just removed from the directory
+    // still gets a clean 403 from the email check below (not a confusing
+    // role-derivation surprise).
+    let (email_role, allowed) = config.resolve_access(principal.email.as_deref()).await;
+    let role = match principal.auth_method {
+        // PATs can narrow the owner's privileges but never widen them.
+        AuthMethod::Pat => email_role.min(principal.role),
+        AuthMethod::Oidc | AuthMethod::Bearer => email_role,
+    };
+    let principal = AuthenticatedPrincipal { role, ..principal };
 
-    if !config.email_allowed(principal.email.as_deref()) {
+    if !allowed {
         warn!(
             email = principal.email.as_deref().unwrap_or("<none>"),
-            "rejecting authenticated principal not in allowlist"
+            "rejecting authenticated principal not in the users directory allowlist"
         );
         return forbidden();
     }
@@ -528,17 +626,18 @@ pub enum AuthError {
 ///      Unauthorized without any DB access.
 ///   2. Store lookup with `(token_hash, now)` — the SQL predicate already
 ///      filters revoked / expired so any miss is a single uniform 401.
-///   3. Allowlist check on `owner_email` (matching the existing OIDC
-///      semantics: empty allowlist disables the check).
+///   3. Users-directory check on `owner_email` (ADR-0006): a disabled row
+///      is always rejected; with `enforce_allowlist` (closed mode) an
+///      active row must exist.
 ///   4. Detached `tokio::spawn` to update `last_used_at` — fire and forget,
 ///      errors logged at WARN; the request never blocks on this write.
 pub(crate) async fn verify_pat(
     store: &Arc<dyn IpamStore>,
     pepper: &PatPepper,
-    allowed_emails: &[String],
+    enforce_allowlist: bool,
     token: &str,
 ) -> Result<AuthenticatedPrincipal, AuthError> {
-    let verified = pat_lifecycle::verify_bearer_token(store, pepper, allowed_emails, token)
+    let verified = pat_lifecycle::verify_bearer_token(store, pepper, enforce_allowlist, token)
         .await
         .map_err(|_| AuthError::Unauthorized)?;
 
@@ -1145,32 +1244,35 @@ mod tests {
         assert_eq!(cache_control_max_age("no-cache"), None);
     }
 
-    #[test]
-    fn email_allowlist_permits_listed_addresses() {
+    #[tokio::test]
+    async fn email_allowlist_permits_listed_addresses() {
+        // Store-less config: exercises the env-Vec fallback path.
         let config = AuthConfig::oidc(Some("aud".to_string())).with_allowed_emails(vec![
             "alice@example.com".to_string(),
             "BOB@EXAMPLE.COM".to_string(),
         ]);
-        assert!(config.email_allowed(Some("alice@example.com")));
-        assert!(config.email_allowed(Some("ALICE@example.com")));
-        assert!(config.email_allowed(Some("bob@example.com")));
-        assert!(!config.email_allowed(Some("eve@example.com")));
-        assert!(!config.email_allowed(None));
+        assert!(config.email_allowed(Some("alice@example.com")).await);
+        assert!(config.email_allowed(Some("ALICE@example.com")).await);
+        assert!(config.email_allowed(Some("bob@example.com")).await);
+        assert!(!config.email_allowed(Some("eve@example.com")).await);
+        assert!(!config.email_allowed(None).await);
     }
 
-    #[test]
-    fn empty_allowlist_permits_anyone() {
+    #[tokio::test]
+    async fn empty_allowlist_permits_anyone() {
         let config = AuthConfig::oidc(Some("aud".to_string()));
-        assert!(config.email_allowed(Some("anyone@example.com")));
-        assert!(config.email_allowed(None));
+        assert!(config.email_allowed(Some("anyone@example.com")).await);
+        assert!(config.email_allowed(None).await);
     }
 
     #[test]
-    fn role_ordering_is_reader_lt_allocator_lt_admin() {
+    fn role_ordering_is_reader_lt_allocator_lt_admin_lt_platform_admin() {
         assert!(Role::Reader < Role::Allocator);
         assert!(Role::Allocator < Role::Admin);
         assert!(Role::Reader < Role::Admin);
+        assert!(Role::Admin < Role::PlatformAdmin);
         assert_eq!(Role::Reader.max(Role::Admin), Role::Admin);
+        assert_eq!(Role::Admin.max(Role::PlatformAdmin), Role::PlatformAdmin);
     }
 
     #[test]
@@ -1212,31 +1314,34 @@ mod tests {
         assert_eq!(config.role_for_email(Some("DEV@X")).await, Role::Allocator);
         // Unknown OIDC email → Role::default() (Reader as of PR2).
         assert_eq!(config.role_for_email(Some("unknown@x")).await, Role::Reader);
-        // None email → Admin. Static bearer-token principals (no email)
-        // are the documented carve-out — see the role_for_email doc + ADR-0002.
-        assert_eq!(config.role_for_email(None).await, Role::Admin);
+        // None email → PlatformAdmin. Static bearer-token principals (no
+        // email) are the documented carve-out — see the role_for_email doc
+        // + ADR-0002/ADR-0006.
+        assert_eq!(config.role_for_email(None).await, Role::PlatformAdmin);
     }
 
     #[tokio::test]
     async fn role_for_email_falls_through_to_reader_when_no_lists_set() {
-        // PR2 default: unknown OIDC user → Reader. Bearer-token (None)
-        // stays Admin even with no lists configured.
+        // Default: unknown OIDC user → Reader. Bearer-token (None) stays
+        // PlatformAdmin even with no lists configured.
         let config = AuthConfig::oidc(Some("aud".to_string()));
         assert_eq!(config.role_for_email(Some("anyone@x")).await, Role::Reader);
-        assert_eq!(config.role_for_email(None).await, Role::Admin);
+        assert_eq!(config.role_for_email(None).await, Role::PlatformAdmin);
     }
 
     #[tokio::test]
-    async fn role_for_email_bearer_mode_always_returns_admin() {
+    async fn role_for_email_bearer_mode_always_returns_platform_admin() {
         // Explicit assertion of the bearer-token carve-out documented on
-        // role_for_email and ADR-0002. Bearer principals carry email=None;
-        // they must keep Admin regardless of which lists are configured,
-        // including the "everything is locked down" deployment shape.
+        // role_for_email and ADR-0002/ADR-0006. Bearer principals carry
+        // email=None; they must keep the top tier regardless of which lists
+        // are configured, including the "everything is locked down"
+        // deployment shape — otherwise bearer-mode deployments would
+        // silently lose user management on the platform-admin split.
         let config = AuthConfig::oidc(Some("aud".to_string()))
             .with_admin_emails(vec!["specific-admin@x".to_string()])
             .with_allocator_emails(vec!["alice@x".to_string()])
             .with_reader_emails(vec!["bob@x".to_string()]);
-        assert_eq!(config.role_for_email(None).await, Role::Admin);
+        assert_eq!(config.role_for_email(None).await, Role::PlatformAdmin);
     }
 
     #[tokio::test]
@@ -1332,8 +1437,8 @@ mod tests {
     async fn finalize_principal_bearer_ignores_stored_role_field() {
         // Static-bearer principals carry `email = None` and
         // `auth_method = Bearer`. The bearer carve-out keeps them at
-        // Admin regardless of any pre-finalize role value (which should
-        // be Role::default() from authenticate_bearer anyway).
+        // PlatformAdmin regardless of any pre-finalize role value (which
+        // should be Role::default() from authenticate_bearer anyway).
         let config = AuthConfig::oidc(Some("aud".to_string()));
         let principal = AuthenticatedPrincipal {
             kind: PrincipalKind::BearerToken,
@@ -1345,6 +1450,6 @@ mod tests {
             role: Role::Reader,
         };
         let finalized = config.finalize_principal(principal).await;
-        assert_eq!(finalized.role, Role::Admin);
+        assert_eq!(finalized.role, Role::PlatformAdmin);
     }
 }
