@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING (auth)**: the OIDC email allowlist is now backed by the `users` table — a disabled user row denies access (sessions and PATs) immediately, even in open mode; in closed mode an active row must exist. `NETCIDR_OIDC_ALLOWED_EMAILS` and the role-list env vars are now a one-shot first-boot seed (`NETCIDR_ADMIN_EMAILS` seeds `platform_admin`); after that the DB is the source of truth. Static-bearer principals resolve to `platform_admin` (was `admin`) so bearer-mode deployments keep user management. `/me` gains `is_platform_admin`; `admin_contact` is now the first active platform admin from the DB ([#300](https://github.com/wingnut128/netcidr/issues/300), PR2)
+
+### Security
+
+- *(pat)* PATs are capped at the `admin` tier: mint requests for `platform_admin` clamp to `admin`, so user-directory management is never available to a long-lived token; disabling a user immediately invalidates their PATs ([#300](https://github.com/wingnut128/netcidr/issues/300), PR2)
+
 ### Added
 
 - *(ipam)* unified users directory schema (migration 013): a `users` table (email, role, status, audit fields) that will replace both the env allowlist and `role_assignments`; new `platform_admin` role tier above `admin`; store-layer CRUD + marker-guarded one-shot bootstrap seeding on both SQLite and Postgres backends. Existing `admin` role rows are promoted to `platform_admin` in-migration; `role_assignments` is kept frozen for binary-rollback safety. No behavior change yet — the auth path still reads the env allowlist and `role_assignments` ([#300](https://github.com/wingnut128/netcidr/issues/300), PR1)
