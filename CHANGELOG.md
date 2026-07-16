@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **BREAKING (dashboard)**: the read-only Allowlist page is gone; the platform-admin-only **Users** page is the single directory surface (add/disable/enable/remove users, change roles, status badges, guard errors inline). Sidebar "Users" is gated on the new `/me.is_platform_admin` ([#300](https://github.com/wingnut128/netcidr/issues/300), PR4)
+
 ### Changed
 
 - **BREAKING (api)**: `/admin/users` now requires the `platform_admin` role (tenant-space `admin` gets 403) and speaks the users-directory DTOs — `GET` returns users with `role` + `status`, `POST` upserts `{email, role, status}`, `DELETE` hard-removes. `GET /admin/allowlist` is removed. CLI: `netcidr admin user add|disable|enable|remove|list` (old `grant`/`revoke` kept as aliases) ([#300](https://github.com/wingnut128/netcidr/issues/300), PR3)
