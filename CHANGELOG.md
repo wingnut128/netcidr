@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING (api)**: `/admin/users` now requires the `platform_admin` role (tenant-space `admin` gets 403) and speaks the users-directory DTOs — `GET` returns users with `role` + `status`, `POST` upserts `{email, role, status}`, `DELETE` hard-removes. `GET /admin/allowlist` is removed. CLI: `netcidr admin user add|disable|enable|remove|list` (old `grant`/`revoke` kept as aliases) ([#300](https://github.com/wingnut128/netcidr/issues/300), PR3)
 - **BREAKING (auth)**: the OIDC email allowlist is now backed by the `users` table — a disabled user row denies access (sessions and PATs) immediately, even in open mode; in closed mode an active row must exist. `NETCIDR_OIDC_ALLOWED_EMAILS` and the role-list env vars are now a one-shot first-boot seed (`NETCIDR_ADMIN_EMAILS` seeds `platform_admin`); after that the DB is the source of truth. Static-bearer principals resolve to `platform_admin` (was `admin`) so bearer-mode deployments keep user management. `/me` gains `is_platform_admin`; `admin_contact` is now the first active platform admin from the DB ([#300](https://github.com/wingnut128/netcidr/issues/300), PR2)
 
 ### Security
