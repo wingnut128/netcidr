@@ -687,39 +687,6 @@ pub struct HostnamePointerHistoryList {
 }
 
 // ---------------------------------------------------------------------------
-// Role assignments (global RBAC membership; email → role)
-// ---------------------------------------------------------------------------
-
-/// A global role grant for an email address. Not tenant-scoped: an email maps
-/// to one role across the whole system (data isolation is handled separately
-/// via tenant scoping). Source of truth for role resolution once seeded.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
-pub struct RoleAssignment {
-    pub email: String,
-    pub role: Role,
-    pub created_at: String,
-    pub updated_at: String,
-    /// Email of the admin who made the grant, or `"bootstrap"` for env-seeded rows.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_by: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
-pub struct RoleAssignmentList {
-    pub users: Vec<RoleAssignment>,
-    pub count: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
-pub struct GrantRoleRequest {
-    pub email: String,
-    pub role: Role,
-}
-
-// ---------------------------------------------------------------------------
 // Users directory (unified allowlist + role membership; ADR-0006)
 // ---------------------------------------------------------------------------
 
