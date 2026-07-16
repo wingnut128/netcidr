@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0](https://github.com/wingnut128/netcidr/compare/v0.27.2...v0.28.0) - 2026-07-16
+
+### Added
+
+- *(auth)* NETCIDR_ALLOWLIST_MODE pins open/closed explicitly ([#306](https://github.com/wingnut128/netcidr/pull/306))
+- *(dashboard)* users directory page + ADR-0006 + docs (PR4 of #300) ([#305](https://github.com/wingnut128/netcidr/pull/305))
+- *(api)* [**breaking**] users-directory API + CLI convergence (PR3 of #300) ([#304](https://github.com/wingnut128/netcidr/pull/304))
+- *(auth)* DB-backed allowlist via users directory + platform-admin guards (PR2 of #300) ([#303](https://github.com/wingnut128/netcidr/pull/303))
+- *(ipam)* users directory schema + store layer (PR1 of #300) ([#301](https://github.com/wingnut128/netcidr/pull/301))
+
 ### Added
 
 - *(auth)* `NETCIDR_ALLOWLIST_MODE=open|closed` (config: `allowlist_mode`) pins the sign-in mode explicitly. Unset keeps the derived behavior (empty allowlist = open). Pinning `closed` lets deployments delete the now-inert email env vars after the first-boot seed without silently flipping open; invalid values fail startup ([#300](https://github.com/wingnut128/netcidr/issues/300), PR5)
