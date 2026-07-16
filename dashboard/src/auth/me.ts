@@ -12,8 +12,11 @@
 export interface MeResponse {
   email: string | null;
   is_allowlisted: boolean;
+  /** Role >= admin (tenant-space admin; platform admins also pass). */
   is_admin: boolean;
-  /** First configured admin email — used by RequestAccessCard. */
+  /** Role == platform_admin (user-directory management). */
+  is_platform_admin: boolean;
+  /** A platform admin's email — used by RequestAccessCard. */
   admin_contact: string | null;
 }
 

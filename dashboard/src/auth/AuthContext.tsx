@@ -38,9 +38,11 @@ interface AuthContextValue {
   email: string | null;
   name: string | null;
   picture: string | null;
-  /** True when the backend reports the signed-in user is an admin. */
+  /** Role >= admin (tenant-space admin; platform admins also pass). */
   isAdmin: boolean;
-  /** First admin email configured on the backend — for RequestAccessCard. */
+  /** Role == platform_admin — gates the Users directory surfaces. */
+  isPlatformAdmin: boolean;
+  /** A platform admin's email — for RequestAccessCard. */
   adminContact: string | null;
   /** Most recent sign-in error, surfaced to the UI. */
   error: string | null;
@@ -59,6 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isAuthConfigured ? "loading" : "disabled",
   );
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [adminContact, setAdminContact] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -75,11 +78,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setIdToken(null);
         setClaims(null);
         setIsAdmin(false);
+        setIsPlatformAdmin(false);
         setAdminContact(null);
         setStatus("anonymous");
         return;
       }
       setIsAdmin(me.is_admin);
+      setIsPlatformAdmin(me.is_platform_admin);
       setAdminContact(me.admin_contact);
       setStatus(me.is_allowlisted ? "authenticated" : "unallowlisted");
     } catch {
@@ -115,6 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setIdToken(null);
       setClaims(null);
       setIsAdmin(false);
+      setIsPlatformAdmin(false);
       setAdminContact(null);
       setStatus("anonymous");
       return;
@@ -123,6 +129,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setIdToken(null);
       setClaims(null);
       setIsAdmin(false);
+      setIsPlatformAdmin(false);
       setAdminContact(null);
       setStatus("anonymous");
     }, msUntilExpiry);
@@ -148,6 +155,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIdToken(null);
     setClaims(null);
     setIsAdmin(false);
+    setIsPlatformAdmin(false);
     setStatus("anonymous");
     setError(null);
   }, []);
@@ -162,6 +170,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       name: claims?.name ?? null,
       picture: claims?.picture ?? null,
       isAdmin,
+      isPlatformAdmin,
       adminContact,
       error,
       acceptCredential,
@@ -173,6 +182,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       status,
       claims,
       isAdmin,
+      isPlatformAdmin,
       adminContact,
       error,
       acceptCredential,
