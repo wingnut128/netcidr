@@ -799,7 +799,7 @@ export NETCIDR_OIDC_ALLOWED_EMAILS="viewer@example.com" # remaining entries seed
 
 The seed runs exactly once per database (tracked in `bootstrap_markers`); after that the env lists are ignored and the database is the source of truth. An email in a role list but missing from a non-empty `NETCIDR_OIDC_ALLOWED_EMAILS` seeds `disabled` (it had no access before). Bearer-only / non-IPAM deployments with no store keep resolving both the allowlist and roles directly from these env lists.
 
-**Open vs closed mode:** an empty `NETCIDR_OIDC_ALLOWED_EMAILS` keeps today's open behavior — any verified principal may sign in (role defaults to `reader`); a disabled directory row still denies. With the allowlist configured, only users with an active directory row get in.
+**Open vs closed mode:** set `NETCIDR_ALLOWLIST_MODE=open|closed` (or `allowlist_mode` in `netcidr.toml`) to pin the mode explicitly. When unset, it derives from `NETCIDR_OIDC_ALLOWED_EMAILS`: empty → open (any verified principal may sign in; role defaults to `reader`; a disabled directory row still denies), non-empty → closed (only users with an active directory row get in). Pinning `closed` lets you delete all four email env vars once the first-boot seed has run, without the deployment silently flipping open.
 
 **Default policy: least privilege.** Any authenticated OIDC user without a directory row resolves to `reader` (and, in closed mode, cannot sign in at all until added).
 

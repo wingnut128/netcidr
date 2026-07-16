@@ -15,6 +15,39 @@ const OIDC_ALLOWED_EMAILS_ENV: &str = "NETCIDR_OIDC_ALLOWED_EMAILS";
 const ADMIN_EMAILS_ENV: &str = "NETCIDR_ADMIN_EMAILS";
 const ALLOCATOR_EMAILS_ENV: &str = "NETCIDR_ALLOCATOR_EMAILS";
 const READER_EMAILS_ENV: &str = "NETCIDR_READER_EMAILS";
+const ALLOWLIST_MODE_ENV: &str = "NETCIDR_ALLOWLIST_MODE";
+
+/// Whether sign-in is restricted to the users directory (ADR-0006).
+///
+/// `Closed`: only emails with an *active* `users` row may authenticate.
+/// `Open`: any verified principal is admitted (role defaults to Reader;
+/// a disabled directory row still denies).
+///
+/// When unset (`NETCIDR_ALLOWLIST_MODE` / `allowlist_mode` absent), the
+/// mode derives from `NETCIDR_OIDC_ALLOWED_EMAILS`: non-empty → closed,
+/// empty → open — the pre-flag behavior. Setting it explicitly lets a
+/// deployment drop the email env vars entirely once the one-shot seed
+/// has run, without silently flipping open.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AllowlistMode {
+    Open,
+    Closed,
+}
+
+impl std::str::FromStr for AllowlistMode {
+    type Err = NetcidrError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "open" => Ok(AllowlistMode::Open),
+            "closed" => Ok(AllowlistMode::Closed),
+            other => Err(NetcidrError::InvalidInput(format!(
+                "invalid allowlist mode {other:?}: expected open|closed"
+            ))),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
@@ -63,10 +96,17 @@ pub struct ServerConfig {
     /// Expected OIDC audience. Prefer NETCIDR_OIDC_AUDIENCE in production.
     pub oidc_audience: Option<String>,
     /// Allowlist of email addresses authorized to call protected endpoints.
-    /// Empty means no allowlist enforcement (any verified principal allowed).
+    /// Post-seed this list is inert (the users directory is the source of
+    /// truth) except that, when `allowlist_mode` is unset, its
+    /// non-emptiness selects closed mode.
     /// Prefer NETCIDR_OIDC_ALLOWED_EMAILS (comma-separated) in production.
     #[serde(default)]
     pub oidc_allowed_emails: Vec<String>,
+    /// Explicit allowlist mode ("open" | "closed"). Unset = derive from
+    /// `oidc_allowed_emails` non-emptiness (pre-flag behavior). Prefer
+    /// NETCIDR_ALLOWLIST_MODE in production. See [`AllowlistMode`].
+    #[serde(default)]
+    pub allowlist_mode: Option<AllowlistMode>,
     /// Email addresses with administrative access (e.g. allowlist viewer).
     /// Prefer NETCIDR_ADMIN_EMAILS (comma-separated) in production.
     #[serde(default)]
@@ -110,6 +150,7 @@ impl Default for ServerConfig {
             auth_token: None,
             oidc_audience: None,
             oidc_allowed_emails: Vec::new(),
+            allowlist_mode: None,
             admin_emails: Vec::new(),
             oidc_allocator_emails: Vec::new(),
             oidc_reader_emails: Vec::new(),
@@ -242,6 +283,9 @@ impl ServerConfig {
                 "oidc_audience must not be empty".to_string(),
             ));
         }
+        // Surface an unparseable NETCIDR_ALLOWLIST_MODE at startup — a
+        // security switch must not fall back silently.
+        self.allowlist_mode()?;
         match self.auth_mode {
             AuthMode::None => {}
             AuthMode::Bearer => {
@@ -302,6 +346,25 @@ impl ServerConfig {
         resolve_email_list(OIDC_ALLOWED_EMAILS_ENV, &self.oidc_allowed_emails)
     }
 
+    /// Resolve the effective allowlist mode: env var > config file >
+    /// derived from allowlist non-emptiness. Fails on an unparseable env
+    /// value (a security switch must not fall back silently).
+    pub fn allowlist_mode(&self) -> Result<AllowlistMode> {
+        if let Ok(raw) = std::env::var(ALLOWLIST_MODE_ENV)
+            && !raw.trim().is_empty()
+        {
+            return raw.parse::<AllowlistMode>();
+        }
+        if let Some(mode) = self.allowlist_mode {
+            return Ok(mode);
+        }
+        Ok(if self.oidc_allowed_emails().is_empty() {
+            AllowlistMode::Open
+        } else {
+            AllowlistMode::Closed
+        })
+    }
+
     pub fn admin_emails(&self) -> Vec<String> {
         resolve_email_list(ADMIN_EMAILS_ENV, &self.admin_emails)
     }
@@ -324,6 +387,9 @@ impl ServerConfig {
         .with_admin_emails(self.admin_emails())
         .with_allocator_emails(self.allocator_emails())
         .with_reader_emails(self.reader_emails())
+        // Invalid mode values are rejected by validate() at startup; the
+        // unwrap here fails *closed* as defense in depth.
+        .with_allowlist_mode(self.allowlist_mode().unwrap_or(AllowlistMode::Closed))
     }
 
     pub fn validate_deployment(&self, bind_address: &str) -> Result<()> {
@@ -434,6 +500,54 @@ mod tests {
             oidc_audience: Some("/projects/123/global/backendServices/456".to_string()),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn allowlist_mode_derives_from_list_and_config_pins_it() {
+        // NOTE: the env-var override path (NETCIDR_ALLOWLIST_MODE) is not
+        // exercised here — mutating process env in tests requires unsafe
+        // in edition 2024, which this codebase forbids. The env branch is
+        // a two-line delegation to the same FromStr tested below.
+
+        // Derived: empty list → open; populated → closed.
+        let open = oidc_config();
+        assert_eq!(open.allowlist_mode().unwrap(), AllowlistMode::Open);
+        let closed = ServerConfig {
+            oidc_allowed_emails: vec!["a@example.com".to_string()],
+            ..oidc_config()
+        };
+        assert_eq!(closed.allowlist_mode().unwrap(), AllowlistMode::Closed);
+
+        // Explicit config pins the mode regardless of the list.
+        let pinned_closed = ServerConfig {
+            allowlist_mode: Some(AllowlistMode::Closed),
+            ..oidc_config()
+        };
+        assert_eq!(
+            pinned_closed.allowlist_mode().unwrap(),
+            AllowlistMode::Closed
+        );
+        let pinned_open = ServerConfig {
+            oidc_allowed_emails: vec!["a@example.com".to_string()],
+            allowlist_mode: Some(AllowlistMode::Open),
+            ..oidc_config()
+        };
+        assert_eq!(pinned_open.allowlist_mode().unwrap(), AllowlistMode::Open);
+
+        // FromStr: the parser behind the env override.
+        assert_eq!(
+            "closed".parse::<AllowlistMode>().unwrap(),
+            AllowlistMode::Closed
+        );
+        assert_eq!(
+            "OPEN".parse::<AllowlistMode>().unwrap(),
+            AllowlistMode::Open
+        );
+        assert!("locked".parse::<AllowlistMode>().is_err());
+
+        // TOML round trip.
+        let cfg: ServerConfig = toml::from_str("allowlist_mode = \"closed\"").expect("toml parse");
+        assert_eq!(cfg.allowlist_mode, Some(AllowlistMode::Closed));
     }
 
     #[test]
