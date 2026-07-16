@@ -261,7 +261,10 @@ pub enum Commands {
 
 #[derive(Subcommand)]
 pub enum AdminCommands {
-    /// Manage role-email assignments (who has reader/allocator/admin)
+    /// Manage the users directory: who may sign in and at which role
+    /// (reader/allocator/admin/platform_admin). Running this against the
+    /// DB directly is the lockout-recovery path — it bypasses the API's
+    /// self-protection guard (but never the last-platform-admin guard).
     User {
         #[command(subcommand)]
         command: AdminUserCommands,
@@ -289,20 +292,35 @@ pub enum AdminCommands {
 
 #[derive(Subcommand)]
 pub enum AdminUserCommands {
-    /// Grant (or change) a role for an email
-    Grant {
+    /// Add a user (or change an existing user's role), active immediately
+    #[command(alias = "grant")]
+    Add {
         /// Email address
         email: String,
-        /// Role to grant
-        #[arg(long, value_enum)]
+        /// Role to assign (defaults to reader)
+        #[arg(long, value_enum, default_value_t = crate::auth::Role::Reader)]
         role: crate::auth::Role,
     },
-    /// Revoke an email's role (blocked for the last admin / your own admin)
-    Revoke {
+    /// Disable a user: they can no longer sign in and their PATs stop
+    /// working; their IPAM data is untouched (blocked for the last active
+    /// platform admin)
+    Disable {
         /// Email address
         email: String,
     },
-    /// List all role assignments
+    /// Re-enable a disabled user, restoring access at their stored role
+    Enable {
+        /// Email address
+        email: String,
+    },
+    /// Remove a user's directory row entirely; their IPAM data is untouched
+    /// (blocked for the last active platform admin)
+    #[command(alias = "revoke")]
+    Remove {
+        /// Email address
+        email: String,
+    },
+    /// List all users with role and status
     List,
 }
 

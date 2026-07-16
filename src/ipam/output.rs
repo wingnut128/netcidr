@@ -559,38 +559,46 @@ impl CsvOutput for HostnamePointer {
 }
 
 // ---------------------------------------------------------------------------
-// Role assignments
+// Users directory
 // ---------------------------------------------------------------------------
 
-impl TextOutput for RoleAssignment {
+impl TextOutput for UserRecord {
     fn to_text(&self) -> String {
         let mut out = String::new();
-        writeln!(out, "Role Assignment").unwrap();
-        writeln!(out, "===============").unwrap();
-        writeln!(out, "Email: {}", self.email).unwrap();
-        writeln!(out, "Role:  {}", self.role.as_str()).unwrap();
+        writeln!(out, "User").unwrap();
+        writeln!(out, "====").unwrap();
+        writeln!(out, "Email:  {}", self.email).unwrap();
+        writeln!(out, "Role:   {}", self.role.as_str()).unwrap();
+        writeln!(out, "Status: {}", self.status.as_str()).unwrap();
         if let Some(ref by) = self.created_by {
-            writeln!(out, "By:    {}", by).unwrap();
+            writeln!(out, "By:     {}", by).unwrap();
         }
         out
     }
 }
 
-impl TextOutput for RoleAssignmentList {
+impl TextOutput for UserList {
     fn to_text(&self) -> String {
         let mut out = String::new();
-        writeln!(out, "Role Assignments ({} entries)", self.count).unwrap();
-        writeln!(out, "================================").unwrap();
+        writeln!(out, "Users ({} entries)", self.count).unwrap();
+        writeln!(out, "==================").unwrap();
         for u in &self.users {
-            writeln!(out, "  {:<40}  {}", u.email, u.role.as_str()).unwrap();
+            writeln!(
+                out,
+                "  {:<40}  {:<14}  {}",
+                u.email,
+                u.role.as_str(),
+                u.status.as_str()
+            )
+            .unwrap();
         }
         out
     }
 }
 
-impl CsvOutput for RoleAssignment {
+impl CsvOutput for UserRecord {
     fn to_csv(&self) -> Result<String> {
-        RoleAssignmentList {
+        UserList {
             count: 1,
             users: vec![self.clone()],
         }
@@ -598,15 +606,23 @@ impl CsvOutput for RoleAssignment {
     }
 }
 
-impl CsvOutput for RoleAssignmentList {
+impl CsvOutput for UserList {
     fn to_csv(&self) -> Result<String> {
         let mut wtr = csv::Writer::from_writer(Vec::new());
-        wtr.write_record(["email", "role", "created_at", "updated_at", "created_by"])
-            .map_err(csv_err)?;
+        wtr.write_record([
+            "email",
+            "role",
+            "status",
+            "created_at",
+            "updated_at",
+            "created_by",
+        ])
+        .map_err(csv_err)?;
         for u in &self.users {
             wtr.write_record([
                 &u.email,
                 u.role.as_str(),
+                u.status.as_str(),
                 &u.created_at,
                 &u.updated_at,
                 u.created_by.as_deref().unwrap_or(""),
