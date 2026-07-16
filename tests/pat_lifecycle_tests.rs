@@ -56,7 +56,7 @@ async fn lifecycle_mints_lists_and_verifies_for_owner() {
     let listed = lifecycle.list_for_owner(&owner()).await.unwrap();
     assert_eq!(listed, vec![minted.summary.clone()]);
 
-    let verified = pat_lifecycle::verify_bearer_token(&store, &pepper, &[], &minted.plaintext)
+    let verified = pat_lifecycle::verify_bearer_token(&store, &pepper, false, &minted.plaintext)
         .await
         .unwrap();
     assert_eq!(verified.pat_id, minted.summary.id);
@@ -87,7 +87,7 @@ async fn verify_bearer_token_surfaces_stored_role_for_clamp() {
         .await
         .unwrap();
 
-    let verified = pat_lifecycle::verify_bearer_token(&store, &pepper, &[], &minted.plaintext)
+    let verified = pat_lifecycle::verify_bearer_token(&store, &pepper, false, &minted.plaintext)
         .await
         .unwrap();
     assert_eq!(verified.role, Role::Reader);
@@ -158,20 +158,17 @@ async fn lifecycle_verify_collapses_shape_miss_and_allowlist_failures() {
         .unwrap();
 
     assert_eq!(
-        pat_lifecycle::verify_bearer_token(&store, &pepper, &[], "ncdr_pat_too_short")
+        pat_lifecycle::verify_bearer_token(&store, &pepper, false, "ncdr_pat_too_short")
             .await
             .unwrap_err(),
         VerifyPatError::Unauthorized
     );
+    // Closed mode (enforce_allowlist) with no active user row for the
+    // owner: the directory check rejects with the same uniform error.
     assert_eq!(
-        pat_lifecycle::verify_bearer_token(
-            &store,
-            &pepper,
-            &["someone@example.com".to_string()],
-            &minted.plaintext,
-        )
-        .await
-        .unwrap_err(),
+        pat_lifecycle::verify_bearer_token(&store, &pepper, true, &minted.plaintext)
+            .await
+            .unwrap_err(),
         VerifyPatError::Unauthorized
     );
 }

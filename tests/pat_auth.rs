@@ -174,9 +174,49 @@ async fn static_bearer_token_still_works_alongside_pats() {
 
 #[tokio::test]
 async fn pat_owner_outside_allowlist_is_unauthorized() {
-    // Allowlist explicitly excludes the PAT owner — middleware must reject
-    // even though the hash matches and the row is unrevoked / unexpired.
+    // Closed mode (non-empty env allowlist) with no active user row for
+    // the PAT owner — middleware must reject even though the hash matches
+    // and the row is unrevoked / unexpired (ADR-0006: the users directory
+    // is the allowlist).
     let h = build_harness(vec!["someone-else@example.com".to_string()]).await;
+    let (token, _id) = mint_pat(&h.store, &h.pepper, &future_rfc3339(), OWNER_EMAIL).await;
+    let (status, _) = req(&h.router, "/ipam/cidr-blocks", &token).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn pat_of_allowlisted_owner_authenticates_in_closed_mode() {
+    // Closed mode with an ACTIVE user row for the owner: the PAT works.
+    let h = build_harness(vec![OWNER_EMAIL.to_string()]).await;
+    h.store
+        .upsert_user(
+            OWNER_EMAIL,
+            netcidr::auth::Role::Admin,
+            netcidr::ipam::models::UserStatus::Active,
+            "test",
+        )
+        .await
+        .unwrap();
+    let (token, _id) = mint_pat(&h.store, &h.pepper, &future_rfc3339(), OWNER_EMAIL).await;
+    let (status, body) = req(&h.router, "/ipam/cidr-blocks", &token).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+}
+
+#[tokio::test]
+async fn pat_of_disabled_owner_is_unauthorized_even_in_open_mode() {
+    // Disabling a user kills their PATs immediately — even in open mode
+    // (empty env allowlist), where unknown users are admitted. An explicit
+    // deny beats the open default.
+    let h = build_harness(Vec::new()).await;
+    h.store
+        .upsert_user(
+            OWNER_EMAIL,
+            netcidr::auth::Role::Admin,
+            netcidr::ipam::models::UserStatus::Disabled,
+            "test",
+        )
+        .await
+        .unwrap();
     let (token, _id) = mint_pat(&h.store, &h.pepper, &future_rfc3339(), OWNER_EMAIL).await;
     let (status, _) = req(&h.router, "/ipam/cidr-blocks", &token).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);

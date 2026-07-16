@@ -121,6 +121,10 @@ async fn cli_create_use_list_revoke_lifecycle() {
         ..Default::default()
     };
 
+    // Mirror production startup: seed the users directory from the env
+    // lists so the allowlisted user has an active row (ADR-0006).
+    netcidr::ipam::bootstrap::seed_users(&store, &server).await;
+
     let router = create_router(RouterConfig {
         server,
         ipam_ops: Some(ops),
