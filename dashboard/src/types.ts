@@ -176,22 +176,26 @@ export interface FeaturesResponse {
   swagger: boolean;
 }
 
-// Role-email management (admin) — mirrors src/auth.rs `Role` and
-// src/ipam/models.rs `RoleAssignment` / `RoleAssignmentList`.
+// Users directory (platform admin) — mirrors src/auth.rs `Role` and
+// src/ipam/models.rs `UserRecord` / `UserList` / `UserStatus` (ADR-0006).
 
-export type Role = "reader" | "allocator" | "admin";
+export type Role = "reader" | "allocator" | "admin" | "platform_admin";
 
-export interface RoleAssignment {
+export type UserStatus = "active" | "disabled";
+
+export interface UserRecord {
   email: string;
   role: Role;
+  status: UserStatus;
   created_at: string;
   updated_at: string;
-  /** Admin who made the grant, or "bootstrap" for env-seeded rows. */
+  /** Platform admin who created the row, "cli", or "bootstrap" for seeded rows. */
   created_by?: string;
+  updated_by?: string;
 }
 
-export interface RoleAssignmentList {
-  users: RoleAssignment[];
+export interface UserList {
+  users: UserRecord[];
   count: number;
 }
 

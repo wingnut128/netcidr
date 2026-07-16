@@ -1,4 +1,6 @@
-mod migrations;
+/// Public so upgrade-rehearsal tests can rebuild a previous release's
+/// schema by applying a prefix of the migration list.
+pub mod migrations;
 
 use async_trait::async_trait;
 use chrono::Utc;

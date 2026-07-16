@@ -6,9 +6,9 @@ We actively support and provide security updates for the following versions:
 
 | Version | Supported          | Notes                                    |
 | ------- | ------------------ | ---------------------------------------- |
-| 0.27.x  | :white_check_mark: | Current stable release (recommended)     |
-| 0.26.x  | :white_check_mark: | Supported                                |
-| < 0.26  | :x:                | No longer supported                      |
+| 0.28.x  | :white_check_mark: | Current stable release (recommended)     |
+| 0.27.x  | :white_check_mark: | Supported                                |
+| < 0.27  | :x:                | No longer supported                      |
 
 ## Reporting a Vulnerability
 

@@ -68,13 +68,12 @@ export function Sidebar({
       ? [{ to: "/tokens", label: "Tokens" }]
       : []),
   ];
-  const adminItems = auth.isAdmin
-    ? [
-        { to: "/admin/allowlist", label: "Allowlist" },
-        { to: "/admin/users", label: "Users" },
-        { to: "/admin/activity", label: "Activity" },
-      ]
-    : [];
+  // Users (the directory) is platform-admin-only; Activity stays visible
+  // to tenant-space admins.
+  const adminItems = [
+    ...(auth.isPlatformAdmin ? [{ to: "/admin/users", label: "Users" }] : []),
+    ...(auth.isAdmin ? [{ to: "/admin/activity", label: "Activity" }] : []),
+  ];
 
   return (
     <nav

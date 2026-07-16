@@ -12,6 +12,11 @@ interface AuthGateProps {
    * children — clearest signal that this surface is admin-only.
    */
   requireAdmin?: boolean;
+  /**
+   * If true, require the platform_admin role (user-directory
+   * management). Tenant-space admins see the RequestAccessCard.
+   */
+  requirePlatformAdmin?: boolean;
 }
 
 /**
@@ -23,7 +28,11 @@ interface AuthGateProps {
  *   - authenticated, requireAdmin && !isAdmin → RequestAccessCard
  *   - authenticated, allowed → children
  */
-export function AuthGate({ children, requireAdmin = false }: AuthGateProps) {
+export function AuthGate({
+  children,
+  requireAdmin = false,
+  requirePlatformAdmin = false,
+}: AuthGateProps) {
   const auth = useAuth();
 
   if (auth.status === "loading") {
@@ -43,6 +52,10 @@ export function AuthGate({ children, requireAdmin = false }: AuthGateProps) {
   }
 
   if (requireAdmin && !auth.isAdmin) {
+    return <RequestAccessCard adminEmail={auth.adminContact ?? undefined} />;
+  }
+
+  if (requirePlatformAdmin && !auth.isPlatformAdmin) {
     return <RequestAccessCard adminEmail={auth.adminContact ?? undefined} />;
   }
 

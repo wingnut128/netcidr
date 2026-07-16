@@ -17,7 +17,7 @@ A fast IPv4 and IPv6 subnet calculator written in Rust. Available as a CLI tool,
 - **Batch processing**: process multiple CIDRs via positional arguments, `--stdin`, or the `POST /batch` API endpoint
 - **Multiple output formats**: JSON (default), plain text, CSV, and YAML
 - **File output**: write results directly to a file
-- **Web dashboard**: Full SPA at `http://localhost:8080/` with subnet calculator, splitter, contains check, summarize, from-range, IPAM dashboard, subnet visualizer, a **Hostnames** page (record IP↔hostname pointers and view their change history), an admin-only **Users** page (grant/revoke role-email access without a redeploy) and an admin-only **Activity** view (audited mutations grouped by day, filterable by user) — served automatically when running `netcidr serve`. Light/dark themes (toggle with ⌘+J / Ctrl+J), and Google sign-in gates the IPAM tab when the server runs in OIDC mode (set `VITE_OAUTH_WEB_CLIENT_ID` when building the dashboard — see `dashboard/.env.example`).
+- **Web dashboard**: Full SPA at `http://localhost:8080/` with subnet calculator, splitter, contains check, summarize, from-range, IPAM dashboard, subnet visualizer, a **Hostnames** page (record IP↔hostname pointers and view their change history), a platform-admin-only **Users** page (add/disable/remove users and change roles at runtime, no redeploy) and an admin-only **Activity** view (audited mutations grouped by day, filterable by user) — served automatically when running `netcidr serve`. Light/dark themes (toggle with ⌘+J / Ctrl+J), and Google sign-in gates the IPAM tab when the server runs in OIDC mode (set `VITE_OAUTH_WEB_CLIENT_ID` when building the dashboard — see `dashboard/.env.example`).
 - **HTTP API**: REST endpoints for all calculations
 - **OpenAPI documentation**: Machine-readable API specification for easy integration with tools like Swagger Editor, Postman, and Insomnia
 - **MCP server**: [Model Context Protocol](https://modelcontextprotocol.io) server for AI assistant integration (Claude, etc.) via Streamable HTTP or stdio
@@ -769,37 +769,45 @@ netcidr token revoke <id>
 
 The `--api-url` flag overrides `NETCIDR_API_URL` per-invocation. Output respects the global `--format json|text|csv|yaml`.
 
-**Per-token roles.** A PAT carries its own role independent of its owner's role. The minter can choose `--role reader|allocator|admin` to narrow what the token can do — handy for `--role reader` CI scripts that only need read access. The server clamps in two places: at mint time, the requested role is silently lowered to the minter's own role (an allocator asking for `admin` gets `allocator`); at every use, the auth path takes `min(email_resolved_role, stored_pat_role)`, so the token can never widen privileges and a later demotion of the owner's email automatically narrows every existing PAT.
+**Per-token roles.** A PAT carries its own role independent of its owner's role. The minter can choose `--role reader|allocator|admin` to narrow what the token can do — handy for `--role reader` CI scripts that only need read access. The server clamps in two places: at mint time, the requested role is silently lowered to the minter's own role **and never above `admin`** — `platform_admin` is not mintable, so user-directory management always requires an interactive session (ADR-0006); at every use, the auth path takes `min(email_resolved_role, stored_pat_role)`, so the token can never widen privileges and a later demotion of the owner's email automatically narrows every existing PAT. Disabling a user invalidates their PATs immediately.
 
 **Authentication for `netcidr token` itself is OIDC-only** — PATs cannot mint or revoke other PATs (closes the privilege-escalation path). Once a PAT exists, you can use it as `NETCIDR_API_TOKEN` against `/ipam/*` endpoints elsewhere; the server distinguishes PAT-authed vs OIDC-authed operations in `audit_log` (`auth_method` + `pat_id` columns).
 
-### Roles and Authorization
+### Users, Roles, and Authorization
 
-Every IPAM endpoint declares a minimum role tier — `Reader`, `Allocator`, or `Admin` (ordered low → high). The role is derived from the authenticated principal's email at request time and checked at the handler boundary.
+Who may sign in and what they may do both live in one **users directory** (the `users` table): one row per user with an email, a role, and a status (`active`/`disabled`). "Allowlisted" simply means an active row exists. Disabling a user locks out their sessions **and** personal access tokens immediately; their IPAM data is untouched and re-enabling restores access. See ADR-0006.
 
-| Role | Permitted IPAM actions |
-|------|------------------------|
-| `Reader` | List/get CIDR blocks and allocations, free-blocks report, utilization, find-ip, find-resource, batch summary |
-| `Allocator` | All `Reader` actions + allocate/release/update allocations, set tags, batch allocate/release |
-| `Admin` | All `Allocator` actions + create/delete CIDR blocks, query audit log |
+Every IPAM endpoint declares a minimum role tier — `Reader`, `Allocator`, `Admin`, or `Platform Admin` (ordered low → high). The role is checked at the handler boundary.
 
-Configure the *initial* role membership via env vars (comma-separated emails) or the matching `oidc_*_emails` keys in `netcidr.toml`:
+| Role | Permitted actions |
+|------|-------------------|
+| `reader` | List/get CIDR blocks and allocations, free-blocks report, utilization, find-ip, find-resource, batch summary |
+| `allocator` | All `reader` actions + allocate/release/update allocations, set tags, batch allocate/release |
+| `admin` | All `allocator` actions + create/delete CIDR blocks, query audit log — the **tenant-space admin** |
+| `platform_admin` | All `admin` actions + manage the users directory (`/admin/users`) — the **platform owner** |
+
+Manage users at runtime with `netcidr admin user add/disable/enable/remove/list`, the `/admin/users` API, or the platform-admin-only **Users** page in the dashboard — no redeploy. Safety rails: the last active platform admin cannot be removed, disabled, or demoted, and you cannot do any of those to yourself (the CLI, run against the DB directly, bypasses only the self-rule — it is the lockout-recovery path).
+
+**Env vars are a one-shot first-boot seed (when IPAM is enabled):**
 
 ```bash
-export NETCIDR_ADMIN_EMAILS="ops@example.com,security@example.com"
-export NETCIDR_ALLOCATOR_EMAILS="dev@example.com,ci-bot@example.com"
-export NETCIDR_READER_EMAILS="auditor@example.com"
+export NETCIDR_ADMIN_EMAILS="ops@example.com"          # seeds platform_admin
+export NETCIDR_ALLOCATOR_EMAILS="dev@example.com"      # seeds allocator
+export NETCIDR_READER_EMAILS="auditor@example.com"     # seeds reader
+export NETCIDR_OIDC_ALLOWED_EMAILS="viewer@example.com" # remaining entries seed reader
 ```
 
-**Env vars are a bootstrap seed (when IPAM is enabled).** On first start, if the role table is empty, these lists seed it; once it has any rows the env lists are ignored and the database is the source of truth. After bootstrap, manage roles at runtime with `netcidr admin user grant/revoke/list`, the `/admin/users` API, or the admin-only **Users** page in the dashboard (no redeploy). See ADR-0003. (Bearer-only / non-IPAM deployments with no store keep resolving roles directly from these env lists.)
+The seed runs exactly once per database (tracked in `bootstrap_markers`); after that the env lists are ignored and the database is the source of truth. An email in a role list but missing from a non-empty `NETCIDR_OIDC_ALLOWED_EMAILS` seeds `disabled` (it had no access before). Bearer-only / non-IPAM deployments with no store keep resolving both the allowlist and roles directly from these env lists.
 
-**Precedence:** admin > allocator > reader (an email listed in `NETCIDR_ADMIN_EMAILS` is always Admin even if also in the others).
+**Open vs closed mode:** an empty `NETCIDR_OIDC_ALLOWED_EMAILS` keeps today's open behavior — any verified principal may sign in (role defaults to `reader`); a disabled directory row still denies. With the allowlist configured, only users with an active directory row get in.
 
-**Default policy: least privilege.** Any authenticated OIDC user whose email is *not* in any role list resolves to `Reader` (read-only). Operators must explicitly grant write or admin privileges by adding emails to `NETCIDR_ALLOCATOR_EMAILS` or `NETCIDR_ADMIN_EMAILS`.
+**Default policy: least privilege.** Any authenticated OIDC user without a directory row resolves to `reader` (and, in closed mode, cannot sign in at all until added).
 
-**Bearer-token mode keeps Admin.** Static `Bearer` auth (`NETCIDR_AUTH_MODE=bearer`) carries no identity beyond the shared `NETCIDR_API_TOKEN`. A bearer-authed caller resolves to `Admin` regardless of the role lists. The bearer token is treated as an operator-owned service credential. If you need a read-only service token, use OIDC + a reader-role email instead.
+**Bearer-token mode keeps the top tier.** Static `Bearer` auth (`NETCIDR_AUTH_MODE=bearer`) carries no identity beyond the shared `NETCIDR_API_TOKEN` and resolves to `platform_admin` — it is treated as an operator-owned service credential. If you need a read-only service token, use OIDC + a reader-role user instead.
 
-**Migrating from a pre-RBAC release.** Earlier releases granted every authenticated user full access. After upgrading, list every user who needs write access in `NETCIDR_ALLOCATOR_EMAILS` (or `NETCIDR_ADMIN_EMAILS` for full admin) *before* restarting the server, otherwise they will hit 403 on the next write call. Bearer-mode automation needs no change.
+**PATs are capped at `admin`.** A mint request for a `platform_admin` token is clamped — user-directory management is never available to a long-lived token.
+
+**Upgrading from a pre-directory release:** existing `admin` role rows are promoted to `platform_admin` by the migration (they held user-management power already), and allowlist-only users are topped up as active readers on the first boot. Keep the env vars set through the upgrade; afterwards they are inert.
 
 **403 contract:** denied requests get `{"error":"Forbidden"}` with HTTP 403. The required and actual roles are *not* returned to the client; they're written to the server log at WARN with the actor's email so an operator can correlate denials without exposing the access matrix to callers.
 
@@ -884,10 +892,14 @@ netcidr ipam audit --limit 10
 netcidr admin audit --user alice@example.com
 netcidr admin audit --pat-id <pat-id> --action create_cidr_block
 
-# Admin: manage role-email assignments (reader/allocator/admin)
-netcidr admin user grant alice@example.com --role allocator
-netcidr admin user list
-netcidr admin user revoke alice@example.com   # blocked for the last admin / your own admin
+# Admin: manage the users directory (who may sign in, at which role)
+netcidr admin user add alice@example.com --role allocator
+netcidr admin user list                        # shows role + status
+netcidr admin user disable alice@example.com   # locks out sessions + PATs; data kept
+netcidr admin user enable alice@example.com    # restores access at the stored role
+netcidr admin user remove alice@example.com    # blocked for the last active platform admin
+# Recovery: run against the DB host to restore a platform admin
+netcidr admin user add you@example.com --role platform_admin
 
 # Hostname pointers — map IPs to hostnames with full change history
 netcidr ipam hostname set 10.0.1.5 web-01.example.com --notes "primary"
@@ -943,9 +955,9 @@ netcidr serve --ipam-enabled --ipam-db /path/to/ipam.db
 | `/ipam/hostnames` | `DELETE` | Delete a hostname pointer (`?ip=&hostname=`) |
 | `/ipam/hostnames/history` | `GET` | Hostname pointer change history (`?ip=&hostname=`) |
 | `/ipam/audit` | `GET` | Query audit log (filterable) |
-| `/admin/users` | `GET` | List role-email assignments (Admin) |
-| `/admin/users` | `POST` | Grant/update a role (Admin) |
-| `/admin/users` | `DELETE` | Revoke a role (`?email=`, Admin; last-admin guarded) |
+| `/admin/users` | `GET` | List the users directory: email, role, status (Platform Admin) |
+| `/admin/users` | `POST` | Add or update a user `{email, role, status}` (Platform Admin) |
+| `/admin/users` | `DELETE` | Remove a user (`?email=`, Platform Admin; last-platform-admin guarded) |
 
 **Pagination:** the list endpoints (`/ipam/cidr-blocks`, `/ipam/cidr-blocks/{id}/allocations`, `/ipam/hostnames`, `/ipam/hostnames/history`) accept `?limit=&offset=`. `limit` defaults to 100 and is capped at 1000; `offset` defaults to 0. The audit endpoint (`/ipam/audit`) likewise defaults and caps its `limit`.
 
