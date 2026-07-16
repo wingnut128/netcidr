@@ -78,13 +78,18 @@ impl AuthMethod {
     clap::ValueEnum,
 )]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
-#[serde(rename_all = "lowercase")]
-#[clap(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
+#[clap(rename_all = "snake_case")]
 pub enum Role {
     #[default]
     Reader,
     Allocator,
     Admin,
+    /// Platform owner: everything `Admin` can do, plus user-directory
+    /// management (`/admin/users`). PATs are capped at `Admin`, so this
+    /// tier is only reachable via an interactive OIDC session (or the
+    /// bearer-mode carve-out / CLI). See ADR-0006.
+    PlatformAdmin,
 }
 
 impl Role {
@@ -93,6 +98,7 @@ impl Role {
             Role::Reader => "reader",
             Role::Allocator => "allocator",
             Role::Admin => "admin",
+            Role::PlatformAdmin => "platform_admin",
         }
     }
 }
@@ -105,8 +111,9 @@ impl std::str::FromStr for Role {
             "reader" => Ok(Role::Reader),
             "allocator" => Ok(Role::Allocator),
             "admin" => Ok(Role::Admin),
+            "platform_admin" => Ok(Role::PlatformAdmin),
             other => Err(crate::error::NetcidrError::InvalidInput(format!(
-                "invalid role {other:?}: expected one of reader|allocator|admin"
+                "invalid role {other:?}: expected one of reader|allocator|admin|platform_admin"
             ))),
         }
     }
