@@ -7,26 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0](https://github.com/wingnut128/netcidr/compare/v0.27.2...v0.28.0) - 2026-07-16
+
 ### Added
 
-- *(auth)* `NETCIDR_ALLOWLIST_MODE=open|closed` (config: `allowlist_mode`) pins the sign-in mode explicitly. Unset keeps the derived behavior (empty allowlist = open). Pinning `closed` lets deployments delete the now-inert email env vars after the first-boot seed without silently flipping open; invalid values fail startup ([#300](https://github.com/wingnut128/netcidr/issues/300), PR5)
+- *(auth)* `NETCIDR_ALLOWLIST_MODE=open|closed` (config: `allowlist_mode`) pins the sign-in mode explicitly. Unset keeps the derived behavior (empty allowlist = open). Pinning `closed` lets deployments delete the now-inert email env vars after the first-boot seed without silently flipping open; invalid values fail startup ([#300](https://github.com/wingnut128/netcidr/issues/300), [#306](https://github.com/wingnut128/netcidr/pull/306))
+- *(ipam)* unified users directory schema (migration 013): a `users` table (email, role, status, audit fields) that replaces both the env allowlist and `role_assignments`; new `platform_admin` role tier above `admin`; store-layer CRUD + marker-guarded one-shot bootstrap seeding on both SQLite and Postgres backends. Existing `admin` role rows are promoted to `platform_admin` in-migration; `role_assignments` is kept frozen for binary-rollback safety ([#300](https://github.com/wingnut128/netcidr/issues/300), [#301](https://github.com/wingnut128/netcidr/pull/301))
 
 ### Removed
 
-- **BREAKING (dashboard)**: the read-only Allowlist page is gone; the platform-admin-only **Users** page is the single directory surface (add/disable/enable/remove users, change roles, status badges, guard errors inline). Sidebar "Users" is gated on the new `/me.is_platform_admin` ([#300](https://github.com/wingnut128/netcidr/issues/300), PR4)
+- **BREAKING (dashboard)**: the read-only Allowlist page is gone; the platform-admin-only **Users** page is the single directory surface (add/disable/enable/remove users, change roles, status badges, guard errors inline). Sidebar "Users" is gated on the new `/me.is_platform_admin` ([#300](https://github.com/wingnut128/netcidr/issues/300), [#305](https://github.com/wingnut128/netcidr/pull/305))
 
 ### Changed
 
-- **BREAKING (api)**: `/admin/users` now requires the `platform_admin` role (tenant-space `admin` gets 403) and speaks the users-directory DTOs — `GET` returns users with `role` + `status`, `POST` upserts `{email, role, status}`, `DELETE` hard-removes. `GET /admin/allowlist` is removed. CLI: `netcidr admin user add|disable|enable|remove|list` (old `grant`/`revoke` kept as aliases) ([#300](https://github.com/wingnut128/netcidr/issues/300), PR3)
-- **BREAKING (auth)**: the OIDC email allowlist is now backed by the `users` table — a disabled user row denies access (sessions and PATs) immediately, even in open mode; in closed mode an active row must exist. `NETCIDR_OIDC_ALLOWED_EMAILS` and the role-list env vars are now a one-shot first-boot seed (`NETCIDR_ADMIN_EMAILS` seeds `platform_admin`); after that the DB is the source of truth. Static-bearer principals resolve to `platform_admin` (was `admin`) so bearer-mode deployments keep user management. `/me` gains `is_platform_admin`; `admin_contact` is now the first active platform admin from the DB ([#300](https://github.com/wingnut128/netcidr/issues/300), PR2)
+- **BREAKING (api)**: `/admin/users` now requires the `platform_admin` role (tenant-space `admin` gets 403) and speaks the users-directory DTOs — `GET` returns users with `role` + `status`, `POST` upserts `{email, role, status}`, `DELETE` hard-removes. `GET /admin/allowlist` is removed. CLI: `netcidr admin user add|disable|enable|remove|list` (old `grant`/`revoke` kept as aliases) ([#300](https://github.com/wingnut128/netcidr/issues/300), [#304](https://github.com/wingnut128/netcidr/pull/304))
+- **BREAKING (auth)**: the OIDC email allowlist is now backed by the `users` table — a disabled user row denies access (sessions and PATs) immediately, even in open mode; in closed mode an active row must exist. `NETCIDR_OIDC_ALLOWED_EMAILS` and the role-list env vars are now a one-shot first-boot seed (`NETCIDR_ADMIN_EMAILS` seeds `platform_admin`); after that the DB is the source of truth. Static-bearer principals resolve to `platform_admin` (was `admin`) so bearer-mode deployments keep user management. `/me` gains `is_platform_admin`; `admin_contact` is now the first active platform admin from the DB ([#300](https://github.com/wingnut128/netcidr/issues/300), [#303](https://github.com/wingnut128/netcidr/pull/303))
 
 ### Security
 
-- *(pat)* PATs are capped at the `admin` tier: mint requests for `platform_admin` clamp to `admin`, so user-directory management is never available to a long-lived token; disabling a user immediately invalidates their PATs ([#300](https://github.com/wingnut128/netcidr/issues/300), PR2)
-
-### Added
-
-- *(ipam)* unified users directory schema (migration 013): a `users` table (email, role, status, audit fields) that will replace both the env allowlist and `role_assignments`; new `platform_admin` role tier above `admin`; store-layer CRUD + marker-guarded one-shot bootstrap seeding on both SQLite and Postgres backends. Existing `admin` role rows are promoted to `platform_admin` in-migration; `role_assignments` is kept frozen for binary-rollback safety. No behavior change yet — the auth path still reads the env allowlist and `role_assignments` ([#300](https://github.com/wingnut128/netcidr/issues/300), PR1)
+- *(pat)* PATs are capped at the `admin` tier: mint requests for `platform_admin` clamp to `admin`, so user-directory management is never available to a long-lived token; disabling a user immediately invalidates their PATs ([#300](https://github.com/wingnut128/netcidr/issues/300), [#303](https://github.com/wingnut128/netcidr/pull/303))
 
 ## [0.27.2](https://github.com/wingnut128/netcidr/compare/v0.27.1...v0.27.2) - 2026-07-13
 

@@ -1,6 +1,6 @@
 [package]
 name = "netcidr"
-version = "0.27.2"
+version = "0.28.0"
 edition = "2024"
 license = "MIT"
 description = "A fast IPv4 and IPv6 subnet calculator CLI and API"
