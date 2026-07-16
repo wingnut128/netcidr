@@ -36,10 +36,25 @@ async fn req(
     uri: &str,
     body: Option<&str>,
 ) -> (StatusCode, serde_json::Value) {
-    let builder = Request::builder()
+    req_as(app, method, uri, body, None).await
+}
+
+/// Like [`req`] but with an explicit `X-Test-Role` (None = harness default,
+/// which is `admin` — the tenant-space tier).
+async fn req_as(
+    app: axum::Router,
+    method: &str,
+    uri: &str,
+    body: Option<&str>,
+    role: Option<&str>,
+) -> (StatusCode, serde_json::Value) {
+    let mut builder = Request::builder()
         .method(method)
         .uri(uri)
         .header(TENANT_HEADER, TEST_TENANT);
+    if let Some(r) = role {
+        builder = builder.header(common::ROLE_HEADER, r);
+    }
     let req = if let Some(b) = body {
         builder
             .header(header::CONTENT_TYPE, "application/json")
@@ -734,87 +749,186 @@ async fn test_ipam_hostname_invalid_rejected() {
     assert!(json["error"].as_str().unwrap().contains("hostname"));
 }
 
-// ── Admin role-email management ────────────────────────────────────────
+// ── Admin users directory (ADR-0006) ───────────────────────────────────
+
+const PA: Option<&str> = Some("platform_admin");
 
 #[tokio::test]
-async fn test_admin_users_grant_list_revoke() {
+async fn test_admin_users_upsert_list_disable_delete() {
     let app = ipam_app().await;
 
-    // Grant a reader and an admin.
-    let (status, json) = req(
+    // Add a reader (default status active) and a platform admin.
+    let (status, json) = req_as(
         app.clone(),
         "POST",
         "/admin/users",
         Some(r#"{"email":"alice@example.com","role":"reader"}"#),
+        PA,
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::OK, "{json}");
     assert_eq!(json["email"], "alice@example.com");
     assert_eq!(json["role"], "reader");
+    assert_eq!(json["status"], "active");
 
-    let (status, _) = req(
+    let (status, _) = req_as(
         app.clone(),
         "POST",
         "/admin/users",
-        Some(r#"{"email":"bob@example.com","role":"admin"}"#),
+        Some(r#"{"email":"boss@example.com","role":"platform_admin"}"#),
+        PA,
     )
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    // List shows both.
-    let (status, json) = req(app.clone(), "GET", "/admin/users", None).await;
+    // List shows both with role + status.
+    let (status, json) = req_as(app.clone(), "GET", "/admin/users", None, PA).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["count"], 2);
+    assert_eq!(json["users"][0]["status"], "active");
 
-    // Revoke the reader.
-    let (status, _) = req(
+    // Disable alice via upsert.
+    let (status, json) = req_as(
+        app.clone(),
+        "POST",
+        "/admin/users",
+        Some(r#"{"email":"alice@example.com","role":"reader","status":"disabled"}"#),
+        PA,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["status"], "disabled");
+
+    // Remove alice.
+    let (status, _) = req_as(
         app.clone(),
         "DELETE",
         "/admin/users?email=alice@example.com",
         None,
+        PA,
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
-    let (status, json) = req(app, "GET", "/admin/users", None).await;
+    // Delete-miss is a 404.
+    let (status, _) = req_as(
+        app.clone(),
+        "DELETE",
+        "/admin/users?email=alice@example.com",
+        None,
+        PA,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (status, json) = req_as(app, "GET", "/admin/users", None, PA).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["count"], 1);
 }
 
+/// The partition test: a tenant-space Admin (the harness default role) can
+/// no longer touch the user directory — every verb 403s.
 #[tokio::test]
-async fn test_admin_users_last_admin_guard() {
+async fn test_admin_users_requires_platform_admin() {
     let app = ipam_app().await;
 
-    // One admin in the table.
+    let (status, _) = req(app.clone(), "GET", "/admin/users", None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
     let (status, _) = req(
         app.clone(),
         "POST",
         "/admin/users",
-        Some(r#"{"email":"solo@example.com","role":"admin"}"#),
+        Some(r#"{"email":"sneaky@example.com","role":"platform_admin"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, _) = req(app.clone(), "DELETE", "/admin/users?email=x@y.z", None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // …while tenant-admin data operations still work for the same caller.
+    let (status, _) = req(
+        app,
+        "POST",
+        "/ipam/cidr-blocks",
+        Some(r#"{"cidr":"10.0.0.0/8","name":"still-admin"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn test_admin_users_last_platform_admin_guard() {
+    let app = ipam_app().await;
+
+    // One platform admin in the table.
+    let (status, _) = req_as(
+        app.clone(),
+        "POST",
+        "/admin/users",
+        Some(r#"{"email":"solo@example.com","role":"platform_admin"}"#),
+        PA,
     )
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    // Revoking the only admin is refused (409).
-    let (status, json) = req(app, "DELETE", "/admin/users?email=solo@example.com", None).await;
+    // Deleting the only platform admin is refused (409)…
+    let (status, json) = req_as(
+        app.clone(),
+        "DELETE",
+        "/admin/users?email=solo@example.com",
+        None,
+        PA,
+    )
+    .await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert!(
         json["error"]
             .as_str()
             .unwrap()
-            .contains("last remaining admin")
+            .contains("last active platform admin")
     );
+
+    // …as is disabling or demoting them via upsert.
+    let (status, _) = req_as(
+        app.clone(),
+        "POST",
+        "/admin/users",
+        Some(r#"{"email":"solo@example.com","role":"platform_admin","status":"disabled"}"#),
+        PA,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let (status, _) = req_as(
+        app,
+        "POST",
+        "/admin/users",
+        Some(r#"{"email":"solo@example.com","role":"admin"}"#),
+        PA,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
 }
 
 #[tokio::test]
 async fn test_admin_users_invalid_email_rejected() {
     let app = ipam_app().await;
-    let (status, _) = req(
+    let (status, _) = req_as(
         app,
         "POST",
         "/admin/users",
         Some(r#"{"email":"notanemail","role":"reader"}"#),
+        PA,
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// The removed read-only allowlist endpoint stays removed.
+#[tokio::test]
+async fn test_admin_allowlist_endpoint_is_gone() {
+    let app = ipam_app().await;
+    let (status, _) = req_as(app, "GET", "/admin/allowlist", None, PA).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }

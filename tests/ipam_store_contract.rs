@@ -1377,59 +1377,6 @@ mod sqlite_contract {
     store_contract_tests!(sqlite_store);
 }
 
-/// Role assignments: upsert/get/list/delete, admin counting, and seed-if-empty.
-#[tokio::test]
-async fn role_assignments_crud_and_seed() {
-    use netcidr::auth::Role;
-    let store = sqlite_store().await;
-
-    // Seed-if-empty populates from the given pairs on an empty table.
-    let seeded = store
-        .seed_role_assignments_if_empty(&[
-            ("root@x".to_string(), Role::Admin),
-            ("dev@x".to_string(), Role::Allocator),
-        ])
-        .await
-        .unwrap();
-    assert_eq!(seeded, 2);
-    // Second seed is a no-op (table no longer empty).
-    let again = store
-        .seed_role_assignments_if_empty(&[("late@x".to_string(), Role::Admin)])
-        .await
-        .unwrap();
-    assert_eq!(again, 0);
-
-    // Resolution + case-insensitivity.
-    assert_eq!(
-        store.get_role_for_email("root@x").await.unwrap(),
-        Some(Role::Admin)
-    );
-    assert_eq!(
-        store.get_role_for_email("DEV@X").await.unwrap(),
-        Some(Role::Allocator)
-    );
-    assert_eq!(store.get_role_for_email("nobody@x").await.unwrap(), None);
-
-    // Upsert changes a role in place.
-    store
-        .upsert_role_assignment("dev@x", Role::Admin, "root@x")
-        .await
-        .unwrap();
-    assert_eq!(
-        store.get_role_for_email("dev@x").await.unwrap(),
-        Some(Role::Admin)
-    );
-    assert_eq!(store.count_admin_roles().await.unwrap(), 2);
-
-    assert_eq!(store.list_role_assignments().await.unwrap().len(), 2);
-
-    // Delete + not-found.
-    store.delete_role_assignment("dev@x").await.unwrap();
-    assert_eq!(store.count_admin_roles().await.unwrap(), 1);
-    let err = store.delete_role_assignment("dev@x").await.unwrap_err();
-    assert!(matches!(err, NetcidrError::RoleAssignmentNotFound(_)));
-}
-
 /// Users directory: get/list/upsert/delete, active-platform-admin counting,
 /// and the marker-guarded one-shot seed (ADR-0006).
 #[tokio::test]
