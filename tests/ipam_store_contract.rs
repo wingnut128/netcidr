@@ -1430,6 +1430,96 @@ async fn role_assignments_crud_and_seed() {
     assert!(matches!(err, NetcidrError::RoleAssignmentNotFound(_)));
 }
 
+/// Users directory: get/list/upsert/delete, active-platform-admin counting,
+/// and the marker-guarded one-shot seed (ADR-0006).
+#[tokio::test]
+async fn users_directory_crud_and_marker_seed() {
+    use netcidr::auth::Role;
+    use netcidr::ipam::models::UserStatus;
+    let store = sqlite_store().await;
+
+    // One-shot seed populates from the given triples.
+    let seeded = store
+        .seed_users_once(&[
+            (
+                "owner@x".to_string(),
+                Role::PlatformAdmin,
+                UserStatus::Active,
+            ),
+            ("dev@x".to_string(), Role::Allocator, UserStatus::Active),
+            ("ghost@x".to_string(), Role::Reader, UserStatus::Disabled),
+        ])
+        .await
+        .unwrap();
+    assert_eq!(seeded, 3);
+
+    // Resolution + case-insensitivity + audit provenance.
+    let owner = store.get_user("OWNER@X").await.unwrap().unwrap();
+    assert_eq!(owner.role, Role::PlatformAdmin);
+    assert_eq!(owner.status, UserStatus::Active);
+    assert_eq!(owner.created_by.as_deref(), Some("bootstrap"));
+    assert!(store.get_user("nobody@x").await.unwrap().is_none());
+
+    // The seed is marker-guarded, not emptiness-guarded: even after deleting
+    // every row, a second seed must insert nothing.
+    store.delete_user("owner@x").await.unwrap();
+    store.delete_user("dev@x").await.unwrap();
+    store.delete_user("ghost@x").await.unwrap();
+    let again = store
+        .seed_users_once(&[(
+            "late@x".to_string(),
+            Role::PlatformAdmin,
+            UserStatus::Active,
+        )])
+        .await
+        .unwrap();
+    assert_eq!(again, 0, "marker must make the seed one-shot forever");
+    assert!(store.get_user("late@x").await.unwrap().is_none());
+
+    // Upsert: insert stamps created_by; update stamps updated_by and
+    // preserves created_*.
+    let created = store
+        .upsert_user("dev@x", Role::Admin, UserStatus::Active, "owner@x")
+        .await
+        .unwrap();
+    assert_eq!(created.created_by.as_deref(), Some("owner@x"));
+    assert!(created.updated_by.is_none());
+    let updated = store
+        .upsert_user("dev@x", Role::Admin, UserStatus::Disabled, "owner@x")
+        .await
+        .unwrap();
+    assert_eq!(updated.status, UserStatus::Disabled);
+    assert_eq!(updated.created_by.as_deref(), Some("owner@x"));
+    assert_eq!(updated.updated_by.as_deref(), Some("owner@x"));
+    assert_eq!(updated.created_at, created.created_at);
+
+    // Active-platform-admin counting ignores disabled rows and lower roles.
+    assert_eq!(store.count_active_platform_admins().await.unwrap(), 0);
+    store
+        .upsert_user("owner@x", Role::PlatformAdmin, UserStatus::Active, "cli")
+        .await
+        .unwrap();
+    store
+        .upsert_user("frozen@x", Role::PlatformAdmin, UserStatus::Disabled, "cli")
+        .await
+        .unwrap();
+    assert_eq!(
+        store.count_active_platform_admins().await.unwrap(),
+        1,
+        "disabled platform admins must not count"
+    );
+
+    // List is sorted by email and complete.
+    let all = store.list_users().await.unwrap();
+    let emails: Vec<&str> = all.iter().map(|u| u.email.as_str()).collect();
+    assert_eq!(emails, vec!["dev@x", "frozen@x", "owner@x"]);
+
+    // Delete + not-found.
+    store.delete_user("dev@x").await.unwrap();
+    let err = store.delete_user("dev@x").await.unwrap_err();
+    assert!(matches!(err, NetcidrError::UserNotFound(_)));
+}
+
 /// Hostname pointers and their history are isolated per tenant: tenant A
 /// cannot see tenant B's pointers or change history, and identical
 /// `(ip, hostname)` pairs may coexist across tenants.
