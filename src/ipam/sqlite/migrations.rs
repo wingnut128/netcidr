@@ -13,6 +13,7 @@ pub const MIGRATIONS: &[(u32, &str)] = &[
     (10, MIGRATION_010),
     (11, MIGRATION_011),
     (12, MIGRATION_012),
+    (13, MIGRATION_013),
 ];
 
 const MIGRATION_001: &str = r#"
@@ -355,6 +356,53 @@ CREATE TRIGGER trg_allocation_tags_tenant_match_update
     END;
 "#;
 
+// Unified users directory (ADR-0006). One row per user replaces both the env
+// allowlist (NETCIDR_OIDC_ALLOWED_EMAILS) and the role_assignments table:
+// "allowlisted" = an active row exists; role lives on the same row.
+//
+// - Existing role_assignments rows are copied in; 'admin' rows are promoted to
+//   'platform_admin' because pre-split Admins held user-management power
+//   (/admin/users was RequireAdmin) and demoting them would strand a deployed
+//   system with zero platform admins.
+// - role_assignments is deliberately NOT dropped: a binary rollback after this
+//   migration must still find its table. Dropping it is deferred to a later
+//   release once this version is settled.
+// - bootstrap_markers makes the env seed one-shot: seed-if-empty can't work
+//   here because the copy above makes `users` non-empty, yet allowlist-only
+//   emails (no role row today) still need rows topped up exactly once.
+const MIGRATION_013: &str = r#"
+CREATE TABLE IF NOT EXISTS users (
+    email       TEXT PRIMARY KEY,
+    role        TEXT NOT NULL DEFAULT 'reader'
+                CHECK (role IN ('reader', 'allocator', 'admin', 'platform_admin')),
+    status      TEXT NOT NULL DEFAULT 'active'
+                CHECK (status IN ('active', 'disabled')),
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    created_by  TEXT,
+    updated_by  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_role   ON users(role);
+CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
+
+INSERT INTO users (email, role, status, created_at, updated_at, created_by)
+SELECT email,
+       CASE role WHEN 'admin' THEN 'platform_admin' ELSE role END,
+       'active',
+       created_at,
+       updated_at,
+       created_by
+FROM role_assignments
+WHERE true
+ON CONFLICT (email) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS bootstrap_markers (
+    key        TEXT PRIMARY KEY,
+    applied_at TEXT NOT NULL
+);
+"#;
+
 #[cfg(test)]
 mod tests {
     use crate::ipam::sqlite::SqliteStore;
@@ -543,5 +591,134 @@ mod tests {
             .migrate()
             .await
             .expect("second migrate should be idempotent");
+    }
+
+    /// Simulate the upgrade path: a DB that ran the previous release (through
+    /// migration 12) with role_assignments rows, then applies migration 13.
+    /// Admin rows must be promoted to platform_admin; other roles copied
+    /// verbatim; role_assignments must be left untouched (rollback safety).
+    #[tokio::test]
+    async fn migration_013_copies_and_promotes_role_assignments() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        // Apply everything before 13, then insert legacy rows.
+        for &(version, sql) in super::MIGRATIONS {
+            if version < 13 {
+                conn.execute_batch(sql).unwrap();
+            }
+        }
+        conn.execute_batch(
+            r#"INSERT INTO role_assignments (email, role, created_at, updated_at, created_by)
+               VALUES ('boss@x', 'admin',     '2026-05-29T00:00:00Z', '2026-05-29T00:00:00Z', 'bootstrap'),
+                      ('ops@x',  'allocator', '2026-05-29T00:00:00Z', '2026-05-29T00:00:00Z', 'boss@x'),
+                      ('view@x', 'reader',    '2026-05-29T00:00:00Z', '2026-05-29T00:00:00Z', 'boss@x')"#,
+        )
+        .unwrap();
+
+        conn.execute_batch(super::MIGRATION_013).unwrap();
+
+        let rows: Vec<(String, String, String)> = conn
+            .prepare("SELECT email, role, status FROM users ORDER BY email")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                ("boss@x".into(), "platform_admin".into(), "active".into()),
+                ("ops@x".into(), "allocator".into(), "active".into()),
+                ("view@x".into(), "reader".into(), "active".into()),
+            ],
+            "admin promotes to platform_admin; others copy verbatim, all active"
+        );
+
+        // role_assignments is frozen, not dropped: binary rollback still works.
+        let legacy: i64 = conn
+            .query_row("SELECT COUNT(*) FROM role_assignments", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(legacy, 3, "role_assignments must be left untouched");
+
+        // created_at / created_by carried over from the legacy row.
+        let (created_at, created_by): (String, Option<String>) = conn
+            .query_row(
+                "SELECT created_at, created_by FROM users WHERE email = 'boss@x'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(created_at, "2026-05-29T00:00:00Z");
+        assert_eq!(created_by.as_deref(), Some("bootstrap"));
+    }
+
+    #[tokio::test]
+    async fn migration_013_users_check_constraints_reject_unknown_values() {
+        let store = SqliteStore::in_memory().unwrap();
+        store.initialize().await.unwrap();
+        store.migrate().await.unwrap();
+
+        let conn = store.pool().get().expect("pool checkout");
+
+        // platform_admin is a valid role; unknown roles and statuses are not.
+        conn.execute(
+            r#"INSERT INTO users (email, role, status, created_at, updated_at)
+               VALUES ('ok@x', 'platform_admin', 'active', '2026-07-16T00:00:00Z', '2026-07-16T00:00:00Z')"#,
+            [],
+        )
+        .expect("platform_admin must satisfy the role CHECK");
+
+        let bad_role = conn.execute(
+            r#"INSERT INTO users (email, role, status, created_at, updated_at)
+               VALUES ('bad@x', 'god', 'active', '2026-07-16T00:00:00Z', '2026-07-16T00:00:00Z')"#,
+            [],
+        );
+        assert!(bad_role.is_err(), "CHECK must reject unknown role");
+
+        let bad_status = conn.execute(
+            r#"INSERT INTO users (email, role, status, created_at, updated_at)
+               VALUES ('bad@x', 'reader', 'suspended', '2026-07-16T00:00:00Z', '2026-07-16T00:00:00Z')"#,
+            [],
+        );
+        assert!(bad_status.is_err(), "CHECK must reject unknown status");
+
+        // Defaults: role=reader, status=active.
+        conn.execute(
+            r#"INSERT INTO users (email, created_at, updated_at)
+               VALUES ('defaults@x', '2026-07-16T00:00:00Z', '2026-07-16T00:00:00Z')"#,
+            [],
+        )
+        .unwrap();
+        let (role, status): (String, String) = conn
+            .query_row(
+                "SELECT role, status FROM users WHERE email = 'defaults@x'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((role.as_str(), status.as_str()), ("reader", "active"));
+    }
+
+    /// The PAT role CHECK is intentionally NOT widened: PATs are capped at
+    /// admin (ADR-0006) so platform-tier access is never mintable as a token.
+    #[tokio::test]
+    async fn migration_013_pat_role_check_still_excludes_platform_admin() {
+        let store = SqliteStore::in_memory().unwrap();
+        store.initialize().await.unwrap();
+        store.migrate().await.unwrap();
+
+        let conn = store.pool().get().expect("pool checkout");
+        let bad = conn.execute(
+            r#"INSERT INTO personal_access_tokens
+               (id, tenant_id, owner_sub, owner_email, name, prefix, token_hash,
+                role, created_at, expires_at)
+               VALUES ('p1','a@x','sub-1','a@x','esc','ncdr_pat_ESC',
+                       X'02','platform_admin',
+                       '2026-07-16T00:00:00Z','2099-01-01T00:00:00Z')"#,
+            [],
+        );
+        assert!(
+            bad.is_err(),
+            "PAT role CHECK must keep rejecting platform_admin"
+        );
     }
 }
