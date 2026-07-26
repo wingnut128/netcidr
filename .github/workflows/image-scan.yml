@@ -73,7 +73,7 @@ jobs:
         # with the misleading "Input required and not supplied: sarif_file"
         # and masks the real upstream failure.
         if: always() && steps.grype.outputs.sarif != ''
-        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
         with:
           sarif_file: ${{ steps.grype.outputs.sarif }}
           category: grype-image-scan
