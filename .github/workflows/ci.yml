@@ -72,7 +72,10 @@ jobs:
         run: cd dashboard && bun install --frozen-lockfile && bun run build
       - name: Audit dashboard npm deps
         working-directory: dashboard
-        run: bun audit --audit-level=high
+        # GHSA-qwww-vcr4-c8h2: react-router RSC-mode CSRF — only affects server
+        # components mode; this dashboard is a client-side SPA and is not exposed.
+        # No fix exists for react-router 7.x; remove the ignore once ≥8.3.0 ships.
+        run: bun audit --audit-level=high --ignore=GHSA-qwww-vcr4-c8h2
       - name: Check lockfile for known-compromised packages
         working-directory: dashboard
         env:
