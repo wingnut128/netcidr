@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- *(dashboard)* Force `nanoid` to `^3.3.17` via package overrides to resolve GHSA-2v37-7h3g-55p8 (nanoid custom generators can loop indefinitely when size is zero; transitive via `vite → postcss → nanoid`)
+
 ## [0.28.0](https://github.com/wingnut128/netcidr/compare/v0.27.2...v0.28.0) - 2026-07-16
 
 ### Added
