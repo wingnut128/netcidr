@@ -21,7 +21,6 @@ use std::time::Duration;
 use crate::print_stdout;
 
 const ENV_API_URL: &str = "NETCIDR_API_URL";
-const ENV_API_TOKEN: &str = "NETCIDR_API_TOKEN";
 
 /// Wrapper for JSON error responses from the API. Mirrors the body
 /// shape used by `me_api::ErrorBody` (`{ "error": "..." }`).
@@ -288,20 +287,6 @@ fn resolve_api_url(cli_flag: Option<&str>) -> Result<String> {
     })
 }
 
-fn resolve_bearer() -> Result<String> {
-    let token = std::env::var(ENV_API_TOKEN).map_err(|_| {
-        NetcidrError::InvalidInput(format!(
-            "no auth token — set {ENV_API_TOKEN} (a PAT or static bearer)"
-        ))
-    })?;
-    if token.trim().is_empty() {
-        return Err(NetcidrError::InvalidInput(format!(
-            "{ENV_API_TOKEN} is empty"
-        )));
-    }
-    Ok(token)
-}
-
 fn write_view<T: Serialize + TextOutput + CsvOutput>(
     writer: &OutputWriter,
     output_file: &Option<String>,
@@ -323,7 +308,8 @@ pub async fn handle_token_command(
     command: TokenCommands,
 ) -> Result<()> {
     let base = resolve_api_url(api_url)?;
-    let bearer = resolve_bearer()?;
+    let base = netcidr::credentials::normalize_api_url(&base)?;
+    let bearer = netcidr::credentials::resolve_credential(&base, None).await?;
     let client = TokenClient::new(base, bearer)?;
 
     match command {

@@ -274,6 +274,138 @@ fn open_owner_only(path: &Path) -> Result<std::fs::File> {
         .map_err(NetcidrError::from)
 }
 
+/// Seconds of clock skew treated as "already expired", so a token is
+/// refreshed slightly before it actually lapses rather than mid-request.
+const EXPIRY_SKEW_SECONDS: i64 = 60;
+
+/// Whether a cached ID token should be refreshed. An unparseable
+/// timestamp counts as expired — a corrupt cache must never be treated as
+/// a live credential.
+pub fn is_expired(expires_at: &str, skew_secs: i64) -> bool {
+    match chrono::DateTime::parse_from_rfc3339(expires_at) {
+        Ok(parsed) => {
+            parsed.with_timezone(&chrono::Utc)
+                <= chrono::Utc::now() + chrono::Duration::seconds(skew_secs)
+        }
+        Err(_) => true,
+    }
+}
+
+/// Resolve a bearer credential for `api_url`, using the default store.
+///
+/// Precedence, explicit before implicit:
+///   1. `explicit` (a `--token` flag)
+///   2. `NETCIDR_API_TOKEN`
+///   3. the cached login, refreshed if stale
+///   4. error
+///
+/// Explicit sources win so a PAT exported in a shell profile — or set by
+/// CI — is never silently shadowed by a desktop login.
+///
+/// The client secret needed for a refresh comes from the server's
+/// `/features` endpoint, not from the environment — `NETCIDR_OIDC_CLI_*`
+/// are server-side settings and are never present on a client machine.
+/// That fetch happens only when a refresh is actually required, so the
+/// common path (valid cached token) stays free of network I/O.
+pub async fn resolve_credential(api_url: &str, explicit: Option<&str>) -> Result<String> {
+    if let Some(token) = explicit.map(str::trim).filter(|t| !t.is_empty()) {
+        return Ok(token.to_string());
+    }
+    if let Some(token) = std::env::var("NETCIDR_API_TOKEN")
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+    {
+        return Ok(token);
+    }
+
+    let path = credentials_path()?;
+    let store = CredentialStore::load_from(&path)?;
+    let account = store.get(api_url).ok_or_else(|| {
+        NetcidrError::Auth(format!(
+            "not authenticated for {api_url} - run `netcidr login`"
+        ))
+    })?;
+
+    if !is_expired(&account.expires_at, EXPIRY_SKEW_SECONDS) {
+        return Ok(account.id_token.clone());
+    }
+
+    let auth = crate::oauth::fetch_auth_features(api_url).await?;
+    resolve_from(
+        &path,
+        crate::oauth::TOKEN_ENDPOINT,
+        api_url,
+        None,
+        &auth.cli_client_secret,
+    )
+    .await
+}
+
+/// Injectable form of [`resolve_credential`]. Production callers go
+/// through `resolve_credential`; tests pass a temp path and a stub token
+/// endpoint.
+pub async fn resolve_from(
+    store_path: &Path,
+    token_endpoint: &str,
+    api_url: &str,
+    explicit: Option<&str>,
+    client_secret: &str,
+) -> Result<String> {
+    if let Some(token) = explicit.map(str::trim).filter(|t| !t.is_empty()) {
+        return Ok(token.to_string());
+    }
+    if let Some(token) = std::env::var("NETCIDR_API_TOKEN")
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+    {
+        return Ok(token);
+    }
+
+    let mut store = CredentialStore::load_from(store_path)?;
+    let account = store.get(api_url).cloned().ok_or_else(|| {
+        NetcidrError::Auth(format!(
+            "not authenticated for {api_url} - run `netcidr login`"
+        ))
+    })?;
+
+    if !is_expired(&account.expires_at, EXPIRY_SKEW_SECONDS) {
+        return Ok(account.id_token);
+    }
+
+    let refreshed = match crate::oauth::refresh_id_token(
+        token_endpoint,
+        &account.client_id,
+        client_secret,
+        &account.refresh_token,
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(err) => {
+            // The refresh token is dead (revoked at Google, or aged out).
+            // Drop the entry so the next run starts clean instead of
+            // retrying a credential that can never work again.
+            store.remove(api_url);
+            store.save_to(store_path)?;
+            return Err(err);
+        }
+    };
+
+    let updated = Account {
+        id_token: refreshed.id_token.clone(),
+        expires_at: crate::oauth::expiry_from_now(refreshed.expires_in),
+        // A refresh response carries no new refresh token; keep ours.
+        refresh_token: refreshed.refresh_token.unwrap_or(account.refresh_token),
+        ..account
+    };
+    store.insert(api_url, updated);
+    store.save_to(store_path)?;
+
+    Ok(refreshed.id_token)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

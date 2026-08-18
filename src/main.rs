@@ -311,11 +311,30 @@ async fn async_main(cli: Cli) {
             api_url,
             api_token,
         }) => {
-            // Fall back to NETCIDR_API_TOKEN when --api-token is not passed
-            // (clap's `env` feature is not enabled, so resolve it here).
-            let api_token = api_token
+            // Precedence: --api-token, then NETCIDR_API_TOKEN, then a
+            // cached `netcidr login` for this server. clap's `env` feature
+            // is not enabled, so the env fallback is resolved here.
+            //
+            // Unlike `netcidr token`, a missing credential is not fatal:
+            // a remote server may have auth disabled entirely. A resolver
+            // error therefore degrades to "no token" rather than aborting.
+            let api_token = match api_token
                 .or_else(|| std::env::var("NETCIDR_API_TOKEN").ok())
-                .filter(|t| !t.trim().is_empty());
+                .filter(|t| !t.trim().is_empty())
+            {
+                Some(token) => Some(token),
+                None => match api_url.as_deref() {
+                    Some(url) => match netcidr::credentials::normalize_api_url(url) {
+                        Ok(normalized) => {
+                            netcidr::credentials::resolve_credential(&normalized, None)
+                                .await
+                                .ok()
+                        }
+                        Err(_) => None,
+                    },
+                    None => None,
+                },
+            };
             let mcp_config = netcidr::mcp::McpServerConfig {
                 transport,
                 address: &address,
