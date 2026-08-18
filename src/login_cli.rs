@@ -12,16 +12,24 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 /// Successful authorization callback.
+// Consumed by `handle_login` in Task 8; the attribute goes away with it.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct Callback {
     pub code: String,
 }
 
+// Consumed by `wait_for_callback` once Task 8 calls it from `handle_login`;
+// the attribute goes away with that wiring.
+#[allow(dead_code)]
 const SUCCESS_PAGE: &str = "<!doctype html><meta charset=utf-8>\
 <title>netcidr</title>\
 <body style=\"font-family:system-ui;padding:3rem;text-align:center\">\
 <h1>Signed in</h1><p>You can close this tab and return to the terminal.</p>";
 
+// Consumed by `wait_for_callback` once Task 8 calls it from `handle_login`;
+// the attribute goes away with that wiring.
+#[allow(dead_code)]
 const FAILURE_PAGE: &str = "<!doctype html><meta charset=utf-8>\
 <title>netcidr</title>\
 <body style=\"font-family:system-ui;padding:3rem;text-align:center\">\
@@ -32,6 +40,8 @@ const FAILURE_PAGE: &str = "<!doctype html><meta charset=utf-8>\
 ///
 /// Reads only the request line, which is all that carries the query
 /// string — the flow never needs headers or a body.
+// Consumed by `handle_login` in Task 8; the attribute goes away with it.
+#[allow(dead_code)]
 pub async fn wait_for_callback(
     listener: TcpListener,
     expected_state: String,
@@ -75,6 +85,9 @@ pub async fn wait_for_callback(
 
 /// Pull the query string out of the HTTP request line and turn it into a
 /// result. Split out from the socket handling so it is directly testable.
+// Consumed by `wait_for_callback` once Task 8 calls it from `handle_login`;
+// the attribute goes away with that wiring.
+#[allow(dead_code)]
 fn interpret_request(request: &str, expected_state: &str) -> Result<Callback> {
     let request_line = request.lines().next().unwrap_or_default();
     let target = request_line.split_whitespace().nth(1).unwrap_or_default();
@@ -105,6 +118,9 @@ fn interpret_request(request: &str, expected_state: &str) -> Result<Callback> {
 
 /// Decode the query string. `form_urlencoded` handles both `%XX` escapes
 /// and `+` as space, and is already in the dependency tree via axum.
+// Consumed by `interpret_request` once Task 8 wires the module in; the
+// attribute goes away with that wiring.
+#[allow(dead_code)]
 fn parse_query(query: &str) -> HashMap<String, String> {
     form_urlencoded::parse(query.as_bytes())
         .map(|(key, value)| (key.into_owned(), value.into_owned()))
@@ -114,6 +130,9 @@ fn parse_query(query: &str) -> HashMap<String, String> {
 /// Length-independent comparison for the `state` check. Mirrors the helper
 /// in `auth.rs`; duplicated rather than made public because the bin and
 /// lib halves of this crate should not grow a dependency for six lines.
+// Consumed by `interpret_request` once Task 8 wires the module in; the
+// attribute goes away with that wiring.
+#[allow(dead_code)]
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
