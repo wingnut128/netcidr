@@ -33,7 +33,7 @@ use crate::auth::require_auth;
 #[cfg(feature = "swagger")]
 use crate::batch::BatchResult;
 use crate::batch::process_batch_with_limit;
-use crate::config::ServerConfig;
+use crate::config::{AuthMode, ServerConfig};
 #[cfg(feature = "swagger")]
 use crate::contains::ContainsResult;
 use crate::contains::{check_ipv4_contains, check_ipv6_contains};
@@ -156,7 +156,7 @@ impl Modify for SecurityAddon {
             ContainsResult, Ipv4SummaryResult, Ipv6SummaryResult, Ipv4FromRangeResult,
             Ipv6FromRangeResult, SubnetQuery, SplitQuery, ContainsQuery, SummarizeQuery,
             FromRangeQuery, BatchRequest, BatchResult, ErrorResponse, VersionResponse,
-            FeaturesResponse, MeResponse,
+            FeaturesResponse, AuthFeatures, MeResponse,
             crate::me_api::CreateTokenRequest, crate::me_api::CreateTokenResponse,
             crate::me_api::TokenListResponse,
             crate::ipam::models::PersonalAccessTokenSummary,
@@ -545,9 +545,23 @@ pub fn create_router(config: RouterConfig) -> Router {
     #[cfg(not(feature = "swagger"))]
     let swagger_enabled = false;
 
+    let auth_features = match (
+        config.server.auth_mode,
+        config.server.oidc_cli_client_id(),
+        config.server.oidc_cli_client_secret(),
+    ) {
+        (AuthMode::Oidc, Some(cli_client_id), Some(cli_client_secret)) => Some(AuthFeatures {
+            mode: "oidc",
+            cli_client_id,
+            cli_client_secret,
+        }),
+        _ => None,
+    };
+
     let features = FeaturesResponse {
         ipam: ipam_enabled,
         swagger: swagger_enabled,
+        auth: auth_features,
     };
     let router = router
         .route("/features", get(features_handler))
@@ -1361,6 +1375,20 @@ async fn batch_handler(
     }
 }
 
+/// CLI OAuth client advertised to `netcidr login`. Present only when the
+/// server runs in OIDC mode and both values are configured; absent
+/// otherwise so the CLI can report precisely what is missing.
+#[derive(Clone, Serialize)]
+#[cfg_attr(feature = "swagger", derive(ToSchema))]
+struct AuthFeatures {
+    /// Always "oidc" — the block is omitted in every other mode.
+    mode: &'static str,
+    /// OAuth client ID of type "Desktop app".
+    cli_client_id: String,
+    /// Matching client secret. Non-confidential by design (RFC 8252 s8.5).
+    cli_client_secret: String,
+}
+
 #[derive(Clone, Serialize)]
 #[cfg_attr(feature = "swagger", derive(ToSchema))]
 struct FeaturesResponse {
@@ -1368,6 +1396,9 @@ struct FeaturesResponse {
     ipam: bool,
     /// Whether Swagger UI / OpenAPI docs are exposed.
     swagger: bool,
+    /// CLI OAuth client, when this server has one configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth: Option<AuthFeatures>,
 }
 
 #[derive(Serialize)]

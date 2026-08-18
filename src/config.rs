@@ -11,6 +11,8 @@ const MAX_RATE_LIMIT_BURST: u32 = 100_000;
 const MAX_TIMEOUT_SECONDS: u64 = 300;
 const AUTH_TOKEN_ENV: &str = "NETCIDR_API_TOKEN";
 const OIDC_AUDIENCE_ENV: &str = "NETCIDR_OIDC_AUDIENCE";
+const OIDC_CLI_CLIENT_ID_ENV: &str = "NETCIDR_OIDC_CLI_CLIENT_ID";
+const OIDC_CLI_CLIENT_SECRET_ENV: &str = "NETCIDR_OIDC_CLI_CLIENT_SECRET";
 const OIDC_ALLOWED_EMAILS_ENV: &str = "NETCIDR_OIDC_ALLOWED_EMAILS";
 const ADMIN_EMAILS_ENV: &str = "NETCIDR_ADMIN_EMAILS";
 const ALLOCATOR_EMAILS_ENV: &str = "NETCIDR_ALLOCATOR_EMAILS";
@@ -95,6 +97,17 @@ pub struct ServerConfig {
     pub auth_token: Option<String>,
     /// Expected OIDC audience. Prefer NETCIDR_OIDC_AUDIENCE in production.
     pub oidc_audience: Option<String>,
+    /// OAuth client ID of type "Desktop app" used by `netcidr login`.
+    /// Advertised on `/features` so the CLI needs no local config.
+    /// Prefer NETCIDR_OIDC_CLI_CLIENT_ID in production.
+    #[serde(default)]
+    pub oidc_cli_client_id: Option<String>,
+    /// Matching client secret. Non-confidential by design — an installed
+    /// app cannot keep a secret (RFC 8252 s8.5); PKCE is what secures the
+    /// exchange. Served publicly on `/features` on purpose.
+    /// Prefer NETCIDR_OIDC_CLI_CLIENT_SECRET in production.
+    #[serde(default)]
+    pub oidc_cli_client_secret: Option<String>,
     /// Allowlist of email addresses authorized to call protected endpoints.
     /// Post-seed this list is inert (the users directory is the source of
     /// truth) except that, when `allowlist_mode` is unset, its
@@ -149,6 +162,8 @@ impl Default for ServerConfig {
             auth_mode: AuthMode::None,
             auth_token: None,
             oidc_audience: None,
+            oidc_cli_client_id: None,
+            oidc_cli_client_secret: None,
             oidc_allowed_emails: Vec::new(),
             allowlist_mode: None,
             admin_emails: Vec::new(),
@@ -334,6 +349,17 @@ impl ServerConfig {
             })
     }
 
+    pub fn oidc_cli_client_id(&self) -> Option<String> {
+        resolve_optional(OIDC_CLI_CLIENT_ID_ENV, self.oidc_cli_client_id.as_deref())
+    }
+
+    pub fn oidc_cli_client_secret(&self) -> Option<String> {
+        resolve_optional(
+            OIDC_CLI_CLIENT_SECRET_ENV,
+            self.oidc_cli_client_secret.as_deref(),
+        )
+    }
+
     pub fn auth_configured(&self) -> bool {
         match self.auth_mode {
             AuthMode::None => false,
@@ -419,6 +445,20 @@ impl ServerConfig {
 
         Ok(())
     }
+}
+
+/// Env-var-wins resolution for a single optional string setting, with
+/// blank values treated as unset. Mirrors the shape of `auth_token()` and
+/// `oidc_audience()` so the precedence rule stays uniform.
+fn resolve_optional(env_var: &str, fallback: Option<&str>) -> Option<String> {
+    std::env::var(env_var)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            fallback
+                .map(str::to_string)
+                .filter(|value| !value.trim().is_empty())
+        })
 }
 
 /// Resolve a comma-separated email list with env-var taking precedence
