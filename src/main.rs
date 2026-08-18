@@ -20,6 +20,7 @@ use std::net::SocketAddr;
 use tracing::{info, warn};
 
 mod ipam_cli;
+mod login_cli;
 mod token_cli;
 
 /// Print to stdout, handling broken pipe errors gracefully.
