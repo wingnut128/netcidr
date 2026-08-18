@@ -47,6 +47,8 @@ pub async fn wait_for_callback(
     expected_state: String,
     timeout: Duration,
 ) -> Result<Callback> {
+    let start = std::time::Instant::now();
+
     let accepted = tokio::time::timeout(timeout, listener.accept())
         .await
         .map_err(|_| {
@@ -59,10 +61,19 @@ pub async fn wait_for_callback(
     let (mut stream, _peer) =
         accepted.map_err(|e| NetcidrError::Auth(format!("callback connection failed: {e}")))?;
 
+    // Budget the read against what's left of the overall deadline, rather
+    // than granting it a fresh `timeout`, so a client that completes the
+    // handshake and then sends nothing can't make total wall-clock exceed
+    // what the caller asked for.
+    let remaining = timeout.saturating_sub(start.elapsed());
     let mut buffer = [0u8; 4096];
-    let read = stream
-        .read(&mut buffer)
+    let read = tokio::time::timeout(remaining, stream.read(&mut buffer))
         .await
+        .map_err(|_| {
+            NetcidrError::Auth(
+                "browser connected but sent nothing before the callback timed out".to_string(),
+            )
+        })?
         .map_err(|e| NetcidrError::Auth(format!("could not read the callback request: {e}")))?;
     let request = String::from_utf8_lossy(&buffer[..read]);
 
@@ -128,16 +139,26 @@ fn parse_query(query: &str) -> HashMap<String, String> {
 }
 
 /// Length-independent comparison for the `state` check. Mirrors the helper
-/// in `auth.rs`; duplicated rather than made public because the bin and
-/// lib halves of this crate should not grow a dependency for six lines.
+/// in `auth.rs`: it loops to the longer input's length, treats out-of-range
+/// bytes as zero, and folds the length difference into the accumulator
+/// unconditionally, so the number of comparisons never depends on whether
+/// the lengths matched. Duplicated rather than made public because the bin
+/// and lib halves of this crate should not grow a dependency for a dozen
+/// lines.
 // Consumed by `interpret_request` once Task 8 wires the module in; the
 // attribute goes away with that wiring.
 #[allow(dead_code)]
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
+    let max_len = a.len().max(b.len());
+    let mut diff = a.len() ^ b.len();
+
+    for i in 0..max_len {
+        let left = a.get(i).copied().unwrap_or(0);
+        let right = b.get(i).copied().unwrap_or(0);
+        diff |= (left ^ right) as usize;
     }
-    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+
+    diff == 0
 }
 
 #[cfg(test)]
@@ -220,5 +241,44 @@ mod tests {
         let params = parse_query("code=a%2Fb&state=x%20y");
         assert_eq!(params.get("code").map(String::as_str), Some("a/b"));
         assert_eq!(params.get("state").map(String::as_str), Some("x y"));
+    }
+
+    #[test]
+    fn constant_time_eq_matches_only_identical_bytes() {
+        assert!(constant_time_eq(b"the-state", b"the-state"));
+        assert!(constant_time_eq(b"", b""));
+
+        // Equal length, differing content.
+        assert!(!constant_time_eq(b"the-state", b"the-stat3"));
+
+        // Differing length, one a prefix of the other.
+        assert!(!constant_time_eq(b"the-state", b"the-stat"));
+        assert!(!constant_time_eq(b"the-stat", b"the-state"));
+
+        // Empty vs. non-empty.
+        assert!(!constant_time_eq(b"", b"x"));
+        assert!(!constant_time_eq(b"x", b""));
+    }
+
+    #[tokio::test]
+    async fn times_out_when_connected_client_sends_nothing() {
+        let (listener, addr) = {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            (listener, addr)
+        };
+
+        let task = tokio::spawn(wait_for_callback(
+            listener,
+            "the-state".to_string(),
+            Duration::from_millis(300),
+        ));
+
+        // Complete the TCP handshake but never write a request line, so
+        // the callback hangs past `accept` and into the read.
+        let _stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+
+        let err = task.await.unwrap().unwrap_err();
+        assert!(err.to_string().contains("timed out"), "got: {err}");
     }
 }
