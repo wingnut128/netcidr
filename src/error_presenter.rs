@@ -143,6 +143,18 @@ pub fn present(err: &NetcidrError) -> PresentedError {
             log_level: LogLevel::None,
         },
 
+        // 401 — CLI-local authentication/credential-store errors (e.g.
+        // `netcidr login`/`credentials.rs`). Not currently surfaced
+        // through an HTTP frontend, but the message is already
+        // constructed to be safe to display (paths and file modes,
+        // never token contents), so it passes through rather than
+        // collapsing to the generic 500 case below.
+        Auth(_) => PresentedError {
+            status: 401,
+            client_msg: err.to_string(),
+            log_level: LogLevel::None,
+        },
+
         // 500 — never expose raw text. DB driver messages, IO/serde
         // failures, and anything we forgot to classify all collapse here.
         DatabaseError(_) | Io(_) | Json(_) | Csv(_) | Yaml(_) | ConfigParse(_) => PresentedError {

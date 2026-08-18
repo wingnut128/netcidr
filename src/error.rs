@@ -129,6 +129,9 @@ pub enum NetcidrError {
     /// server log at WARN level for the operator to correlate).
     #[error("Forbidden: required {required:?}, got {actual:?}")]
     Forbidden { required: Role, actual: Role },
+
+    #[error("authentication error: {0}")]
+    Auth(String),
 }
 
 pub type Result<T> = std::result::Result<T, NetcidrError>;

@@ -34,6 +34,7 @@ pub mod dns;
 
 // Infrastructure
 pub mod config;
+pub mod credentials;
 pub mod daemon;
 pub mod error;
 pub mod error_presenter;
