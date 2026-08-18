@@ -663,6 +663,39 @@ mod tests {
         assert!(message.contains("0600"), "got: {message}");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn save_tightens_permissions_on_an_existing_loose_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("credentials.json");
+
+        // A pre-existing world-readable file is the case the atomic write
+        // exists to handle.
+        std::fs::write(&path, "{}").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let mut store = CredentialStore::default();
+        store.insert("https://server", sample_account());
+        store.save_to(&path).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert!(
+            !path.with_extension("json.tmp").exists(),
+            "temp file must not survive a successful save"
+        );
+    }
+
+    #[test]
+    fn debug_redacts_both_tokens() {
+        let rendered = format!("{:?}", sample_account());
+        assert!(!rendered.contains("1//0g-refresh"), "got: {rendered}");
+        assert!(!rendered.contains("eyJ-id"), "got: {rendered}");
+        assert!(rendered.contains("user@example.com"));
+    }
+
     #[test]
     fn trailing_slashes_resolve_to_one_account() {
         let mut store = CredentialStore::default();
@@ -745,7 +778,11 @@ use crate::error::{NetcidrError, Result};
 const SCHEMA_VERSION: u32 = 1;
 
 /// Cached credential for a single netcidr deployment.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+///
+/// `Debug` is hand-written below rather than derived: this struct holds a
+/// long-lived refresh token, and a derived impl would print it in any
+/// `{:?}`.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Account {
     /// Verified email reported by the server at login time.
     pub email: String,
@@ -759,6 +796,20 @@ pub struct Account {
     /// that rotates its CLI client invalidates the cache explicitly
     /// instead of failing with a confusing audience error.
     pub client_id: String,
+}
+
+/// Redacts both token fields. Mirrors the hand-written `Debug` on
+/// `AuthConfig` in `src/auth.rs`, which does the same for its bearer token.
+impl std::fmt::Debug for Account {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Account")
+            .field("email", &self.email)
+            .field("refresh_token", &"<redacted>")
+            .field("id_token", &"<redacted>")
+            .field("expires_at", &self.expires_at)
+            .field("client_id", &self.client_id)
+            .finish()
+    }
 }
 
 /// The credential file. `BTreeMap` rather than `HashMap` so the serialized
@@ -804,13 +855,27 @@ impl CredentialStore {
         self.save_to(&credentials_path()?)
     }
 
+    /// Persist atomically: write a sibling temp file that is `0600` from
+    /// birth, fsync it, then rename over the target.
+    ///
+    /// The ordering matters. `std::fs::write` truncates an *existing* file
+    /// without touching its mode, so writing straight to the target would
+    /// put the refresh token into a world-readable file whenever one was
+    /// already there at a looser mode — and a crash in that window leaves
+    /// the secret exposed. Rename is atomic, so the real file is never
+    /// observable holding the secret at the wrong mode, and an interrupted
+    /// write leaves the previous file intact rather than a truncated one.
     pub fn save_to(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let json = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, json)?;
-        set_owner_only(path)?;
+        let tmp = path.with_extension("json.tmp");
+        write_owner_only(&tmp, &json).inspect_err(|_| {
+            // Never leave a temp file holding a secret behind.
+            let _ = std::fs::remove_file(&tmp);
+        })?;
+        std::fs::rename(&tmp, path)?;
         Ok(())
     }
 
@@ -907,16 +972,34 @@ fn check_permissions(_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Create `path` with owner-only permissions and write `contents` to it.
+/// On unix the mode is set at open time, so the file is never readable by
+/// anyone else — not even for the duration of the write.
 #[cfg(unix)]
-fn set_owner_only(path: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
+fn write_owner_only(path: &Path, contents: &str) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
 
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(contents.as_bytes())?;
+    file.sync_all()?;
     Ok(())
 }
 
+/// Non-unix fallback. These platforms have no mode bits to set here; the
+/// file inherits the platform's own default ACLs.
 #[cfg(not(unix))]
-fn set_owner_only(_path: &Path) -> Result<()> {
+fn write_owner_only(path: &Path, contents: &str) -> Result<()> {
+    use std::io::Write;
+
+    let mut file = std::fs::File::create(path)?;
+    file.write_all(contents.as_bytes())?;
+    file.sync_all()?;
     Ok(())
 }
 ```
@@ -924,7 +1007,7 @@ fn set_owner_only(_path: &Path) -> Result<()> {
 - [ ] **Step 6: Run the tests**
 
 Run: `cargo test --lib credentials::`
-Expected: PASS, all nine.
+Expected: PASS, all ten.
 
 - [ ] **Step 7: Commit**
 
