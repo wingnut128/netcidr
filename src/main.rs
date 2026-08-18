@@ -326,9 +326,23 @@ async fn async_main(cli: Cli) {
                 None => match api_url.as_deref() {
                     Some(url) => match netcidr::credentials::normalize_api_url(url) {
                         Ok(normalized) => {
-                            netcidr::credentials::resolve_credential(&normalized, None)
-                                .await
-                                .ok()
+                            match netcidr::credentials::resolve_credential(&normalized, None).await
+                            {
+                                Ok(token) => Some(token),
+                                // No account cached for this server — a
+                                // legitimate, silent state (never logged
+                                // in, or the server has auth disabled).
+                                Err(netcidr::error::NetcidrError::NotAuthenticated(_)) => None,
+                                // Every other error (corrupt credentials
+                                // file, unreachable /features, a dead
+                                // refresh token) is a real problem the
+                                // user should know about, even though we
+                                // still proceed unauthenticated.
+                                Err(e) => {
+                                    eprintln!("warning: ignoring cached credential: {e}");
+                                    None
+                                }
+                            }
                         }
                         Err(_) => None,
                     },

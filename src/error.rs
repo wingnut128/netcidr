@@ -132,6 +132,16 @@ pub enum NetcidrError {
 
     #[error("authentication error: {0}")]
     Auth(String),
+
+    /// No credential is cached for a given API URL — distinct from
+    /// `Auth`, which covers every other credential-store failure (a
+    /// corrupt file, an unreachable `/features` endpoint, a dead refresh
+    /// token). Callers that treat "never logged in" as a legitimate,
+    /// silent state (e.g. `mcp-serve --remote` against a server with auth
+    /// disabled) match on this variant specifically rather than
+    /// swallowing every `Auth` error alike.
+    #[error("{0}")]
+    NotAuthenticated(String),
 }
 
 pub type Result<T> = std::result::Result<T, NetcidrError>;

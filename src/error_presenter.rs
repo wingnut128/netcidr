@@ -149,7 +149,7 @@ pub fn present(err: &NetcidrError) -> PresentedError {
         // constructed to be safe to display (paths and file modes,
         // never token contents), so it passes through rather than
         // collapsing to the generic 500 case below.
-        Auth(_) => PresentedError {
+        Auth(_) | NotAuthenticated(_) => PresentedError {
             status: 401,
             client_msg: err.to_string(),
             log_level: LogLevel::None,

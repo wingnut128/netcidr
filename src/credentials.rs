@@ -302,70 +302,75 @@ pub fn is_expired(expires_at: &str, skew_secs: i64) -> bool {
 /// Explicit sources win so a PAT exported in a shell profile — or set by
 /// CI — is never silently shadowed by a desktop login.
 ///
+/// The entire precedence chain — including the explicit and env steps —
+/// lives in [`resolve_from`]; this function only supplies the production
+/// values (the default store path, the real token endpoint, and a lazy
+/// provider of the refresh client secret) and delegates. Keeping exactly
+/// one copy of the chain means a future edit can't desync two hand-copied
+/// versions of it.
+///
 /// The client secret needed for a refresh comes from the server's
 /// `/features` endpoint, not from the environment — `NETCIDR_OIDC_CLI_*`
 /// are server-side settings and are never present on a client machine.
-/// That fetch happens only when a refresh is actually required, so the
-/// common path (valid cached token) stays free of network I/O.
+/// It is passed to `resolve_from` as a closure rather than a resolved
+/// `String` so that `/features` is only fetched when a refresh actually
+/// happens: `resolve_from` checks the explicit/env/cached-and-valid cases
+/// first and calls the closure exclusively on the refresh path, so the
+/// common case (explicit token, env token, or a still-valid cached token)
+/// never touches the network for this call.
 pub async fn resolve_credential(api_url: &str, explicit: Option<&str>) -> Result<String> {
-    if let Some(token) = explicit.map(str::trim).filter(|t| !t.is_empty()) {
-        return Ok(token.to_string());
-    }
-    if let Some(token) = std::env::var("NETCIDR_API_TOKEN")
-        .ok()
-        .map(|t| t.trim().to_string())
-        .filter(|t| !t.is_empty())
-    {
-        return Ok(token);
-    }
-
+    let env_token = std::env::var("NETCIDR_API_TOKEN").ok();
     let path = credentials_path()?;
-    let store = CredentialStore::load_from(&path)?;
-    let account = store.get(api_url).ok_or_else(|| {
-        NetcidrError::Auth(format!(
-            "not authenticated for {api_url} - run `netcidr login`"
-        ))
-    })?;
+    let api_url_owned = api_url.to_string();
 
-    if !is_expired(&account.expires_at, EXPIRY_SKEW_SECONDS) {
-        return Ok(account.id_token.clone());
-    }
-
-    let auth = crate::oauth::fetch_auth_features(api_url).await?;
     resolve_from(
         &path,
         crate::oauth::TOKEN_ENDPOINT,
         api_url,
-        None,
-        &auth.cli_client_secret,
+        explicit,
+        env_token.as_deref(),
+        || async move {
+            let auth = crate::oauth::fetch_auth_features(&api_url_owned).await?;
+            Ok(auth.cli_client_secret)
+        },
     )
     .await
 }
 
-/// Injectable form of [`resolve_credential`]. Production callers go
-/// through `resolve_credential`; tests pass a temp path and a stub token
-/// endpoint.
-pub async fn resolve_from(
+/// Injectable form of [`resolve_credential`], and the sole place the
+/// explicit/env/cache/refresh precedence chain is implemented. Production
+/// callers go through `resolve_credential`; tests pass a temp path, a stub
+/// token endpoint, and an explicit `env_token` — this function never reads
+/// process environment itself, so its behavior does not depend on
+/// unstated shell state.
+///
+/// `client_secret` is a lazy provider (invoked at most once, only when a
+/// refresh is actually needed) rather than a plain string, so that callers
+/// whose secret comes from a network call (`resolve_credential`'s
+/// `/features` fetch) don't pay for it on the explicit/env/valid-cache
+/// paths.
+pub async fn resolve_from<F, Fut>(
     store_path: &Path,
     token_endpoint: &str,
     api_url: &str,
     explicit: Option<&str>,
-    client_secret: &str,
-) -> Result<String> {
+    env_token: Option<&str>,
+    client_secret: F,
+) -> Result<String>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<String>>,
+{
     if let Some(token) = explicit.map(str::trim).filter(|t| !t.is_empty()) {
         return Ok(token.to_string());
     }
-    if let Some(token) = std::env::var("NETCIDR_API_TOKEN")
-        .ok()
-        .map(|t| t.trim().to_string())
-        .filter(|t| !t.is_empty())
-    {
-        return Ok(token);
+    if let Some(token) = env_token.map(str::trim).filter(|t| !t.is_empty()) {
+        return Ok(token.to_string());
     }
 
     let mut store = CredentialStore::load_from(store_path)?;
     let account = store.get(api_url).cloned().ok_or_else(|| {
-        NetcidrError::Auth(format!(
+        NetcidrError::NotAuthenticated(format!(
             "not authenticated for {api_url} - run `netcidr login`"
         ))
     })?;
@@ -374,10 +379,12 @@ pub async fn resolve_from(
         return Ok(account.id_token);
     }
 
+    let secret = client_secret().await?;
+
     let refreshed = match crate::oauth::refresh_id_token(
         token_endpoint,
         &account.client_id,
-        client_secret,
+        &secret,
         &account.refresh_token,
     )
     .await
