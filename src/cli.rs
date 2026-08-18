@@ -159,6 +159,32 @@ pub enum Commands {
         command: AdminCommands,
     },
 
+    /// Sign in to a netcidr server with Google and cache the credential
+    Login {
+        /// API base URL (overrides NETCIDR_API_URL)
+        #[arg(long)]
+        api_url: Option<String>,
+
+        /// Print the authorization URL instead of opening a browser
+        #[arg(long)]
+        no_browser: bool,
+
+        /// Seconds to wait for the browser callback
+        #[arg(long, default_value_t = 180)]
+        timeout: u64,
+    },
+
+    /// Discard a cached login
+    Logout {
+        /// API base URL (overrides NETCIDR_API_URL)
+        #[arg(long, conflicts_with = "all")]
+        api_url: Option<String>,
+
+        /// Discard every cached login
+        #[arg(long)]
+        all: bool,
+    },
+
     /// Manage personal access tokens against a remote netcidr server
     Token {
         /// API base URL (overrides NETCIDR_API_URL)

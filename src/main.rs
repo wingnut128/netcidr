@@ -290,6 +290,22 @@ async fn async_main(cli: Cli) {
                 std::process::exit(1);
             }
         }
+        Some(Commands::Login {
+            api_url,
+            no_browser,
+            timeout,
+        }) => {
+            if let Err(e) = login_cli::handle_login(api_url.as_deref(), no_browser, timeout).await {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Some(Commands::Logout { api_url, all }) => {
+            if let Err(e) = login_cli::handle_logout(api_url.as_deref(), all).await {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
         Some(Commands::Token { api_url, command }) => {
             if let Err(e) =
                 token_cli::handle_token_command(&writer, &cli.output, api_url.as_deref(), command)

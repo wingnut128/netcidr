@@ -12,24 +12,16 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 /// Successful authorization callback.
-// Consumed by `handle_login` in Task 8; the attribute goes away with it.
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct Callback {
     pub code: String,
 }
 
-// Consumed by `wait_for_callback` once Task 8 calls it from `handle_login`;
-// the attribute goes away with that wiring.
-#[allow(dead_code)]
 const SUCCESS_PAGE: &str = "<!doctype html><meta charset=utf-8>\
 <title>netcidr</title>\
 <body style=\"font-family:system-ui;padding:3rem;text-align:center\">\
 <h1>Signed in</h1><p>You can close this tab and return to the terminal.</p>";
 
-// Consumed by `wait_for_callback` once Task 8 calls it from `handle_login`;
-// the attribute goes away with that wiring.
-#[allow(dead_code)]
 const FAILURE_PAGE: &str = "<!doctype html><meta charset=utf-8>\
 <title>netcidr</title>\
 <body style=\"font-family:system-ui;padding:3rem;text-align:center\">\
@@ -40,8 +32,6 @@ const FAILURE_PAGE: &str = "<!doctype html><meta charset=utf-8>\
 ///
 /// Reads only the request line, which is all that carries the query
 /// string — the flow never needs headers or a body.
-// Consumed by `handle_login` in Task 8; the attribute goes away with it.
-#[allow(dead_code)]
 pub async fn wait_for_callback(
     listener: TcpListener,
     expected_state: String,
@@ -96,9 +86,6 @@ pub async fn wait_for_callback(
 
 /// Pull the query string out of the HTTP request line and turn it into a
 /// result. Split out from the socket handling so it is directly testable.
-// Consumed by `wait_for_callback` once Task 8 calls it from `handle_login`;
-// the attribute goes away with that wiring.
-#[allow(dead_code)]
 fn interpret_request(request: &str, expected_state: &str) -> Result<Callback> {
     let request_line = request.lines().next().unwrap_or_default();
     let target = request_line.split_whitespace().nth(1).unwrap_or_default();
@@ -129,9 +116,6 @@ fn interpret_request(request: &str, expected_state: &str) -> Result<Callback> {
 
 /// Decode the query string. `form_urlencoded` handles both `%XX` escapes
 /// and `+` as space, and is already in the dependency tree via axum.
-// Consumed by `interpret_request` once Task 8 wires the module in; the
-// attribute goes away with that wiring.
-#[allow(dead_code)]
 fn parse_query(query: &str) -> HashMap<String, String> {
     form_urlencoded::parse(query.as_bytes())
         .map(|(key, value)| (key.into_owned(), value.into_owned()))
@@ -145,9 +129,6 @@ fn parse_query(query: &str) -> HashMap<String, String> {
 /// the lengths matched. Duplicated rather than made public because the bin
 /// and lib halves of this crate should not grow a dependency for a dozen
 /// lines.
-// Consumed by `interpret_request` once Task 8 wires the module in; the
-// attribute goes away with that wiring.
-#[allow(dead_code)]
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     let max_len = a.len().max(b.len());
     let mut diff = a.len() ^ b.len();
@@ -159,6 +140,190 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     }
 
     diff == 0
+}
+
+use netcidr::credentials::{Account, CredentialStore, normalize_api_url};
+use netcidr::oauth::{self, Pkce};
+use serde::Deserialize;
+
+const ENV_API_URL: &str = "NETCIDR_API_URL";
+
+/// Identity echoed back by `GET /me`, used to confirm the server actually
+/// accepts the freshly minted token.
+#[derive(Deserialize)]
+struct Me {
+    email: Option<String>,
+    #[serde(default)]
+    is_allowlisted: bool,
+}
+
+fn resolve_api_url(cli_flag: Option<&str>) -> Result<String> {
+    let raw = match cli_flag {
+        Some(url) => url.to_string(),
+        None => std::env::var(ENV_API_URL).map_err(|_| {
+            NetcidrError::Auth(format!("no API URL - pass --api-url or set {ENV_API_URL}"))
+        })?,
+    };
+    normalize_api_url(&raw)
+}
+
+/// Confirm the server accepts this token, and learn the verified email.
+/// Checking against the live server tests the audience list it actually
+/// has, rather than the CLI's assumption about it.
+async fn verify_with_server(api_url: &str, id_token: &str) -> Result<Me> {
+    let response = reqwest::Client::new()
+        .get(format!("{api_url}/me"))
+        .bearer_auth(id_token)
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| NetcidrError::Auth(format!("could not reach {api_url}: {e}")))?;
+
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(NetcidrError::Auth(format!(
+            "signed in, but {api_url} will not accept the token \
+             (its NETCIDR_OIDC_AUDIENCE likely omits this CLI client)"
+        )));
+    }
+    if !response.status().is_success() {
+        return Err(NetcidrError::Auth(format!(
+            "{api_url}/me returned HTTP {}",
+            response.status().as_u16()
+        )));
+    }
+    response
+        .json::<Me>()
+        .await
+        .map_err(|e| NetcidrError::Auth(format!("unreadable /me response: {e}")))
+}
+
+fn open_browser(url: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut c = std::process::Command::new("open");
+        c.arg(url);
+        c
+    };
+    #[cfg(target_os = "linux")]
+    let mut command = {
+        let mut c = std::process::Command::new("xdg-open");
+        c.arg(url);
+        c
+    };
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut c = std::process::Command::new("rundll32");
+        c.args(["url.dll,FileProtocolHandler", url]);
+        c
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    let mut command = {
+        let mut c = std::process::Command::new("true");
+        let _ = url;
+        c
+    };
+
+    command
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+pub async fn handle_login(
+    api_url: Option<&str>,
+    no_browser: bool,
+    timeout_secs: u64,
+) -> Result<()> {
+    let api_url = resolve_api_url(api_url)?;
+    let auth = oauth::fetch_auth_features(&api_url).await?;
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|e| NetcidrError::Auth(format!("could not bind a loopback port: {e}")))?;
+    let port = listener
+        .local_addr()
+        .map_err(|e| NetcidrError::Auth(format!("could not read the loopback port: {e}")))?
+        .port();
+    let redirect_uri = format!("http://127.0.0.1:{port}/callback");
+
+    let pkce = Pkce::generate();
+    let state = oauth::random_state();
+    let auth_url =
+        oauth::build_auth_url(&auth.cli_client_id, &redirect_uri, &pkce.challenge, &state);
+
+    if no_browser || !open_browser(&auth_url) {
+        println!("Open this URL to sign in:\n\n  {auth_url}\n");
+    } else {
+        println!("Opening your browser to sign in with Google...");
+    }
+
+    let callback = wait_for_callback(listener, state, Duration::from_secs(timeout_secs)).await?;
+
+    let tokens = oauth::exchange_code(
+        oauth::TOKEN_ENDPOINT,
+        &auth.cli_client_id,
+        &auth.cli_client_secret,
+        &callback.code,
+        &pkce.verifier,
+        &redirect_uri,
+    )
+    .await?;
+
+    let me = verify_with_server(&api_url, &tokens.id_token).await?;
+    let email = me.email.unwrap_or_else(|| "(unknown)".to_string());
+
+    let mut store = CredentialStore::load()?;
+    store.insert(
+        &api_url,
+        Account {
+            email: email.clone(),
+            // exchange_code already rejected a response without one.
+            refresh_token: tokens.refresh_token.clone().unwrap_or_default(),
+            id_token: tokens.id_token,
+            expires_at: oauth::expiry_from_now(tokens.expires_in),
+            client_id: auth.cli_client_id,
+        },
+    );
+    store.save()?;
+
+    println!("Signed in as {email}");
+    println!(
+        "Credential cached in {}",
+        netcidr::credentials::credentials_path()?.display()
+    );
+    if !me.is_allowlisted {
+        println!(
+            "\nNote: {email} is not yet admitted by this server's users directory.\n\
+             Sign-in worked, but IPAM calls will be refused until an admin adds you."
+        );
+    }
+    Ok(())
+}
+
+pub async fn handle_logout(api_url: Option<&str>, all: bool) -> Result<()> {
+    let mut store = CredentialStore::load()?;
+
+    if all {
+        if store.is_empty() {
+            println!("No cached logins.");
+            return Ok(());
+        }
+        store.clear();
+        store.save()?;
+        println!("Discarded every cached login.");
+        return Ok(());
+    }
+
+    let api_url = resolve_api_url(api_url)?;
+    if store.remove(&api_url) {
+        store.save()?;
+        println!("Signed out of {api_url}");
+    } else {
+        println!("Not signed in to {api_url}");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
