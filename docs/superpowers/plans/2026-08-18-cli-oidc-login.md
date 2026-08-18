@@ -6,14 +6,17 @@
 
 **Architecture:** Two additive server changes (audience becomes a list; `/features` advertises the CLI OAuth client) plus three new modules — `credentials.rs` (0600 credential file + precedence resolver), `oauth.rs` (PKCE, code exchange, refresh), and `login_cli.rs` (loopback listener + orchestration). Explicit `NETCIDR_API_TOKEN` keeps winning over a cached login, so CI is untouched.
 
-**Tech Stack:** Rust, axum 0.8, reqwest 0.13, jsonwebtoken 10.4, clap 4, `dirs` 6, sha2, base64, rand. Tests use tokio-test, tempfile, tower, rsa.
+**Tech Stack:** Rust, axum 0.8, reqwest 0.13, jsonwebtoken 10.4, clap 4, `dirs` 6, sha2, base64, rand, percent-encoding, form_urlencoded. Tests use tokio-test, tempfile, tower, rsa.
 
 **Spec:** [docs/superpowers/specs/2026-08-18-cli-oidc-login-design.md](../specs/2026-08-18-cli-oidc-login-design.md)
 
 ## Global Constraints
 
 - **No `unsafe` anywhere.** No exceptions.
-- **No new dependencies.** Everything needed is already in `Cargo.toml`.
+- **Two new direct dependencies only:** `percent-encoding = "2"` and
+  `form_urlencoded = "1"`. Both are already compiled as transitive deps of
+  axum, so this adds no new crates to the build — it only makes them
+  directly importable. Add no others.
 - All external input goes through `src/validation.rs` before use.
 - Never log, trace, or print an ID token, refresh token, or client secret.
 - Conventional commit messages (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`).
@@ -941,7 +944,7 @@ silently using it — the refresh token it holds is long-lived."
 
 **Files:**
 - Create: `src/oauth.rs`
-- Modify: `src/lib.rs` (add `pub mod oauth;`)
+- Modify: `src/lib.rs` (add `pub mod oauth;`), `Cargo.toml` (two direct deps)
 - Test: inline `mod tests` in `src/oauth.rs`
 
 **Interfaces:**
@@ -1035,7 +1038,18 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Register the module and run the tests**
+- [ ] **Step 2: Add the dependencies and register the module**
+
+Add to `[dependencies]` in `Cargo.toml`:
+
+```toml
+percent-encoding = "2"
+form_urlencoded = "1"
+```
+
+Both are already compiled as transitive dependencies of axum, so this adds
+no new crates to the build — confirm with `cargo tree -i percent-encoding`
+before and after.
 
 Add to `src/lib.rs`:
 
@@ -1058,6 +1072,7 @@ Prepend above the test module in `src/oauth.rs`:
 //! or the terminal, so it is all directly testable.
 
 use base64::Engine;
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use rand::RngCore;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -1113,20 +1128,16 @@ pub fn random_state() -> String {
     b64url(&bytes)
 }
 
-/// Percent-encode a query-parameter value. Hand-rolled against the
-/// unreserved set from RFC 3986 rather than pulling in a URL crate for
-/// four call sites.
+/// Everything outside RFC 3986's unreserved set gets percent-encoded.
+const QUERY_VALUE: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+
+/// Percent-encode a query-parameter value.
 fn encode(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for byte in value.as_bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                out.push(*byte as char)
-            }
-            other => out.push_str(&format!("%{other:02X}")),
-        }
-    }
-    out
+    utf8_percent_encode(value, QUERY_VALUE).to_string()
 }
 
 /// Build the browser-facing authorization URL.
@@ -1160,7 +1171,7 @@ Expected: PASS, all six. The RFC 7636 vector passing is the important one.
 
 ```bash
 just fmt
-git add src/oauth.rs src/lib.rs
+git add src/oauth.rs src/lib.rs Cargo.toml Cargo.lock
 git commit -m "feat(oauth): add PKCE derivation and authorization-URL building
 
 S256 only. The RFC 7636 Appendix B vector is asserted directly, since a
@@ -1217,25 +1228,49 @@ struct TokenForm {
     client_secret: String,
 }
 
-async fn stub_token(Form(form): Form<TokenForm>) -> Json<serde_json::Value> {
-    assert_eq!(form.client_id, "desktop-client");
-    assert_eq!(form.client_secret, "GOCSPX-test");
+/// Reject bad input with a 400 carrying a distinctive code rather than
+/// panicking. A panic inside an axum handler drops the connection, which
+/// reaches the test as an opaque "token request failed" and hides the real
+/// cause; a 400 flows through the normal error path and names the problem.
+async fn stub_token(
+    Form(form): Form<TokenForm>,
+) -> (axum::http::StatusCode, Json<serde_json::Value>) {
+    fn bad(code: &str) -> (axum::http::StatusCode, Json<serde_json::Value>) {
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(json!({ "error": code })),
+        )
+    }
+    let ok = |body: serde_json::Value| (axum::http::StatusCode::OK, Json(body));
+
+    if form.client_id != "desktop-client" {
+        return bad("stub_bad_client_id");
+    }
+    if form.client_secret != "GOCSPX-test" {
+        return bad("stub_bad_client_secret");
+    }
 
     match form.grant_type.as_str() {
         "authorization_code" => {
-            assert_eq!(form.code, "the-code");
-            assert_eq!(form.code_verifier, "the-verifier");
-            Json(json!({
+            if form.code != "the-code" {
+                return bad("stub_bad_code");
+            }
+            if form.code_verifier != "the-verifier" {
+                return bad("stub_bad_verifier");
+            }
+            ok(json!({
                 "id_token": "eyJ-fresh",
                 "refresh_token": "1//0g-refresh",
                 "expires_in": 3599
             }))
         }
         "refresh_token" => {
-            assert_eq!(form.refresh_token, "1//0g-refresh");
-            Json(json!({ "id_token": "eyJ-refreshed", "expires_in": 3599 }))
+            if form.refresh_token != "1//0g-refresh" {
+                return bad("stub_bad_refresh_token");
+            }
+            ok(json!({ "id_token": "eyJ-refreshed", "expires_in": 3599 }))
         }
-        other => panic!("unexpected grant_type {other}"),
+        _ => bad("stub_unexpected_grant_type"),
     }
 }
 
@@ -1300,6 +1335,29 @@ async fn invalid_grant_is_reported_as_an_expired_session() {
     let message = err.to_string();
     assert!(message.contains("session expired"), "got: {message}");
     assert!(message.contains("netcidr login"), "got: {message}");
+}
+
+#[tokio::test]
+async fn wrong_credentials_surface_the_stubs_error_code() {
+    let url = spawn(Router::new().route("/token", post(stub_token))).await;
+
+    let err = exchange_code(
+        &url,
+        "wrong-client",
+        "GOCSPX-test",
+        "the-code",
+        "the-verifier",
+        "http://127.0.0.1:51847/callback",
+    )
+    .await
+    .unwrap_err();
+
+    // Proves the stub's rejection path produces a legible failure rather
+    // than a dropped connection.
+    assert!(
+        err.to_string().contains("stub_bad_client_id"),
+        "got: {err}"
+    );
 }
 
 #[tokio::test]
@@ -2159,46 +2217,12 @@ fn interpret_request(request: &str, expected_state: &str) -> Result<Callback> {
     Ok(Callback { code: code.clone() })
 }
 
+/// Decode the query string. `form_urlencoded` handles both `%XX` escapes
+/// and `+` as space, and is already in the dependency tree via axum.
 fn parse_query(query: &str) -> HashMap<String, String> {
-    query
-        .split('&')
-        .filter(|pair| !pair.is_empty())
-        .filter_map(|pair| pair.split_once('='))
-        .map(|(k, v)| (percent_decode(k), percent_decode(v)))
+    form_urlencoded::parse(query.as_bytes())
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
         .collect()
-}
-
-/// Minimal percent-decoder for query values, including `+` as space.
-fn percent_decode(value: &str) -> String {
-    let bytes = value.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'%' if i + 2 < bytes.len() => {
-                let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or_default();
-                match u8::from_str_radix(hex, 16) {
-                    Ok(decoded) => {
-                        out.push(decoded);
-                        i += 3;
-                    }
-                    Err(_) => {
-                        out.push(bytes[i]);
-                        i += 1;
-                    }
-                }
-            }
-            b'+' => {
-                out.push(b' ');
-                i += 1;
-            }
-            other => {
-                out.push(other);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Length-independent comparison for the `state` check. Mirrors the helper
