@@ -7,7 +7,10 @@
 use base64::Engine;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use rand::RngCore;
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
+
+use crate::error::{NetcidrError, Result};
 
 pub const AUTH_ENDPOINT: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 pub const TOKEN_ENDPOINT: &str = "https://oauth2.googleapis.com/token";
@@ -86,6 +89,166 @@ pub fn build_auth_url(client_id: &str, redirect_uri: &str, challenge: &str, stat
         encode(challenge),
         encode(state),
     )
+}
+
+/// Successful token-endpoint response. `refresh_token` is present on an
+/// authorization-code exchange and absent on a refresh, which is why it is
+/// optional here rather than in two separate types.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TokenResponse {
+    pub id_token: String,
+    #[serde(default)]
+    pub refresh_token: Option<String>,
+    #[serde(default)]
+    pub expires_in: u64,
+}
+
+/// Google's error body. `error` is the machine-readable code we branch on;
+/// `error_description` is human text we fold into the message.
+#[derive(Debug, Deserialize)]
+struct TokenErrorResponse {
+    error: String,
+    #[serde(default)]
+    error_description: Option<String>,
+}
+
+/// Convert a token response's `expires_in` into an absolute RFC3339
+/// instant, matching the timestamp convention used elsewhere in the
+/// project.
+pub fn expiry_from_now(expires_in: u64) -> String {
+    let expires_at = chrono::Utc::now() + chrono::Duration::seconds(expires_in as i64);
+    expires_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+async fn post_token_form(token_endpoint: &str, form: &[(&str, &str)]) -> Result<TokenResponse> {
+    let response = reqwest::Client::new()
+        .post(token_endpoint)
+        .form(form)
+        .send()
+        .await
+        .map_err(|e| NetcidrError::Auth(format!("token request failed: {e}")))?;
+
+    if response.status().is_success() {
+        return response
+            .json::<TokenResponse>()
+            .await
+            .map_err(|e| NetcidrError::Auth(format!("unreadable token response: {e}")));
+    }
+
+    let status = response.status().as_u16();
+    let body = response.json::<TokenErrorResponse>().await.ok();
+    match body {
+        Some(err) if err.error == "invalid_grant" => Err(NetcidrError::Auth(
+            "session expired - run `netcidr login`".to_string(),
+        )),
+        Some(err) => {
+            let detail = err.error_description.unwrap_or_else(|| err.error.clone());
+            Err(NetcidrError::Auth(format!(
+                "token endpoint rejected the request: {detail}"
+            )))
+        }
+        None => Err(NetcidrError::Auth(format!(
+            "token endpoint returned HTTP {status}"
+        ))),
+    }
+}
+
+/// Exchange an authorization code for tokens. A response with no refresh
+/// token is treated as a failure: without one the credential dies in an
+/// hour, and the usual cause is a client registered as the wrong type.
+pub async fn exchange_code(
+    token_endpoint: &str,
+    client_id: &str,
+    client_secret: &str,
+    code: &str,
+    verifier: &str,
+    redirect_uri: &str,
+) -> Result<TokenResponse> {
+    let response = post_token_form(
+        token_endpoint,
+        &[
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("code_verifier", verifier),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+            ("redirect_uri", redirect_uri),
+        ],
+    )
+    .await?;
+
+    if response.refresh_token.is_none() {
+        return Err(NetcidrError::Auth(
+            "Google returned no refresh token - check the client is of type \"Desktop app\""
+                .to_string(),
+        ));
+    }
+    Ok(response)
+}
+
+/// Re-mint an ID token from a stored refresh token.
+pub async fn refresh_id_token(
+    token_endpoint: &str,
+    client_id: &str,
+    client_secret: &str,
+    refresh_token: &str,
+) -> Result<TokenResponse> {
+    post_token_form(
+        token_endpoint,
+        &[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+        ],
+    )
+    .await
+}
+
+/// The `auth` block of `GET /features` — a deployment's CLI OAuth client.
+///
+/// Lives here rather than in the CLI binary because both `netcidr login`
+/// and the credential resolver need it: the resolver has no other way to
+/// learn the client secret when it refreshes a stale ID token.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AuthFeatures {
+    pub mode: String,
+    pub cli_client_id: String,
+    pub cli_client_secret: String,
+}
+
+#[derive(Deserialize)]
+struct FeaturesBody {
+    #[serde(default)]
+    auth: Option<AuthFeatures>,
+}
+
+/// Fetch the CLI OAuth client a server advertises. Errors name the exact
+/// missing configuration so the operator knows what to set.
+pub async fn fetch_auth_features(api_url: &str) -> Result<AuthFeatures> {
+    let body: FeaturesBody = reqwest::Client::new()
+        .get(format!("{api_url}/features"))
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| NetcidrError::Auth(format!("could not reach {api_url}: {e}")))?
+        .json()
+        .await
+        .map_err(|e| NetcidrError::Auth(format!("unreadable /features response: {e}")))?;
+
+    let auth = body.auth.ok_or_else(|| {
+        NetcidrError::Auth(format!(
+            "server at {api_url} has no CLI OAuth client configured \
+             (set NETCIDR_OIDC_CLI_CLIENT_ID)"
+        ))
+    })?;
+
+    if auth.mode != "oidc" {
+        return Err(NetcidrError::Auth(format!(
+            "server at {api_url} is not in OIDC mode - use NETCIDR_API_TOKEN instead"
+        )));
+    }
+    Ok(auth)
 }
 
 #[cfg(test)]
