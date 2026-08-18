@@ -2077,6 +2077,23 @@ retrying forever."
 
 ---
 
+> **As-built deviations (approved during execution).** Three defects in the
+> task text above were found in review and fixed:
+>
+> 1. `resolve_from` gained an `env_token: Option<&str>` parameter. Reading
+>    `NETCIDR_API_TOKEN` inside it made the tests depend on ambient shell
+>    state — 3 of 5 failed for anyone who exported the variable.
+> 2. `resolve_credential` no longer duplicates the explicit/env precedence
+>    steps; it reads the env once and delegates the whole chain to
+>    `resolve_from`, supplying the client secret through a closure so the
+>    common path still touches neither the credential file nor the network.
+> 3. A typed `NetcidrError::NotAuthenticated(String)` now distinguishes "no
+>    account cached" from a broken credential, so `mcp-serve --remote` warns
+>    instead of silently proceeding unauthenticated. `error_presenter.rs`
+>    carries a matching arm.
+>
+> As-built code is in commits `a957f36` and `e7e0bab`.
+
 ### Task 7: Loopback callback listener
 
 **Files:**
