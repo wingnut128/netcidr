@@ -8,6 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use crate::error::{NetcidrError, Result};
@@ -17,7 +18,7 @@ use crate::error::{NetcidrError, Result};
 const SCHEMA_VERSION: u32 = 1;
 
 /// Cached credential for a single netcidr deployment.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Account {
     /// Verified email reported by the server at login time.
     pub email: String,
@@ -31,6 +32,21 @@ pub struct Account {
     /// that rotates its CLI client invalidates the cache explicitly
     /// instead of failing with a confusing audience error.
     pub client_id: String,
+}
+
+/// Hand-written so `{:?}` never prints the refresh or ID token — mirrors
+/// `AuthConfig`'s `Debug` impl in `src/auth.rs`, which redacts its secret
+/// fields the same way.
+impl std::fmt::Debug for Account {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Account")
+            .field("email", &self.email)
+            .field("refresh_token", &"<redacted>")
+            .field("id_token", &"<redacted>")
+            .field("expires_at", &self.expires_at)
+            .field("client_id", &self.client_id)
+            .finish()
+    }
 }
 
 /// The credential file. `BTreeMap` rather than `HashMap` so the serialized
@@ -76,12 +92,46 @@ impl CredentialStore {
         self.save_to(&credentials_path()?)
     }
 
+    /// Writes via a sibling temp file (created `0600` from birth) and an
+    /// atomic rename, rather than truncating `path` in place. If `path`
+    /// already exists — restored from backup, copied by another tool,
+    /// left over from an older build — a plain `write()` would truncate
+    /// it and leave the refresh token sitting in a file whose mode isn't
+    /// fixed up until the *next* syscall; a crash or a `set_permissions`
+    /// error in that window exposes the secret. Renaming over the target
+    /// is atomic, so the real file is never observed holding the secret
+    /// at the wrong mode, and a crash mid-write leaves the previous file
+    /// (or no file) intact instead of a truncated one.
     pub fn save_to(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let json = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, json)?;
+        let tmp = path.with_extension("json.tmp");
+
+        let result = (|| -> Result<()> {
+            let mut f = open_owner_only(&tmp)?;
+            f.write_all(json.as_bytes())?;
+            f.sync_all()?;
+            drop(f);
+            std::fs::rename(&tmp, path)?;
+            Ok(())
+        })();
+
+        if result.is_err() {
+            // Best-effort cleanup: don't leave a temp file holding a
+            // secret behind just because the write or rename failed.
+            let _ = std::fs::remove_file(&tmp);
+        }
+        result?;
+
+        // Redundant on unix in the common case — `open_owner_only` already
+        // creates the temp file at 0600, and rename preserves the mode of
+        // the file being renamed, not the target it replaces. Kept anyway
+        // so `save_to` stays correct if that file is ever created some
+        // other way, and so non-unix targets (where `open_owner_only` is a
+        // no-op on mode) still end up owner-restricted where the platform
+        // supports it.
         set_owner_only(path)?;
         Ok(())
     }
@@ -196,6 +246,34 @@ fn set_owner_only(_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Create (or truncate) `path` for writing, owner-only from the moment it
+/// is born on unix — there is never a window where the temp file exists
+/// with a wider mode. On non-unix platforms this is a plain create/
+/// truncate; `save_to` still calls `set_owner_only` on the final path
+/// afterward for whatever mode enforcement the platform offers.
+#[cfg(unix)]
+fn open_owner_only(path: &Path) -> Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(NetcidrError::from)
+}
+
+#[cfg(not(unix))]
+fn open_owner_only(path: &Path) -> Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)
+        .map_err(NetcidrError::from)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,6 +326,31 @@ mod tests {
 
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_fixes_permissions_on_a_preexisting_looser_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("credentials.json");
+
+        // Simulate a file restored from backup / copied by another tool /
+        // left by an older build: it exists already, at 0644, before we
+        // ever call save_to.
+        std::fs::write(&path, "{}").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let mut store = CredentialStore::default();
+        store.insert("https://server", sample_account());
+        store.save_to(&path).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+
+        let tmp = path.with_extension("json.tmp");
+        assert!(!tmp.exists(), "temp file was left behind: {tmp:?}");
     }
 
     #[cfg(unix)]
@@ -311,6 +414,32 @@ mod tests {
         assert_eq!(
             normalize_api_url("  https://server//  ").unwrap(),
             "https://server"
+        );
+    }
+
+    #[test]
+    fn debug_redacts_tokens() {
+        let account = sample_account();
+        let formatted = format!("{account:?}");
+        assert!(
+            !formatted.contains(&account.refresh_token),
+            "refresh token leaked into Debug output: {formatted}"
+        );
+        assert!(
+            !formatted.contains(&account.id_token),
+            "id token leaked into Debug output: {formatted}"
+        );
+
+        let mut store = CredentialStore::default();
+        store.insert("https://server", account.clone());
+        let store_formatted = format!("{store:?}");
+        assert!(
+            !store_formatted.contains(&account.refresh_token),
+            "refresh token leaked via CredentialStore Debug: {store_formatted}"
+        );
+        assert!(
+            !store_formatted.contains(&account.id_token),
+            "id token leaked via CredentialStore Debug: {store_formatted}"
         );
     }
 }
