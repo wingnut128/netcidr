@@ -95,7 +95,10 @@ fn interpret_request(request: &str, expected_state: &str) -> Result<Callback> {
     if let Some(error) = params.get("error") {
         return Err(match error.as_str() {
             "access_denied" => NetcidrError::Auth("sign-in was declined".to_string()),
-            other => NetcidrError::Auth(format!("authorization failed: {other}")),
+            other => NetcidrError::Auth(format!(
+                "authorization failed: {}",
+                sanitize_for_display(other)
+            )),
         });
     }
 
@@ -112,6 +115,29 @@ fn interpret_request(request: &str, expected_state: &str) -> Result<Callback> {
         .ok_or_else(|| NetcidrError::Auth("authorization response carried no code".to_string()))?;
 
     Ok(Callback { code: code.clone() })
+}
+
+/// Bound on a sanitized IdP-supplied value echoed back to the terminal.
+/// OAuth error codes are short identifiers like `access_denied` or
+/// `invalid_scope`; 64 bytes is generous headroom without being unbounded.
+const SANITIZED_VALUE_MAX_LEN: usize = 64;
+
+/// Scrub an untrusted, percent-decoded query value before it is
+/// interpolated into a message printed to the terminal. The `error` query
+/// parameter on the loopback callback is attacker-influenceable — anyone
+/// who can get the user to open a crafted URL at the loopback port while
+/// `netcidr login` is waiting controls this string — so it must not be
+/// allowed to carry ANSI escapes or other control bytes into the terminal.
+/// Keeps only printable ASCII (space through `~`) and truncates to
+/// `SANITIZED_VALUE_MAX_LEN`, dropping everything else rather than
+/// replacing it with a placeholder, so the bound on output length holds
+/// regardless of how much junk was stripped.
+fn sanitize_for_display(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| c.is_ascii_graphic() || *c == ' ')
+        .take(SANITIZED_VALUE_MAX_LEN)
+        .collect()
 }
 
 /// Decode the query string. `form_urlencoded` handles both `%XX` escapes
@@ -217,12 +243,17 @@ fn open_browser(url: &str) -> bool {
         c
     };
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    let mut command = {
-        let mut c = std::process::Command::new("true");
+    {
+        // No known way to launch a browser on this target. Report failure
+        // rather than pretending success — `handle_login`'s
+        // `no_browser || !open_browser(&auth_url)` then falls back to
+        // printing the URL, instead of leaving the user stuck waiting with
+        // nothing on screen.
         let _ = url;
-        c
-    };
+        return false;
+    }
 
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
     command
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -274,13 +305,24 @@ pub async fn handle_login(
     let me = verify_with_server(&api_url, &tokens.id_token).await?;
     let email = me.email.unwrap_or_else(|| "(unknown)".to_string());
 
+    // `exchange_code` already rejects a response with no refresh token, but
+    // that invariant is enforced there, not here — check it again at the
+    // point that relies on it rather than trusting it stayed true. An
+    // empty string cached silently would only surface much later as a
+    // confusing "session expired".
+    let refresh_token = tokens.refresh_token.clone().ok_or_else(|| {
+        NetcidrError::Auth(
+            "Google returned no refresh token - check the client is of type \"Desktop app\""
+                .to_string(),
+        )
+    })?;
+
     let mut store = CredentialStore::load()?;
     store.insert(
         &api_url,
         Account {
             email: email.clone(),
-            // exchange_code already rejected a response without one.
-            refresh_token: tokens.refresh_token.clone().unwrap_or_default(),
+            refresh_token,
             id_token: tokens.id_token,
             expires_at: oauth::expiry_from_now(tokens.expires_in),
             client_id: auth.cli_client_id,
@@ -386,6 +428,42 @@ mod tests {
         assert!(err.to_string().contains("declined"), "got: {err}");
     }
 
+    /// An IdP-controlled `error` value carrying an ANSI escape and raw
+    /// control bytes must never reach the terminal unfiltered: anyone who
+    /// can get the user to open a crafted URL at the loopback port while
+    /// `netcidr login` is waiting controls this string.
+    #[tokio::test]
+    async fn sanitizes_control_bytes_in_the_error_parameter() {
+        let (listener, url) = listener_and_url().await;
+        let task = tokio::spawn(wait_for_callback(
+            listener,
+            "the-state".to_string(),
+            Duration::from_secs(5),
+        ));
+
+        // \x1b[31m is an ANSI color escape; \x07 is BEL; \x08 is backspace.
+        // Percent-encoded so the query string itself stays well-formed.
+        let malicious = "weird%1b%5b31mderror%07%08";
+        let _ = reqwest::get(format!("{url}?error={malicious}&state=the-state")).await;
+
+        let err = task.await.unwrap().unwrap_err();
+        let message = err.to_string();
+        assert!(!message.contains('\x1b'), "got: {message:?}");
+        assert!(!message.contains('\x07'), "got: {message:?}");
+        assert!(!message.contains('\x08'), "got: {message:?}");
+        assert!(message.contains("weird"), "got: {message:?}");
+    }
+
+    #[test]
+    fn sanitize_for_display_strips_control_bytes_and_truncates() {
+        let raw = format!("\x1b[31minjected\x07{}", "x".repeat(200));
+        let cleaned = sanitize_for_display(&raw);
+
+        assert!(cleaned.chars().all(|c| c.is_ascii_graphic() || c == ' '));
+        assert!(cleaned.len() <= SANITIZED_VALUE_MAX_LEN);
+        assert!(cleaned.starts_with("[31minjected"));
+    }
+
     #[tokio::test]
     async fn times_out_when_no_callback_arrives() {
         let (listener, _url) = listener_and_url().await;
@@ -445,5 +523,83 @@ mod tests {
 
         let err = task.await.unwrap().unwrap_err();
         assert!(err.to_string().contains("timed out"), "got: {err}");
+    }
+
+    // `handle_logout` always reads and writes through
+    // `CredentialStore::load`/`save`, which resolve to the real
+    // `~/.config/netcidr/credentials.json` — there is no way to redirect
+    // that path from here, and a test must never touch the real user
+    // credential file. So these exercise the same store operations
+    // `handle_logout` performs (`remove` for one account, `clear` for
+    // `--all`, and the "was nothing removed" case) directly against
+    // `CredentialStore` on a `tempfile` path via `save_to`/`load_from`,
+    // rather than calling `handle_logout` or going through a CLI
+    // subprocess.
+    fn sample_account() -> Account {
+        Account {
+            email: "user@example.com".to_string(),
+            refresh_token: "1//0g-refresh".to_string(),
+            id_token: "eyJ-id".to_string(),
+            expires_at: "2026-08-18T21:04:11Z".to_string(),
+            client_id: "desktop-client".to_string(),
+        }
+    }
+
+    #[test]
+    fn logout_removes_one_account_and_leaves_others_intact() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("credentials.json");
+
+        let mut store = CredentialStore::default();
+        store.insert("https://a.example", sample_account());
+        store.insert("https://b.example", sample_account());
+        store.save_to(&path).unwrap();
+
+        let mut store = CredentialStore::load_from(&path).unwrap();
+        assert!(store.remove("https://a.example"));
+        store.save_to(&path).unwrap();
+
+        let reloaded = CredentialStore::load_from(&path).unwrap();
+        assert!(reloaded.get("https://a.example").is_none());
+        assert!(reloaded.get("https://b.example").is_some());
+    }
+
+    #[test]
+    fn logout_all_clears_every_cached_login() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("credentials.json");
+
+        let mut store = CredentialStore::default();
+        store.insert("https://a.example", sample_account());
+        store.insert("https://b.example", sample_account());
+        store.save_to(&path).unwrap();
+
+        let mut store = CredentialStore::load_from(&path).unwrap();
+        assert!(!store.is_empty());
+        store.clear();
+        store.save_to(&path).unwrap();
+
+        let reloaded = CredentialStore::load_from(&path).unwrap();
+        assert!(reloaded.is_empty());
+    }
+
+    #[test]
+    fn logout_of_a_url_never_signed_in_to_reports_cleanly() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("credentials.json");
+
+        let mut store = CredentialStore::default();
+        store.insert("https://a.example", sample_account());
+        store.save_to(&path).unwrap();
+
+        // Mirrors `handle_logout`'s non-`--all` branch: `remove` returning
+        // `false` is the "not signed in" case `handle_logout` prints a
+        // plain message for, not an error path.
+        let mut store = CredentialStore::load_from(&path).unwrap();
+        assert!(!store.remove("https://never-signed-in.example"));
+        store.save_to(&path).unwrap();
+
+        let reloaded = CredentialStore::load_from(&path).unwrap();
+        assert!(reloaded.get("https://a.example").is_some());
     }
 }
