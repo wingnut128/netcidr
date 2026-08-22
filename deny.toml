@@ -12,11 +12,6 @@ ignore = [
     # never private-key RSA decryption, which is the path Marvin targets.
     # No patched `rsa` release exists yet.
     "RUSTSEC-2023-0071",
-    # RUSTSEC-2026-0097 — `rand` 0.8 unsoundness when a custom logger calls
-    # `rand::rng()` from inside a log handler. We don't define a custom logger
-    # (we use `tracing`'s default subscriber) and don't call rand from one.
-    # Transitive via jsonwebtoken/rsa; clears when those upgrade past rand 0.8.
-    "RUSTSEC-2026-0097",
 ]
 
 [licenses]
