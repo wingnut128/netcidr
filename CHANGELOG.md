@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.1](https://github.com/wingnut128/netcidr/compare/v0.28.0...v0.28.1) - 2026-08-22
+
+### Fixed
+
+- *(deps)* bump h2 to 0.4.18 for RUSTSEC-2026-0258, drop stale deny ignore ([#348](https://github.com/wingnut128/netcidr/pull/348))
+
+### Other
+
+- *(deps)* bump github/codeql-action/upload-sarif ([#343](https://github.com/wingnut128/netcidr/pull/343))
+- *(deps)* bump actions/attest-build-provenance from 4.1.1 to 4.2.2 ([#333](https://github.com/wingnut128/netcidr/pull/333))
+- *(deps)* bump github/codeql-action/analyze from 4.37.4 to 4.37.7 ([#346](https://github.com/wingnut128/netcidr/pull/346))
+- *(deps)* bump cloudsmith-io/cloudsmith-cli-action ([#335](https://github.com/wingnut128/netcidr/pull/335))
+- *(deps)* bump github/codeql-action/init from 4.37.4 to 4.37.7 ([#345](https://github.com/wingnut128/netcidr/pull/345))
+- *(deps-dev)* bump the npm-minor-and-patch group in /dashboard with 3 updates ([#334](https://github.com/wingnut128/netcidr/pull/334))
+- *(deps)* bump the npm-minor-and-patch group in /dashboard with 2 updates ([#325](https://github.com/wingnut128/netcidr/pull/325))
+- Merge branch 'main' into dependabot/cargo/rmcp-3.0.1
+- *(deps)* bump the cargo-minor-and-patch group with 7 updates ([#327](https://github.com/wingnut128/netcidr/pull/327))
+- *(deps)* bump cloudsmith-io/cloudsmith-cli-action
+- *(deps)* bump github/codeql-action/init from 4.37.1 to 4.37.4 ([#330](https://github.com/wingnut128/netcidr/pull/330))
+- *(deps)* bump github/codeql-action/analyze from 4.37.1 to 4.37.4 ([#328](https://github.com/wingnut128/netcidr/pull/328))
+- *(deps)* bump github/codeql-action/upload-sarif ([#326](https://github.com/wingnut128/netcidr/pull/326))
+- *(deps)* bump the npm-minor-and-patch group across 1 directory with 7 updates ([#320](https://github.com/wingnut128/netcidr/pull/320))
+- *(deps)* bump the cargo-minor-and-patch group with 11 updates ([#314](https://github.com/wingnut128/netcidr/pull/314))
+- *(deps)* bump github/codeql-action/analyze from 4.37.0 to 4.37.1 ([#312](https://github.com/wingnut128/netcidr/pull/312))
+- *(deps)* bump release-plz/action from 0.5.130 to 0.5.131 ([#310](https://github.com/wingnut128/netcidr/pull/310))
+- *(deps)* bump github/codeql-action/init from 4.37.0 to 4.37.1 ([#308](https://github.com/wingnut128/netcidr/pull/308))
+- *(deps)* bump github/codeql-action/upload-sarif ([#309](https://github.com/wingnut128/netcidr/pull/309))
+- *(deps)* bump EmbarkStudios/cargo-deny-action from 2.0.20 to 2.1.1 ([#307](https://github.com/wingnut128/netcidr/pull/307))
+
 ### Security
 
 - *(deps)* bump `h2` 0.4.13 -> 0.4.18 in the lockfile for RUSTSEC-2026-0258 ("h2 unbounded empty DATA frames"). Transitive via `hyper`, `tonic`/`tower_governor`, `reqwest`, and `axum`; no source changes required ([#347](https://github.com/wingnut128/netcidr/issues/347))
