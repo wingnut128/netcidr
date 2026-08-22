@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- *(deps)* bump `h2` 0.4.13 -> 0.4.18 in the lockfile for RUSTSEC-2026-0258 ("h2 unbounded empty DATA frames"). Transitive via `hyper`, `tonic`/`tower_governor`, `reqwest`, and `axum`; no source changes required ([#347](https://github.com/wingnut128/netcidr/issues/347))
+
+### Fixed
+
+- *(ci)* drop the stale `RUSTSEC-2026-0097` entry from `deny.toml`. No crate in the graph matches it any more, and cargo-deny fails an unmatched ignore with `advisory-not-detected` ([#347](https://github.com/wingnut128/netcidr/issues/347))
+
 ## [0.28.0](https://github.com/wingnut128/netcidr/compare/v0.27.2...v0.28.0) - 2026-07-16
 
 ### Added
