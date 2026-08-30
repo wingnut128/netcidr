@@ -39,7 +39,7 @@ jobs:
         run: docker build -t netcidr:scan .
 
       - name: Generate SBOM (CycloneDX)
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        uses: anchore/sbom-action@aa80c8c5bd439a416a62804f2151ab38c671a638 # v0.24.1
         with:
           image: netcidr:scan
           format: cyclonedx-json
@@ -48,7 +48,7 @@ jobs:
           upload-artifact-retention: 90
 
       - name: Generate SBOM (SPDX)
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        uses: anchore/sbom-action@aa80c8c5bd439a416a62804f2151ab38c671a638 # v0.24.1
         with:
           image: netcidr:scan
           format: spdx-json
@@ -58,7 +58,7 @@ jobs:
 
       - name: Scan image with Grype
         id: grype
-        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        uses: anchore/scan-action@8964e60c6fabdb85fdbbbfd9834d8f19c97a3086 # v7.4.1
         with:
           image: netcidr:scan
           fail-build: ${{ github.event_name == 'pull_request' }}
@@ -73,7 +73,7 @@ jobs:
         # with the misleading "Input required and not supplied: sarif_file"
         # and masks the real upstream failure.
         if: always() && steps.grype.outputs.sarif != ''
-        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           sarif_file: ${{ steps.grype.outputs.sarif }}
           category: grype-image-scan
