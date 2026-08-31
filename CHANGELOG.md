@@ -9,10 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.28.1](https://github.com/wingnut128/netcidr/compare/v0.28.0...v0.28.1) - 2026-08-30
 
-### Fixed
-
-- *(deps)* bump h2 to 0.4.18 for RUSTSEC-2026-0258, drop stale deny ignore ([#348](https://github.com/wingnut128/netcidr/pull/348))
-
 ### Other
 
 - *(docker)* refresh pinned image digests ([#315](https://github.com/wingnut128/netcidr/pull/315))
