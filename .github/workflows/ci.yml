@@ -68,8 +68,12 @@ jobs:
           key: verify-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: verify-${{ runner.os }}-
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - name: Install dashboard dependencies
+        run: cd dashboard && bun install --frozen-lockfile
+      - name: Test dashboard
+        run: cd dashboard && bun run test
       - name: Build dashboard
-        run: cd dashboard && bun install --frozen-lockfile && bun run build
+        run: cd dashboard && bun run build
       - name: Audit dashboard npm deps
         working-directory: dashboard
         # GHSA-qwww-vcr4-c8h2: react-router RSC-mode CSRF — only affects server

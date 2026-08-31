@@ -3,14 +3,25 @@ import { NavLink, useLocation } from "react-router-dom";
 import { useTheme } from "../../theme/ThemeProvider";
 import { useAuth } from "../../auth/AuthContext";
 import { get } from "../../api";
+import { SignInControl } from "../auth/SignInControl";
 
-const baseNavItems = [
+interface NavItem {
+  to: string;
+  label: string;
+}
+
+const publicNavItems: NavItem[] = [
   { to: "/", label: "Calc" },
   { to: "/split", label: "Split" },
   { to: "/contains", label: "Contains" },
   { to: "/summarize", label: "Summarize" },
   { to: "/from-range", label: "Range" },
+];
+
+const ipamNavItems: NavItem[] = [
+  { to: "/ipam", label: "IPAM" },
   { to: "/visualizer", label: "Visualize" },
+  { to: "/hostnames", label: "Hostnames" },
 ];
 
 interface SidebarProps {
@@ -30,6 +41,31 @@ interface VersionResponse {
 }
 
 const REPO_URL = "https://github.com/wingnut128/netcidr";
+
+function NavGroup({ label, items }: { label: string; items: NavItem[] }) {
+  if (items.length === 0) return null;
+
+  return (
+    <div className="mb-3">
+      <p className="text-text-muted text-xs px-4 mb-1">{label}</p>
+      {items.map((item) => (
+        <NavLink
+          key={item.to}
+          to={item.to}
+          className={({ isActive }) =>
+            `relative block pl-4 pr-3 py-3 md:py-2 text-base md:text-sm rounded-md transition-colors ${
+              isActive
+                ? "text-text font-semibold bg-surface2 before:content-[''] before:absolute before:left-0 before:top-2 before:bottom-2 md:before:top-1.5 md:before:bottom-1.5 before:w-0.5 before:rounded-r before:bg-cyan"
+                : "text-text-muted hover:text-text hover:bg-surface2/60"
+            }`
+          }
+        >
+          {item.label}
+        </NavLink>
+      ))}
+    </div>
+  );
+}
 
 export function Sidebar({
   ipamEnabled,
@@ -60,20 +96,23 @@ export function Sidebar({
     }
   }, [location.pathname, onClose]);
 
-  const navItems = [
-    ...baseNavItems,
-    ...(ipamEnabled ? [{ to: "/ipam", label: "IPAM" }] : []),
-    ...(ipamEnabled ? [{ to: "/hostnames", label: "Hostnames" }] : []),
-    ...(auth.status === "authenticated"
-      ? [{ to: "/tokens", label: "Tokens" }]
-      : []),
-  ];
+  const authenticated = auth.status === "authenticated";
+  const serviceItems = authenticated && ipamEnabled ? ipamNavItems : [];
+  const accountItems = authenticated
+    ? [{ to: "/tokens", label: "Tokens" }]
+    : [];
   // Users (the directory) is platform-admin-only; Activity stays visible
   // to tenant-space admins.
-  const adminItems = [
-    ...(auth.isPlatformAdmin ? [{ to: "/admin/users", label: "Users" }] : []),
-    ...(auth.isAdmin ? [{ to: "/admin/activity", label: "Activity" }] : []),
-  ];
+  const adminItems = authenticated
+    ? [
+        ...(auth.isPlatformAdmin
+          ? [{ to: "/admin/users", label: "Users" }]
+          : []),
+        ...(auth.isAdmin
+          ? [{ to: "/admin/activity", label: "Activity" }]
+          : []),
+      ]
+    : [];
 
   return (
     <nav
@@ -90,51 +129,57 @@ export function Sidebar({
       </div>
 
       <div className="flex flex-col gap-0.5 p-2 flex-1">
-        {navItems.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            className={({ isActive }) =>
-              `relative block pl-4 pr-3 py-3 md:py-2 text-base md:text-sm rounded-md transition-colors ${
-                isActive
-                  ? "text-text font-semibold bg-surface2 before:content-[''] before:absolute before:left-0 before:top-2 before:bottom-2 md:before:top-1.5 md:before:bottom-1.5 before:w-0.5 before:rounded-r before:bg-cyan"
-                  : "text-text-muted hover:text-text hover:bg-surface2/60"
-              }`
-            }
-          >
-            {item.label}
-          </NavLink>
-        ))}
-        {adminItems.length > 0 && (
-          <>
-            <p className="text-text-muted text-xs px-4 mt-4 mb-1">Admin</p>
-            {adminItems.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                className={({ isActive }) =>
-                  `relative block pl-4 pr-3 py-3 md:py-2 text-base md:text-sm rounded-md transition-colors ${
-                    isActive
-                      ? "text-text font-semibold bg-surface2 before:content-[''] before:absolute before:left-0 before:top-2 before:bottom-2 md:before:top-1.5 md:before:bottom-1.5 before:w-0.5 before:rounded-r before:bg-cyan"
-                      : "text-text-muted hover:text-text hover:bg-surface2/60"
-                  }`
-                }
-              >
-                {item.label}
-              </NavLink>
-            ))}
-          </>
-        )}
+        <NavGroup label="Tools" items={publicNavItems} />
+        <NavGroup label="Services" items={serviceItems} />
+        <NavGroup label="Account" items={accountItems} />
+        <NavGroup label="Admin" items={adminItems} />
       </div>
 
-      {auth.status === "authenticated" && auth.email && (
+      {auth.status === "loading" && (
+        <div
+          className="px-4 py-3 border-t border-border text-text-muted text-xs"
+          role="status"
+          aria-live="polite"
+        >
+          Checking sign-in…
+        </div>
+      )}
+
+      {(auth.status === "anonymous" || auth.status === "disabled") && (
         <div className="px-4 py-3 border-t border-border">
-          <p className="text-text text-xs truncate" title={auth.email}>
-            {auth.email}
-          </p>
+          <p className="text-text-muted text-xs mb-2">Authenticated services</p>
+          <SignInControl width={168} />
+        </div>
+      )}
+
+      {auth.status === "unallowlisted" && (
+        <div className="px-4 py-3 border-t border-border">
+          {auth.email && (
+            <p className="text-text text-xs truncate" title={auth.email}>
+              {auth.email}
+            </p>
+          )}
+          <p className="mt-1 text-yellow text-xs">Access pending</p>
           <button
             type="button"
-            onClick={() => auth.signOut()}
+            onClick={auth.signOut}
+            className="mt-1 text-xs text-text-muted hover:text-cyan cursor-pointer min-h-[44px] md:min-h-0"
+          >
+            Sign out
+          </button>
+        </div>
+      )}
+
+      {authenticated && (
+        <div className="px-4 py-3 border-t border-border">
+          {auth.email && (
+            <p className="text-text text-xs truncate" title={auth.email}>
+              {auth.email}
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={auth.signOut}
             className="mt-1 text-xs text-text-muted hover:text-cyan cursor-pointer min-h-[44px] md:min-h-0"
           >
             Sign out
