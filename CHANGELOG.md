@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.2](https://github.com/wingnut128/netcidr/compare/v0.28.1...v0.28.2) - 2026-08-31
+
+### Fixed
+
+- *(security)* resolve Scorecard dependency findings ([#362](https://github.com/wingnut128/netcidr/pull/362))
+
 ## [0.28.1](https://github.com/wingnut128/netcidr/compare/v0.28.0...v0.28.1) - 2026-08-30
 
 ### Other
