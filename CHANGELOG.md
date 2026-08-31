@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.3](https://github.com/wingnut128/netcidr/compare/v0.28.2...v0.28.3) - 2026-08-31
+
+### Added
+
+- *(cli)* add OIDC login and credential management ([#364](https://github.com/wingnut128/netcidr/pull/364))
+
 ### Added
 
 - `netcidr login` / `netcidr logout` — a Google OAuth authorization-code flow with PKCE over a loopback redirect. Credentials cache to `~/.config/netcidr/credentials.json` (mode 0600, written via an atomic temp-file-plus-rename), keyed by API URL, and refresh silently when stale. `login` verifies the new credential with `GET /me`, so an account that isn't allowlisted yet is told so at login time; `logout` clears local state only and does not revoke the grant at Google. This removes the previous hard requirement to mint a first PAT from the dashboard.
