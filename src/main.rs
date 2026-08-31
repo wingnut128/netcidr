@@ -20,6 +20,7 @@ use std::net::SocketAddr;
 use tracing::{info, warn};
 
 mod ipam_cli;
+mod login_cli;
 mod token_cli;
 
 /// Print to stdout, handling broken pipe errors gracefully.
@@ -289,6 +290,22 @@ async fn async_main(cli: Cli) {
                 std::process::exit(1);
             }
         }
+        Some(Commands::Login {
+            api_url,
+            no_browser,
+            timeout,
+        }) => {
+            if let Err(e) = login_cli::handle_login(api_url.as_deref(), no_browser, timeout).await {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Some(Commands::Logout { api_url, all }) => {
+            if let Err(e) = login_cli::handle_logout(api_url.as_deref(), all).await {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
         Some(Commands::Token { api_url, command }) => {
             if let Err(e) =
                 token_cli::handle_token_command(&writer, &cli.output, api_url.as_deref(), command)
@@ -311,11 +328,44 @@ async fn async_main(cli: Cli) {
             api_url,
             api_token,
         }) => {
-            // Fall back to NETCIDR_API_TOKEN when --api-token is not passed
-            // (clap's `env` feature is not enabled, so resolve it here).
-            let api_token = api_token
+            // Precedence: --api-token, then NETCIDR_API_TOKEN, then a
+            // cached `netcidr login` for this server. clap's `env` feature
+            // is not enabled, so the env fallback is resolved here.
+            //
+            // Unlike `netcidr token`, a missing credential is not fatal:
+            // a remote server may have auth disabled entirely. A resolver
+            // error therefore degrades to "no token" rather than aborting.
+            let api_token = match api_token
                 .or_else(|| std::env::var("NETCIDR_API_TOKEN").ok())
-                .filter(|t| !t.trim().is_empty());
+                .filter(|t| !t.trim().is_empty())
+            {
+                Some(token) => Some(token),
+                None => match api_url.as_deref() {
+                    Some(url) => match netcidr::credentials::normalize_api_url(url) {
+                        Ok(normalized) => {
+                            match netcidr::credentials::resolve_credential(&normalized, None).await
+                            {
+                                Ok(token) => Some(token),
+                                // No account cached for this server — a
+                                // legitimate, silent state (never logged
+                                // in, or the server has auth disabled).
+                                Err(netcidr::error::NetcidrError::NotAuthenticated(_)) => None,
+                                // Every other error (corrupt credentials
+                                // file, unreachable /features, a dead
+                                // refresh token) is a real problem the
+                                // user should know about, even though we
+                                // still proceed unauthenticated.
+                                Err(e) => {
+                                    eprintln!("warning: ignoring cached credential: {e}");
+                                    None
+                                }
+                            }
+                        }
+                        Err(_) => None,
+                    },
+                    None => None,
+                },
+            };
             let mcp_config = netcidr::mcp::McpServerConfig {
                 transport,
                 address: &address,

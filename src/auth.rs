@@ -143,7 +143,11 @@ pub struct AuthenticatedPrincipal {
 pub struct AuthConfig {
     mode: AuthMode,
     bearer_token: Option<String>,
-    oidc_audience: Option<String>,
+    /// Accepted ID-token audiences. Populated by splitting
+    /// `NETCIDR_OIDC_AUDIENCE` on commas, so a deployment can accept both
+    /// the dashboard's web client and the CLI's desktop client. A single
+    /// value parses to a one-element vec, keeping older configs working.
+    oidc_audiences: Vec<String>,
     allowed_emails: Vec<String>,
     admin_emails: Vec<String>,
     allocator_emails: Vec<String>,
@@ -171,7 +175,7 @@ impl std::fmt::Debug for AuthConfig {
         f.debug_struct("AuthConfig")
             .field("mode", &self.mode)
             .field("bearer_token", &self.bearer_token.as_ref().map(|_| "<set>"))
-            .field("oidc_audience", &self.oidc_audience)
+            .field("oidc_audiences", &self.oidc_audiences)
             .field("allowed_emails", &self.allowed_emails)
             .field("admin_emails", &self.admin_emails)
             .field("allocator_emails", &self.allocator_emails)
@@ -194,7 +198,7 @@ impl AuthConfig {
         Self {
             mode,
             bearer_token,
-            oidc_audience,
+            oidc_audiences: split_audiences(oidc_audience.as_deref()),
             allowed_emails: allowed_emails
                 .into_iter()
                 .map(|e| e.to_ascii_lowercase())
@@ -427,8 +431,8 @@ impl AuthConfig {
         AuthenticatedPrincipal { role, ..principal }
     }
 
-    pub fn oidc_audience(&self) -> Option<&str> {
-        self.oidc_audience.as_deref()
+    pub fn oidc_audiences(&self) -> &[String] {
+        &self.oidc_audiences
     }
 
     pub async fn is_admin(&self, email: Option<&str>) -> bool {
@@ -489,7 +493,7 @@ impl AuthConfig {
             match self.mode {
                 AuthMode::None => None,
                 AuthMode::Bearer => authenticate_bearer(headers, self.bearer_token.as_deref()),
-                AuthMode::Oidc => authenticate_oidc(headers, self.oidc_audience.as_deref()).await,
+                AuthMode::Oidc => authenticate_oidc(headers, self.oidc_audiences()).await,
             }
         };
         match principal {
@@ -558,7 +562,7 @@ pub async fn require_auth(config: AuthConfig, mut request: Request, next: Next) 
                     authenticate_bearer(request.headers(), config.bearer_token.as_deref())
                 }
                 AuthMode::Oidc => {
-                    authenticate_oidc(request.headers(), config.oidc_audience.as_deref()).await
+                    authenticate_oidc(request.headers(), config.oidc_audiences()).await
                 }
             }
         }
@@ -695,12 +699,14 @@ fn authenticate_bearer(
 
 async fn authenticate_oidc(
     headers: &HeaderMap,
-    expected_audience: Option<&str>,
+    expected_audiences: &[String],
 ) -> Option<AuthenticatedPrincipal> {
-    let expected_audience = expected_audience?;
+    if expected_audiences.is_empty() {
+        return None;
+    }
     let jwt = bearer_token(headers.get(header::AUTHORIZATION))?;
     let keys = google_public_keys().await.ok()?;
-    let claims = validate_google_id_token(jwt, expected_audience, &keys)?;
+    let claims = validate_google_id_token(jwt, expected_audiences, &keys)?;
 
     Some(AuthenticatedPrincipal {
         kind: PrincipalKind::Oidc,
@@ -713,6 +719,22 @@ async fn authenticate_oidc(
         pat_id: None,
         role: Role::default(),
     })
+}
+
+/// Split a comma-separated audience config value into individual
+/// audiences. Trims whitespace and drops empty entries, matching the
+/// parsing rules `config::resolve_email_list` already uses for the email
+/// lists so the two can't drift.
+fn split_audiences(raw: Option<&str>) -> Vec<String> {
+    raw.map(|value| {
+        value
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 fn bearer_token(header_value: Option<&HeaderValue>) -> Option<&str> {
@@ -857,7 +879,7 @@ fn cache_control_max_age(value: &str) -> Option<Duration> {
 
 fn validate_google_id_token(
     jwt: &str,
-    expected_audience: &str,
+    expected_audiences: &[String],
     keys: &HashMap<String, GoogleKey>,
 ) -> Option<OidcClaims> {
     let header = decode_header(jwt).ok()?;
@@ -869,7 +891,7 @@ fn validate_google_id_token(
     let decoding_key = DecodingKey::from_rsa_components(&key.n, &key.e).ok()?;
 
     let mut validation = Validation::new(Algorithm::RS256);
-    validation.set_audience(&[expected_audience]);
+    validation.set_audience(expected_audiences);
     validation.set_issuer(GOOGLE_ISSUERS);
     validation.leeway = CLOCK_SKEW_SECONDS;
     validation.validate_exp = true;
@@ -1006,6 +1028,30 @@ mod tests {
         .expect("sign jwt")
     }
 
+    /// Build a valid, freshly-signed test ID token for `aud`, along with the
+    /// key id and RSA modulus/exponent (big-endian bytes) needed to install
+    /// the matching public key into the JWKS cache via
+    /// `test_support::install_jwks`. Centralizes the keypair + claims setup
+    /// so multi-audience tests don't duplicate it.
+    fn signed_test_token(aud: &str) -> (String, String, Vec<u8>, Vec<u8>) {
+        let (private, public) = test_keypair();
+        let jwt = signed_id_token(
+            &private,
+            "117290938723847238472",
+            aud,
+            "https://accounts.google.com",
+            now_seconds() + 3600,
+            now_seconds(),
+            Some(true),
+        );
+        (
+            jwt,
+            TEST_KEY_ID.to_string(),
+            public.n().to_bytes_be(),
+            public.e().to_bytes_be(),
+        )
+    }
+
     #[test]
     fn bearer_token_parses_valid_header() {
         let value = HeaderValue::from_static("Bearer test-token");
@@ -1071,7 +1117,8 @@ mod tests {
             Some(true),
         );
         let claims =
-            validate_google_id_token(&jwt, "expected-audience", &key_map(&public)).unwrap();
+            validate_google_id_token(&jwt, &["expected-audience".to_string()], &key_map(&public))
+                .unwrap();
         assert_eq!(claims.sub, "117290938723847238472");
         assert_eq!(claims.aud, "expected-audience");
     }
@@ -1088,7 +1135,10 @@ mod tests {
             now_seconds(),
             Some(true),
         );
-        assert!(validate_google_id_token(&jwt, "expected-audience", &key_map(&public)).is_some());
+        assert!(
+            validate_google_id_token(&jwt, &["expected-audience".to_string()], &key_map(&public))
+                .is_some()
+        );
     }
 
     #[test]
@@ -1103,7 +1153,10 @@ mod tests {
             now_seconds(),
             Some(true),
         );
-        assert!(validate_google_id_token(&jwt, "other-audience", &key_map(&public)).is_none());
+        assert!(
+            validate_google_id_token(&jwt, &["other-audience".to_string()], &key_map(&public))
+                .is_none()
+        );
     }
 
     #[test]
@@ -1118,7 +1171,10 @@ mod tests {
             now_seconds(),
             Some(true),
         );
-        assert!(validate_google_id_token(&jwt, "expected-audience", &key_map(&public)).is_none());
+        assert!(
+            validate_google_id_token(&jwt, &["expected-audience".to_string()], &key_map(&public))
+                .is_none()
+        );
     }
 
     #[test]
@@ -1133,7 +1189,10 @@ mod tests {
             now_seconds(),
             Some(true),
         );
-        assert!(validate_google_id_token(&jwt, "expected-audience", &HashMap::new()).is_none());
+        assert!(
+            validate_google_id_token(&jwt, &["expected-audience".to_string()], &HashMap::new())
+                .is_none()
+        );
     }
 
     #[test]
@@ -1148,7 +1207,10 @@ mod tests {
             now_seconds() - 7200,
             Some(true),
         );
-        assert!(validate_google_id_token(&jwt, "expected-audience", &key_map(&public)).is_none());
+        assert!(
+            validate_google_id_token(&jwt, &["expected-audience".to_string()], &key_map(&public))
+                .is_none()
+        );
     }
 
     #[test]
@@ -1164,34 +1226,25 @@ mod tests {
             future,
             Some(true),
         );
-        assert!(validate_google_id_token(&jwt, "expected-audience", &key_map(&public)).is_none());
+        assert!(
+            validate_google_id_token(&jwt, &["expected-audience".to_string()], &key_map(&public))
+                .is_none()
+        );
     }
 
     #[tokio::test]
     async fn oidc_auth_extracts_identity_from_valid_id_token() {
-        let (private, public) = test_keypair();
-        let jwt = signed_id_token(
-            &private,
-            "117290938723847238472",
-            "expected-audience",
-            "https://accounts.google.com",
-            now_seconds() + 3600,
-            now_seconds(),
-            Some(true),
-        );
+        let (jwt, kid, n, e) = signed_test_token("expected-audience");
         let mut headers = HeaderMap::new();
         headers.insert(
             header::AUTHORIZATION,
             HeaderValue::from_str(&format!("Bearer {jwt}")).unwrap(),
         );
 
-        {
-            let mut cache = key_cache().write().await;
-            cache.keys = key_map(&public);
-            cache.expires_at = Some(Instant::now() + DEFAULT_KEY_TTL);
-        }
+        test_support::clear_jwks().await;
+        test_support::install_jwks(&kid, &n, &e).await;
 
-        let principal = authenticate_oidc(&headers, Some("expected-audience"))
+        let principal = authenticate_oidc(&headers, &["expected-audience".to_string()])
             .await
             .unwrap();
         assert_eq!(principal.kind, PrincipalKind::Oidc);
@@ -1224,7 +1277,7 @@ mod tests {
             cache.expires_at = Some(Instant::now() + DEFAULT_KEY_TTL);
         }
 
-        let principal = authenticate_oidc(&headers, Some("expected-audience"))
+        let principal = authenticate_oidc(&headers, &["expected-audience".to_string()])
             .await
             .unwrap();
         assert_eq!(principal.email, None);
@@ -1234,7 +1287,7 @@ mod tests {
     async fn oidc_auth_rejects_missing_authorization_header() {
         let headers = HeaderMap::new();
         assert!(
-            authenticate_oidc(&headers, Some("expected-audience"))
+            authenticate_oidc(&headers, &["expected-audience".to_string()])
                 .await
                 .is_none()
         );
@@ -1244,10 +1297,20 @@ mod tests {
     fn google_id_token_validation_rejects_malformed_jwt() {
         let (_private, public) = test_keypair();
         assert!(
-            validate_google_id_token("not-a-jwt", "expected-audience", &key_map(&public)).is_none()
+            validate_google_id_token(
+                "not-a-jwt",
+                &["expected-audience".to_string()],
+                &key_map(&public)
+            )
+            .is_none()
         );
         assert!(
-            validate_google_id_token("a.b.c", "expected-audience", &key_map(&public)).is_none()
+            validate_google_id_token(
+                "a.b.c",
+                &["expected-audience".to_string()],
+                &key_map(&public)
+            )
+            .is_none()
         );
     }
 
@@ -1517,5 +1580,70 @@ mod tests {
         };
         let finalized = config.finalize_principal(principal).await;
         assert_eq!(finalized.role, Role::PlatformAdmin);
+    }
+
+    #[test]
+    fn oidc_audiences_splits_comma_separated_value() {
+        let config = AuthConfig::oidc(Some("web-client,desktop-client".to_string()));
+        assert_eq!(
+            config.oidc_audiences(),
+            &["web-client".to_string(), "desktop-client".to_string()]
+        );
+    }
+
+    #[test]
+    fn oidc_audiences_trims_and_drops_empties() {
+        let config = AuthConfig::oidc(Some(" a , ,b, ".to_string()));
+        assert_eq!(config.oidc_audiences(), &["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn oidc_audiences_single_value_is_back_compatible() {
+        let config = AuthConfig::oidc(Some("only-one".to_string()));
+        assert_eq!(config.oidc_audiences(), &["only-one".to_string()]);
+    }
+
+    #[test]
+    fn oidc_audiences_empty_when_unset() {
+        let config = AuthConfig::oidc(None);
+        assert!(config.oidc_audiences().is_empty());
+    }
+
+    #[tokio::test]
+    async fn oidc_auth_accepts_any_configured_audience() {
+        let audiences = vec!["web-client".to_string(), "desktop-client".to_string()];
+
+        for aud in ["web-client", "desktop-client"] {
+            let (jwt, kid, n, e) = signed_test_token(aud);
+            test_support::clear_jwks().await;
+            test_support::install_jwks(&kid, &n, &e).await;
+
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {jwt}")).unwrap(),
+            );
+
+            let principal = authenticate_oidc(&headers, &audiences)
+                .await
+                .unwrap_or_else(|| panic!("audience {aud} should be accepted"));
+            assert_eq!(principal.auth_method, AuthMethod::Oidc);
+        }
+    }
+
+    #[tokio::test]
+    async fn oidc_auth_rejects_unconfigured_audience() {
+        let audiences = vec!["web-client".to_string(), "desktop-client".to_string()];
+        let (jwt, kid, n, e) = signed_test_token("some-other-client");
+        test_support::clear_jwks().await;
+        test_support::install_jwks(&kid, &n, &e).await;
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {jwt}")).unwrap(),
+        );
+
+        assert!(authenticate_oidc(&headers, &audiences).await.is_none());
     }
 }

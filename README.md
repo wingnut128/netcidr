@@ -749,12 +749,15 @@ When `netcidr serve` runs in OIDC mode (set `NETCIDR_AUTH_MODE=oidc` and `NETCID
 
 **Mint, list, revoke from the dashboard.** Once authenticated, the **Tokens** page (`/#/tokens`) lets you create, list, and revoke PATs. The plaintext is shown exactly once at mint time — copy it immediately.
 
-**Mint, list, revoke from the CLI.** The `netcidr token` subcommand talks to a remote `netcidr serve` instance:
+**Mint, list, revoke from the CLI.** Sign in once with `netcidr login`, then use `netcidr token`:
 
 ```bash
-# Required env (point at your server, set your OIDC ID token).
-export NETCIDR_API_URL="https://netcidr.example.com"
-export NETCIDR_API_TOKEN="<your-OIDC-id-token>"
+netcidr login --api-url https://netcidr.example.com
+# Opens your browser for Google sign-in and caches the credential at
+# ~/.config/netcidr/credentials.json (mode 0600), keyed by API URL.
+# Verifies the new token by calling GET /me on the server, so an
+# account that isn't allowlisted yet is told so at login time, not
+# on the first `token create`.
 
 # Mint a token. --expires-in accepts <N>{d|w|y}: 30d, 12w, 1y, etc.
 # --role accepts reader|allocator|admin; defaults to your own resolved role.
@@ -765,13 +768,71 @@ netcidr token list
 
 # Revoke by id.
 netcidr token revoke <id>
+
+netcidr logout
+# Clears the local credential only — it does not revoke the grant at
+# Google. Use `netcidr logout --all` to sign out of every cached server.
 ```
 
-The `--api-url` flag overrides `NETCIDR_API_URL` per-invocation. Output respects the global `--format json|text|csv|yaml`.
+`netcidr login` needs the server to advertise a CLI OAuth client — see
+[CLI sign-in setup](#cli-sign-in-setup) below. If the server has none
+configured, `netcidr login` reports that plainly; mint your first token
+from the dashboard's **Tokens** page instead, then set `NETCIDR_API_TOKEN`
+to a PAT — `netcidr token` accepts this env var directly, so a working CI
+job needs no interactive login at all.
+
+The `--api-url` flag overrides `NETCIDR_API_URL` per-invocation. Output respects the global `--format json|text|csv|yaml`. Credential resolution follows one precedence chain everywhere it applies: an explicit token wins over `NETCIDR_API_TOKEN`, which wins over a cached `netcidr login` session — explicit sources are never silently shadowed by a desktop login.
 
 **Per-token roles.** A PAT carries its own role independent of its owner's role. The minter can choose `--role reader|allocator|admin` to narrow what the token can do — handy for `--role reader` CI scripts that only need read access. The server clamps in two places: at mint time, the requested role is silently lowered to the minter's own role **and never above `admin`** — `platform_admin` is not mintable, so user-directory management always requires an interactive session (ADR-0006); at every use, the auth path takes `min(email_resolved_role, stored_pat_role)`, so the token can never widen privileges and a later demotion of the owner's email automatically narrows every existing PAT. Disabling a user invalidates their PATs immediately.
 
 **Authentication for `netcidr token` itself is OIDC-only** — PATs cannot mint or revoke other PATs (closes the privilege-escalation path). Once a PAT exists, you can use it as `NETCIDR_API_TOKEN` against `/ipam/*` endpoints elsewhere; the server distinguishes PAT-authed vs OIDC-authed operations in `audit_log` (`auth_method` + `pat_id` columns).
+
+#### CLI sign-in setup
+
+`netcidr login` runs a Google OAuth authorization-code flow with PKCE
+(RFC 7636) over a loopback redirect, against a **Desktop app** OAuth
+client — a different client from the dashboard's Web client, because
+Google stamps the ID token's `aud` claim with whichever client performed
+the sign-in.
+
+1. In the same Google Cloud project as your dashboard's Web client,
+   create a second OAuth client of type **Desktop app**.
+2. Add its client ID to `NETCIDR_OIDC_AUDIENCE`, which accepts a
+   comma-separated list of audiences:
+   ```
+   NETCIDR_OIDC_AUDIENCE="<web-client-id>,<desktop-client-id>"
+   ```
+3. Set `NETCIDR_OIDC_CLI_CLIENT_ID` and `NETCIDR_OIDC_CLI_CLIENT_SECRET`
+   to the Desktop client's credentials.
+
+With both of those set (and `NETCIDR_AUTH_MODE=oidc`), the server adds an
+`auth` block to its unauthenticated `GET /features` response, advertising
+the Desktop client to `netcidr login` — so a CLI user needs no local OAuth
+configuration of their own. Without both set, `/features` omits the
+`auth` block entirely (not `null`), and `netcidr login` reports that the
+server has no CLI client configured.
+
+**On serving the client secret publicly.** Yes, `/features` really does
+return `NETCIDR_OIDC_CLI_CLIENT_SECRET` in plaintext, to anyone,
+unauthenticated. This is intentional, not an oversight: a Desktop-app
+OAuth client secret is non-confidential by design — an installed
+application has no way to keep a secret embedded in it (RFC 8252 §8.5),
+so Google does not treat it as one. What actually secures the
+authorization-code exchange is PKCE — the server can't complete a token
+exchange for a code it didn't generate the matching verifier for, secret
+or no secret. This is the same posture tools like `gcloud` take with
+their own bundled OAuth clients.
+
+**On the audience list.** Every ID token minted by every client ID listed
+in `NETCIDR_OIDC_AUDIENCE` is accepted by this server. List only clients
+you control — adding a client you don't operate means trusting whoever
+does control it to gate who can sign in.
+
+Skipping this setup changes nothing for existing deployments: with
+neither `NETCIDR_OIDC_CLI_CLIENT_ID` nor `NETCIDR_OIDC_CLI_CLIENT_SECRET`
+set, `/features` has no `auth` block, a single-valued
+`NETCIDR_OIDC_AUDIENCE` keeps working exactly as before, and `netcidr
+token` still works end-to-end off `NETCIDR_API_TOKEN` alone.
 
 ### Users, Roles, and Authorization
 
@@ -1018,6 +1079,9 @@ cargo lambda build --release --arm64 --bin lambda --features lambda,ipam-postgre
 | `NETCIDR_DATABASE_URL` | Yes | — | Postgres connection string |
 | `NETCIDR_IPAM_BACKEND` | No | `postgres` | IPAM backend |
 | `NETCIDR_AUTH_MODE` | No | `oidc` | `oidc`, `bearer`, or `none` |
+| `NETCIDR_OIDC_AUDIENCE` | For OIDC | — | Accepted ID token audiences, comma-separated (web client, desktop client) |
+| `NETCIDR_OIDC_CLI_CLIENT_ID` | No | — | Desktop-app OAuth client ID advertised to `netcidr login` on `/features` |
+| `NETCIDR_OIDC_CLI_CLIENT_SECRET` | No | — | Matching client secret; non-confidential by design (RFC 8252 §8.5) |
 | `NETCIDR_IPAM_ENABLED` | No | `true` | Disable IPAM endpoints |
 | `NETCIDR_RATE_LIMIT` | No | `20` | Sustained per-IP requests/sec (`0` disables) |
 | `NETCIDR_RATE_LIMIT_BURST` | No | `50` | Per-IP burst allowance |

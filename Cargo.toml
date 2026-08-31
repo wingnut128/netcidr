@@ -38,11 +38,13 @@ rmcp = { version = "3.0", features = ["server", "transport-io", "transport-strea
 daemonize-me = "2"
 tokio-util = { version = "0.7", features = ["rt"], optional = true }
 schemars = { version = "1", optional = true }
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "query"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "query", "form"] }
 jsonwebtoken = { version = "10.4", features = ["rust_crypto"] }
 base64 = "0.22"
 rand = "0.8.6"
 regex = "1"
+percent-encoding = "2"
+form_urlencoded = "1"
 ratatui = { version = "0.30", optional = true }
 crossterm = { version = "0.29", optional = true }
 ipnet = { version = "2", optional = true }

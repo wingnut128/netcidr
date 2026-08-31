@@ -1052,3 +1052,85 @@ async fn test_rate_limit_keys_on_x_forwarded_for() {
         .unwrap();
     assert_eq!(resp.status(), 200);
 }
+
+#[tokio::test]
+async fn features_omits_auth_block_when_cli_client_unconfigured() {
+    let app = create_router(test_config());
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/features")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(json.get("auth").is_none() || json["auth"].is_null());
+}
+
+#[tokio::test]
+async fn features_advertises_cli_client_in_oidc_mode() {
+    let config = RouterConfig {
+        server: ServerConfig {
+            rate_limit_per_second: 0,
+            auth_mode: AuthMode::Oidc,
+            oidc_audience: Some("web-client,desktop-client".to_string()),
+            oidc_cli_client_id: Some("desktop-client".to_string()),
+            oidc_cli_client_secret: Some("GOCSPX-test".to_string()),
+            ..ServerConfig::default()
+        },
+        ..RouterConfig::default()
+    };
+
+    let app = create_router(config);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/features")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["auth"]["mode"], "oidc");
+    assert_eq!(json["auth"]["cli_client_id"], "desktop-client");
+    assert_eq!(json["auth"]["cli_client_secret"], "GOCSPX-test");
+}
+
+#[tokio::test]
+async fn features_omits_auth_block_in_bearer_mode() {
+    let config = RouterConfig {
+        server: ServerConfig {
+            rate_limit_per_second: 0,
+            auth_mode: AuthMode::Bearer,
+            auth_token: Some("static-token".to_string()),
+            oidc_cli_client_id: Some("desktop-client".to_string()),
+            oidc_cli_client_secret: Some("GOCSPX-test".to_string()),
+            ..ServerConfig::default()
+        },
+        ..RouterConfig::default()
+    };
+
+    let app = create_router(config);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/features")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(json.get("auth").is_none() || json["auth"].is_null());
+}

@@ -34,10 +34,12 @@ pub mod dns;
 
 // Infrastructure
 pub mod config;
+pub mod credentials;
 pub mod daemon;
 pub mod error;
 pub mod error_presenter;
 pub mod logging;
+pub mod oauth;
 pub mod validation;
 
 #[cfg(feature = "otel")]

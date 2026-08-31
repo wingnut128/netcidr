@@ -1,12 +1,19 @@
 //! `netcidr token …` CLI handler. Talks to a remote `netcidr serve`
-//! instance over the `/me/tokens` REST endpoints (Phase 4). Auth comes
-//! from the `NETCIDR_API_TOKEN` env var (a PAT or a static bearer);
-//! the API base URL comes from `NETCIDR_API_URL` or the `--api-url` flag.
+//! instance over the `/me/tokens` REST endpoints (Phase 4). Auth is
+//! resolved by `credentials::resolve_credential`, which supports an
+//! explicit-override / `NETCIDR_API_TOKEN` / cached-login precedence
+//! chain; this command does not expose its own `--token` flag, so in
+//! practice that resolves to the `NETCIDR_API_TOKEN` env var (a PAT or a
+//! static bearer) when set, else a cached `netcidr login` session,
+//! refreshed if stale. The API base URL comes from `NETCIDR_API_URL` or
+//! the `--api-url` flag.
 //!
 //! The HTTP client is intentionally local to this module rather than
-//! reusing `mcp_client::HttpIpamClient`, because that client targets
-//! `/ipam/*` and never carries an `Authorization` header — adding one
-//! conditionally would muddy its single-purpose design.
+//! reusing `mcp_client::HttpIpamClient`. That client does carry an
+//! `Authorization` header when given a token — but it targets `/ipam/*`
+//! and models a long-lived proxy session rather than a handful of
+//! one-shot admin calls, so duplicating a small client here is simpler
+//! than bending that one to a different shape.
 
 use netcidr::auth::Role;
 use netcidr::cli::TokenCommands;
@@ -21,7 +28,6 @@ use std::time::Duration;
 use crate::print_stdout;
 
 const ENV_API_URL: &str = "NETCIDR_API_URL";
-const ENV_API_TOKEN: &str = "NETCIDR_API_TOKEN";
 
 /// Wrapper for JSON error responses from the API. Mirrors the body
 /// shape used by `me_api::ErrorBody` (`{ "error": "..." }`).
@@ -288,20 +294,6 @@ fn resolve_api_url(cli_flag: Option<&str>) -> Result<String> {
     })
 }
 
-fn resolve_bearer() -> Result<String> {
-    let token = std::env::var(ENV_API_TOKEN).map_err(|_| {
-        NetcidrError::InvalidInput(format!(
-            "no auth token — set {ENV_API_TOKEN} (a PAT or static bearer)"
-        ))
-    })?;
-    if token.trim().is_empty() {
-        return Err(NetcidrError::InvalidInput(format!(
-            "{ENV_API_TOKEN} is empty"
-        )));
-    }
-    Ok(token)
-}
-
 fn write_view<T: Serialize + TextOutput + CsvOutput>(
     writer: &OutputWriter,
     output_file: &Option<String>,
@@ -323,7 +315,8 @@ pub async fn handle_token_command(
     command: TokenCommands,
 ) -> Result<()> {
     let base = resolve_api_url(api_url)?;
-    let bearer = resolve_bearer()?;
+    let base = netcidr::credentials::normalize_api_url(&base)?;
+    let bearer = netcidr::credentials::resolve_credential(&base, None).await?;
     let client = TokenClient::new(base, bearer)?;
 
     match command {
