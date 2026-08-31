@@ -33,7 +33,7 @@ export type AuthStatus =
   | "authenticated"
   | "disabled";
 
-interface AuthContextValue {
+export interface AuthContextValue {
   status: AuthStatus;
   email: string | null;
   name: string | null;

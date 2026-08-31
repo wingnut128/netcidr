@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The dashboard sidebar now keeps public subnet tools visible while hiding IPAM, Visualize, and Hostnames until authentication succeeds; signed-out users can start Google sign-in directly from the sidebar.
+
 ## [0.28.3](https://github.com/wingnut128/netcidr/compare/v0.28.2...v0.28.3) - 2026-08-31
 
 ### Added

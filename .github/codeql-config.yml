@@ -1,0 +1,6 @@
+name: "netcidr CodeQL configuration"
+
+# dashboard/dist is a generated single-file bundle. Analyze the TypeScript source
+# instead so dependency internals are not reported as netcidr code findings.
+paths-ignore:
+  - "dashboard/dist/**"
