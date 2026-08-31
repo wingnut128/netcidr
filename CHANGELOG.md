@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `netcidr login` / `netcidr logout` — a Google OAuth authorization-code flow with PKCE over a loopback redirect. Credentials cache to `~/.config/netcidr/credentials.json` (mode 0600, written via an atomic temp-file-plus-rename), keyed by API URL, and refresh silently when stale. `login` verifies the new credential with `GET /me`, so an account that isn't allowlisted yet is told so at login time; `logout` clears local state only and does not revoke the grant at Google. This removes the previous hard requirement to mint a first PAT from the dashboard.
+- `/features` now advertises a deployment's CLI OAuth client (`auth.cli_client_id` / `auth.cli_client_secret`) when both `NETCIDR_OIDC_CLI_CLIENT_ID` and `NETCIDR_OIDC_CLI_CLIENT_SECRET` are set in OIDC mode, so `netcidr login` needs no local OAuth configuration. The `auth` block is absent (not `null`) otherwise.
+
+### Changed
+
+- `NETCIDR_OIDC_AUDIENCE` accepts a comma-separated list of audiences, so a deployment can admit both the dashboard's web client and the CLI's desktop client. Single values keep working unchanged.
+- `netcidr token` and `netcidr mcp-serve --remote` now resolve their bearer credential through a shared precedence chain: an explicit token, then `NETCIDR_API_TOKEN`, then a cached `netcidr login` session. Explicit sources still win, so existing CI usage is unaffected. `mcp-serve` treats a missing or unusable cached credential as non-fatal and warns rather than aborting.
+
 ## [0.28.2](https://github.com/wingnut128/netcidr/compare/v0.28.1...v0.28.2) - 2026-08-31
 
 ### Fixed
