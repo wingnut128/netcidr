@@ -1,6 +1,6 @@
 [package]
 name = "netcidr"
-version = "0.28.0"
+version = "0.28.2"
 edition = "2024"
 license = "MIT"
 description = "A fast IPv4 and IPv6 subnet calculator CLI and API"
@@ -24,7 +24,7 @@ tower-http = { version = "0.7", features = ["trace", "timeout", "cors", "set-hea
 tower_governor = "0.8"
 toml = "1.1"
 csv = "1"
-serde-saphyr = "0.0"
+serde-saphyr = "1.1"
 rusqlite = { version = "0.39", features = ["bundled"] }
 r2d2 = "0.8"
 r2d2_sqlite = "0.34"
