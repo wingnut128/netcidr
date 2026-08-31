@@ -1,0 +1,4 @@
+[[IgnoredVulns]]
+id = "RUSTSEC-2023-0071"
+ignoreUntil = 2027-02-28
+reason = "The Marvin attack targets RSA private-key decryption. Production code only verifies JWT signatures with public JWKS keys; private RSA keys are used only to generate test fixtures. RustSec currently lists no patched rsa release."
