@@ -17,7 +17,7 @@ ARG FEATURES=default
 ARG WITH_DASHBOARD=true
 
 # ---------- Dashboard build (skipped when WITH_DASHBOARD=false) -----------
-FROM oven/bun:1-alpine@sha256:07235578f79ef8c6f97d94aee7938e76f5cdba5f21ae5dbfdd3d3d38058437eb AS dashboard-build
+FROM oven/bun:1-alpine@sha256:d888c0ae6c86d7866ff10c5aafdd9077b36aee6455b33dd270fb93c0dd5cef6f AS dashboard-build
 WORKDIR /app/dashboard
 COPY dashboard/package.json dashboard/bun.lock ./
 RUN bun install --frozen-lockfile
@@ -78,7 +78,7 @@ RUN touch src/main.rs && \
 # guarantees reproducibility. Chainguard's `static` image is not versioned
 # beyond `:latest` / `:latest-glibc`, so `:latest` is the recommended tag per
 # their docs. Digestabot refreshes the digest on a schedule (.github/workflows/digestabot.yml).
-FROM cgr.dev/chainguard/static:latest@sha256:96d02f455d5a73b817c0602910748609cf8471b1cc9522f78c75cedb1f67d072
+FROM cgr.dev/chainguard/static:latest@sha256:f51c2493951313c3ad4069080b2814ffb6ed6fe3909dabeb84a9482f42d5600b
 
 COPY --from=builder /app/target/release/netcidr /usr/local/bin/netcidr
 
