@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - *(dashboard)* optional Sentry error monitoring, tracing, and session replay via `@sentry/react` ([#390](https://github.com/wingnut128/netcidr/issues/390)). Enabled only when `VITE_SENTRY_DSN` is set at dashboard build time; builds without it report nothing. Request headers, bodies, cookies, and user IP are never collected, and replay masks all text and inputs, so bearer tokens and PAT secrets stay out of events.
 
+## [0.28.4](https://github.com/wingnut128/netcidr/compare/v0.28.3...v0.28.4) - 2026-08-31
+
+### Added
+
+- *(dashboard)* make navigation auth-aware ([#367](https://github.com/wingnut128/netcidr/pull/367))
+
 ### Changed
 
 - The dashboard sidebar now keeps public subnet tools visible while hiding IPAM, Visualize, and Hostnames until authentication succeeds; signed-out users can start Google sign-in directly from the sidebar.
