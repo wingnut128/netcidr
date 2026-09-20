@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - *(dashboard)* optional Sentry error monitoring, tracing, and session replay via `@sentry/react` ([#390](https://github.com/wingnut128/netcidr/issues/390)). Enabled only when `VITE_SENTRY_DSN` is set at dashboard build time; builds without it report nothing. Request headers, bodies, cookies, and user IP are never collected, and replay masks all text and inputs, so bearer tokens and PAT secrets stay out of events.
 
+### Security
+
+- Bump `rustls` 0.23.38 → 0.23.45 (with `rustls-webpki`, `aws-lc-rs`) to resolve RUSTSEC-2026-0285, a TLS 1.3 handshake flaw that was failing `cargo audit` ([#393](https://github.com/wingnut128/netcidr/issues/393)).
+
 ## [0.28.4](https://github.com/wingnut128/netcidr/compare/v0.28.3...v0.28.4) - 2026-08-31
 
 ### Added
