@@ -30,8 +30,9 @@ jobs:
     name: Refresh pinned image digests
     runs-on: ubuntu-latest
     permissions:
-      # Required so digestabot can create a branch and open a PR. Same scope
-      # as Dependabot. Branch protection on `main` still gates the merge.
+      # Required so digestabot can create a branch and open a PR when it falls
+      # back to the default `GITHUB_TOKEN` (see the token note below). Same
+      # scope as Dependabot. Branch protection on `main` still gates the merge.
       contents: write
       pull-requests: write
       # Required by `use-gitsign: true` (digestabot's default): the OIDC
@@ -39,9 +40,41 @@ jobs:
       # required because `main` enforces `required_signatures`.
       id-token: write
     steps:
+      # Warn loudly rather than fail: a missing secret still produces a useful
+      # digest diff, it just produces one nobody can merge. Failing the job
+      # outright would also stop the refresh loop entirely.
+      - name: Warn if the PR token is missing
+        env:
+          DIGESTABOT_TOKEN: ${{ secrets.DIGESTABOT_TOKEN }}
+        run: |
+          if [ -z "${DIGESTABOT_TOKEN}" ]; then
+            echo "::warning title=DIGESTABOT_TOKEN is not set::Falling back to the default GITHUB_TOKEN. GitHub does not dispatch workflow runs for events raised by that token, so the digest-refresh PR will open with no CI attached and can never satisfy branch protection. Set the DIGESTABOT_TOKEN repository secret."
+          fi
+
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Must match the token handed to digestabot below, so the credential
+          # persisted by checkout is the one used to push the branch.
+          token: ${{ secrets.DIGESTABOT_TOKEN || github.token }}
       - uses: chainguard-dev/digestabot@33d0b78e580aa0c83fe188eb3dfad6611b662479 # v1.3.2
         with:
+          # A PR opened with the default `GITHUB_TOKEN` does not trigger
+          # workflow runs — GitHub suppresses them to stop workflows recursing
+          # into themselves. That left every digest-refresh PR sitting with no
+          # CI at all, and `main` requires status checks to pass, so the PR was
+          # unmergeable and silently rotted (see #369, open with zero checks
+          # since 2026-09-01).
+          #
+          # `DIGESTABOT_TOKEN` is a `repo`-scoped PAT belonging to a human or
+          # machine account, mirroring `RELEASE_PLZ_TOKEN` in release-plz.yml —
+          # it may even hold the same value. Events raised by a PAT are
+          # attributed to that account rather than to `github-actions[bot]`, so
+          # the usual `pull_request` workflows fire.
+          #
+          # The `||` fallback keeps the refresh working when the secret is
+          # absent, at the cost of the no-CI behaviour above; the guard step
+          # surfaces that as a warning annotation.
+          token: ${{ secrets.DIGESTABOT_TOKEN || github.token }}
           title-for-pr: 'chore(docker): refresh pinned image digests'
           commit-message: |
             chore(docker): refresh pinned image digests

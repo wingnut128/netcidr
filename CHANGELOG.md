@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - *(dashboard)* optional Sentry error monitoring, tracing, and session replay via `@sentry/react` ([#390](https://github.com/wingnut128/netcidr/issues/390)). Enabled only when `VITE_SENTRY_DSN` is set at dashboard build time; builds without it report nothing. Request headers, bodies, cookies, and user IP are never collected, and replay masks all text and inputs, so bearer tokens and PAT secrets stay out of events.
 
+### Fixed
+
+- *(ci)* digest-refresh PRs now run CI. Digestabot opened its PRs with the default `GITHUB_TOKEN`, and GitHub does not dispatch workflow runs for events raised by that token, so every digest-refresh PR arrived with no checks attached and could never satisfy branch protection — [#369](https://github.com/wingnut128/netcidr/pull/369) sat open with zero checks since 2026-09-01. The workflow now authenticates with a `DIGESTABOT_TOKEN` secret (a `repo`-scoped PAT, mirroring `RELEASE_PLZ_TOKEN`), falling back to `GITHUB_TOKEN` with a warning annotation when the secret is absent.
+
 ### Security
 
 - Bump `rustls` 0.23.38 → 0.23.45 (with `rustls-webpki`, `aws-lc-rs`) to resolve RUSTSEC-2026-0285, a TLS 1.3 handshake flaw that was failing `cargo audit` ([#393](https://github.com/wingnut128/netcidr/issues/393)).
