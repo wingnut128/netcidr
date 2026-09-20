@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Opt-in Sentry error and panic reporting for `netcidr serve` and the Lambda binary ([#392](https://github.com/wingnut128/netcidr/issues/392)). Requires building with `--features sentry` **and** setting `SENTRY_DSN` at runtime; otherwise a no-op. Only `ERROR`-level `tracing` events and panics are sent (no spans, breadcrumbs, or request data), and event fields with PII/credential-looking keys are stripped using the same rule as the OTLP exporter. The Lambda binary flushes queued events after each invocation.
 
+### Security
+
+- Bump `rustls` 0.23.38 → 0.23.45 (with `rustls-webpki`, `aws-lc-rs`) to resolve RUSTSEC-2026-0285, a TLS 1.3 handshake flaw that was failing `cargo audit` ([#393](https://github.com/wingnut128/netcidr/issues/393)).
+
 ## [0.28.4](https://github.com/wingnut128/netcidr/compare/v0.28.3...v0.28.4) - 2026-08-31
 
 ### Added
