@@ -17,7 +17,7 @@ A fast IPv4 and IPv6 subnet calculator written in Rust. Available as a CLI tool,
 - **Batch processing**: process multiple CIDRs via positional arguments, `--stdin`, or the `POST /batch` API endpoint
 - **Multiple output formats**: JSON (default), plain text, CSV, and YAML
 - **File output**: write results directly to a file
-- **Web dashboard**: Full SPA at `http://localhost:8080/` with subnet calculator, splitter, contains check, summarize, from-range, IPAM dashboard, subnet visualizer, a **Hostnames** page (record IP↔hostname pointers and view their change history), a platform-admin-only **Users** page (add/disable/remove users and change roles at runtime, no redeploy) and an admin-only **Activity** view (audited mutations grouped by day, filterable by user) — served automatically when running `netcidr serve`. Light/dark themes (toggle with ⌘+J / Ctrl+J), and Google sign-in reveals IPAM, Visualize, and Hostnames navigation when the server runs in OIDC mode (set `VITE_OAUTH_WEB_CLIENT_ID` when building the dashboard — see `dashboard/.env.example`).
+- **Web dashboard**: Full SPA at `http://localhost:8080/` with subnet calculator, splitter, contains check, summarize, from-range, IPAM dashboard, subnet visualizer, a **Hostnames** page (record IP↔hostname pointers and view their change history), a platform-admin-only **Users** page (add/disable/remove users and change roles at runtime, no redeploy) and an admin-only **Activity** view (audited mutations grouped by day, filterable by user) — served automatically when running `netcidr serve`. Light/dark themes (toggle with ⌘+J / Ctrl+J), and Google sign-in reveals IPAM, Visualize, and Hostnames navigation when the server runs in OIDC mode (set `VITE_OAUTH_WEB_CLIENT_ID` when building the dashboard — see `dashboard/.env.example`). Optional Sentry error monitoring for the dashboard is enabled by also setting `VITE_SENTRY_DSN` at build time; without it the SDK stays disabled and nothing is reported.
 - **HTTP API**: REST endpoints for all calculations
 - **OpenAPI documentation**: Machine-readable API specification for easy integration with tools like Swagger Editor, Postman, and Insomnia
 - **MCP server**: [Model Context Protocol](https://modelcontextprotocol.io) server for AI assistant integration (Claude, etc.) via Streamable HTTP or stdio
@@ -1061,6 +1061,24 @@ netcidr serve   # binary built with --features otel
 Transport is HTTP/protobuf over reqwest + rustls (no gRPC/tonic, no native deps). `netcidr serve` uses a batch exporter (flushed on graceful shutdown); the Lambda binary uses a batch exporter with a per-invocation `force_flush()` so the frozen execution environment never loses buffered spans.
 
 **Privacy:** a fixed PII allowlist is **enforced at the export boundary** — a redacting exporter strips any attribute keyed like a credential or PII (`*email`, `sub`, `*token*`, `*secret*`, `database_url`, bearer/authorization, …) before spans leave the process. Email, OIDC sub, bearer tokens, PAT secrets, and `DATABASE_URL` are **never** exported, even though some spans record them for local CloudWatch logs. Exported request attributes are limited to `http.route`, `http.method`, `http.status_code`, `netcidr.tenant_id`, and `netcidr.role`. See [ADR-0004](docs/adr/0004-opt-in-otlp-span-export.md).
+
+## Error reporting (Sentry)
+
+netcidr can report server-side errors and panics to [Sentry](https://sentry.io). Like OTLP export it is **opt-in and off by default**: you must build with the `sentry` feature *and* set `SENTRY_DSN` at runtime. With either missing, the SDK is never initialized.
+
+```bash
+cargo build --release --features sentry
+# Lambda binary:
+cargo lambda build --release --arm64 --bin lambda --features lambda,sentry
+```
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `SENTRY_DSN` | Project DSN. **Setting this enables reporting.** | _(unset → disabled)_ |
+| `SENTRY_ENVIRONMENT` | Environment tag on events | `production` |
+| `SENTRY_RELEASE` | Release tag on events | `netcidr@<version>` |
+
+**What is sent:** `tracing` events at `ERROR` level and panics, from `netcidr serve` and the Lambda binary (which flushes after every invocation). Other subcommands (including `mcp-serve`) do not install the `tracing` pipeline, so only panics are reported from them. Spans, breadcrumbs, and request data are not sent — traces belong to the OTLP exporter above. **PII:** `send_default_pii` is off, user/request data is dropped, and any event field whose key looks like an email, subject, token, secret, or credential is stripped before the event leaves the process (the same rule the OTLP exporter enforces). Message text is sent as logged. The dashboard has its own optional browser-side reporting via `VITE_SENTRY_DSN` at build time.
 
 ## AWS Lambda deployment
 

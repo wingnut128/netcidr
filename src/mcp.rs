@@ -884,8 +884,8 @@ impl NetcidrMcp {
 
 #[tool_handler]
 impl ServerHandler for NetcidrMcp {
-    fn get_info(&self) -> rmcp::model::ServerInfo {
-        rmcp::model::ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+    fn get_info(&self) -> rmcp::model::ServerConfig {
+        rmcp::model::ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(rmcp::model::Implementation::new(
                 "netcidr",
                 env!("CARGO_PKG_VERSION"),

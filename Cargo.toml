@@ -1,6 +1,6 @@
 [package]
 name = "netcidr"
-version = "0.28.4"
+version = "0.28.5"
 edition = "2024"
 license = "MIT"
 description = "A fast IPv4 and IPv6 subnet calculator CLI and API"
@@ -62,6 +62,7 @@ opentelemetry = { version = "0.32", optional = true }
 opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"], optional = true }
 opentelemetry-otlp = { version = "0.32", default-features = false, features = ["http-proto", "reqwest-client", "reqwest-rustls-webpki-roots", "trace"], optional = true }
 tracing-opentelemetry = { version = "0.33", optional = true }
+sentry = { version = "0.48.5", default-features = false, features = ["backtrace", "contexts", "panic", "tracing", "ureq", "rustls"], optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -81,6 +82,7 @@ mcp = ["dep:rmcp", "dep:schemars", "dep:tokio-util"]
 ipam-postgres = ["dep:sqlx"]
 lambda = ["dep:lambda_http"]
 otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:tracing-opentelemetry"]
+sentry = ["dep:sentry"]
 
 [[bin]]
 name = "lambda"

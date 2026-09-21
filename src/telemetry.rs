@@ -55,26 +55,7 @@ pub const SPAN_ATTR_ALLOWLIST: &[&str] = &[
     "netcidr.role",
 ];
 
-/// Returns true when an attribute key looks like PII or a credential and must
-/// be stripped before export. Pattern-based so it also catches fields added by
-/// future `#[instrument]` sites (e.g. `owner_email`, `caller_email`). Note that
-/// non-sensitive identifiers like `pat_id` (a token *id*, not the secret) are
-/// intentionally NOT matched.
-pub fn is_pii_key(key: &str) -> bool {
-    let k = key.to_ascii_lowercase();
-    k.ends_with("email")
-        || k == "sub"
-        || k.ends_with("_sub")
-        || k.contains("token")
-        || k.contains("password")
-        || k.contains("secret")
-        || k.contains("authorization")
-        || k.contains("bearer")
-        || k.contains("api_key")
-        || k.contains("apikey")
-        || k.contains("credential")
-        || k.contains("database_url")
-}
+pub use crate::pii::is_pii_key;
 
 /// Held for the lifetime of the program. On drop, shuts the provider down
 /// (flushing any buffered spans). For Lambda, [`OtelGuard::force_flush`] is
