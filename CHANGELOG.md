@@ -7,18 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.5](https://github.com/wingnut128/netcidr/compare/v0.28.4...v0.28.5) - 2026-09-21
+
 ### Added
 
-- *(dashboard)* optional Sentry error monitoring, tracing, and session replay via `@sentry/react` ([#390](https://github.com/wingnut128/netcidr/issues/390)). Enabled only when `VITE_SENTRY_DSN` is set at dashboard build time; builds without it report nothing. Request headers, bodies, cookies, and user IP are never collected, and replay masks all text and inputs, so bearer tokens and PAT secrets stay out of events.
-- Opt-in Sentry error and panic reporting for `netcidr serve` and the Lambda binary ([#392](https://github.com/wingnut128/netcidr/issues/392)). Requires building with `--features sentry` **and** setting `SENTRY_DSN` at runtime; otherwise a no-op. Only `ERROR`-level `tracing` events and panics are sent (no spans, breadcrumbs, or request data), and event fields with PII/credential-looking keys are stripped using the same rule as the OTLP exporter. The Lambda binary flushes queued events after each invocation.
+- *(dashboard)* optional Sentry error monitoring, tracing, and session replay via `@sentry/react` ([#390](https://github.com/wingnut128/netcidr/issues/390), [#391](https://github.com/wingnut128/netcidr/pull/391)). Enabled only when `VITE_SENTRY_DSN` is set at dashboard build time; builds without it report nothing. Request headers, bodies, cookies, and user IP are never collected, and replay masks all text and inputs, so bearer tokens and PAT secrets stay out of events.
+- Opt-in Sentry error and panic reporting for `netcidr serve` and the Lambda binary ([#392](https://github.com/wingnut128/netcidr/issues/392), [#395](https://github.com/wingnut128/netcidr/pull/395)). Requires building with `--features sentry` **and** setting `SENTRY_DSN` at runtime; otherwise a no-op. Only `ERROR`-level `tracing` events and panics are sent (no spans, breadcrumbs, or request data), and event fields with PII/credential-looking keys are stripped using the same rule as the OTLP exporter. The Lambda binary flushes queued events after each invocation.
 
 ### Fixed
 
-- *(ci)* digest-refresh PRs now run CI. Digestabot opened its PRs with the default `GITHUB_TOKEN`, and GitHub does not dispatch workflow runs for events raised by that token, so every digest-refresh PR arrived with no checks attached and could never satisfy branch protection — [#369](https://github.com/wingnut128/netcidr/pull/369) sat open with zero checks since 2026-09-01. The workflow now authenticates with a `DIGESTABOT_TOKEN` secret (a `repo`-scoped PAT, mirroring `RELEASE_PLZ_TOKEN`), falling back to `GITHUB_TOKEN` with a warning annotation when the secret is absent.
+- *(ci)* digest-refresh PRs now run CI. Digestabot opened its PRs with the default `GITHUB_TOKEN`, and GitHub does not dispatch workflow runs for events raised by that token, so every digest-refresh PR arrived with no checks attached and could never satisfy branch protection — [#369](https://github.com/wingnut128/netcidr/pull/369) sat open with zero checks since 2026-09-01. The workflow now authenticates with a `DIGESTABOT_TOKEN` secret (a `repo`-scoped PAT, mirroring `RELEASE_PLZ_TOKEN`), falling back to `GITHUB_TOKEN` with a warning annotation when the secret is absent ([#398](https://github.com/wingnut128/netcidr/pull/398)).
 
 ### Security
 
-- Bump `rustls` 0.23.38 → 0.23.45 (with `rustls-webpki`, `aws-lc-rs`) to resolve RUSTSEC-2026-0285, a TLS 1.3 handshake flaw that was failing `cargo audit` ([#393](https://github.com/wingnut128/netcidr/issues/393)).
+- Bump `rustls` 0.23.38 → 0.23.45 (with `rustls-webpki`, `aws-lc-rs`) to resolve RUSTSEC-2026-0285, a TLS 1.3 handshake flaw that was failing `cargo audit` ([#393](https://github.com/wingnut128/netcidr/issues/393), [#394](https://github.com/wingnut128/netcidr/pull/394)).
+
+### Other
+
+- *(deps)* bump the npm-minor-and-patch group across 1 directory with 7 updates ([#385](https://github.com/wingnut128/netcidr/pull/385))
+- *(deps)* bump release-plz/action from 0.5.136 to 0.5.138 ([#386](https://github.com/wingnut128/netcidr/pull/386))
+- *(deps)* bump docker/build-push-action from 7.3.0 to 7.4.0 ([#389](https://github.com/wingnut128/netcidr/pull/389))
+- *(deps)* bump docker/setup-buildx-action from 4.3.0 to 4.4.1 ([#384](https://github.com/wingnut128/netcidr/pull/384))
+- *(deps)* bump the cargo-minor-and-patch group with 2 updates ([#378](https://github.com/wingnut128/netcidr/pull/378))
+- *(deps)* bump github/codeql-action/upload-sarif ([#380](https://github.com/wingnut128/netcidr/pull/380))
+- *(deps)* bump github/codeql-action/init from 4.37.9 to 4.38.0 ([#383](https://github.com/wingnut128/netcidr/pull/383))
+- *(deps)* bump github/codeql-action/analyze from 4.37.9 to 4.38.0 ([#382](https://github.com/wingnut128/netcidr/pull/382))
+- *(deps)* bump release-plz/action from 0.5.132 to 0.5.136 ([#381](https://github.com/wingnut128/netcidr/pull/381))
+- *(deps)* bump cloudsmith-io/cloudsmith-cli-action ([#375](https://github.com/wingnut128/netcidr/pull/375))
+- *(deps)* bump the npm-minor-and-patch group in /dashboard with 4 updates ([#370](https://github.com/wingnut128/netcidr/pull/370))
+- *(deps)* bump the cargo-minor-and-patch group with 5 updates ([#373](https://github.com/wingnut128/netcidr/pull/373))
+- *(deps)* bump anchore/sbom-action from 0.24.1 to 0.24.2 ([#372](https://github.com/wingnut128/netcidr/pull/372))
+- *(deps)* bump anchore/scan-action from 7.4.1 to 7.4.2 ([#374](https://github.com/wingnut128/netcidr/pull/374))
+- *(deps)* bump release-plz/action from 0.5.131 to 0.5.132 ([#371](https://github.com/wingnut128/netcidr/pull/371))
 
 ## [0.28.4](https://github.com/wingnut128/netcidr/compare/v0.28.3...v0.28.4) - 2026-08-31
 
