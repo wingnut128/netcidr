@@ -1062,6 +1062,24 @@ Transport is HTTP/protobuf over reqwest + rustls (no gRPC/tonic, no native deps)
 
 **Privacy:** a fixed PII allowlist is **enforced at the export boundary** — a redacting exporter strips any attribute keyed like a credential or PII (`*email`, `sub`, `*token*`, `*secret*`, `database_url`, bearer/authorization, …) before spans leave the process. Email, OIDC sub, bearer tokens, PAT secrets, and `DATABASE_URL` are **never** exported, even though some spans record them for local CloudWatch logs. Exported request attributes are limited to `http.route`, `http.method`, `http.status_code`, `netcidr.tenant_id`, and `netcidr.role`. See [ADR-0004](docs/adr/0004-opt-in-otlp-span-export.md).
 
+## Error reporting (Sentry)
+
+netcidr can report server-side errors and panics to [Sentry](https://sentry.io). Like OTLP export it is **opt-in and off by default**: you must build with the `sentry` feature *and* set `SENTRY_DSN` at runtime. With either missing, the SDK is never initialized.
+
+```bash
+cargo build --release --features sentry
+# Lambda binary:
+cargo lambda build --release --arm64 --bin lambda --features lambda,sentry
+```
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `SENTRY_DSN` | Project DSN. **Setting this enables reporting.** | _(unset → disabled)_ |
+| `SENTRY_ENVIRONMENT` | Environment tag on events | `production` |
+| `SENTRY_RELEASE` | Release tag on events | `netcidr@<version>` |
+
+**What is sent:** `tracing` events at `ERROR` level and panics, from `netcidr serve` and the Lambda binary (which flushes after every invocation). Other subcommands (including `mcp-serve`) do not install the `tracing` pipeline, so only panics are reported from them. Spans, breadcrumbs, and request data are not sent — traces belong to the OTLP exporter above. **PII:** `send_default_pii` is off, user/request data is dropped, and any event field whose key looks like an email, subject, token, secret, or credential is stripped before the event leaves the process (the same rule the OTLP exporter enforces). Message text is sent as logged. The dashboard has its own optional browser-side reporting via `VITE_SENTRY_DSN` at build time.
+
 ## AWS Lambda deployment
 
 netcidr ships a `lambda` binary that runs the same Axum router driven by the AWS Lambda runtime instead of a TCP listener. It uses a Postgres backend.
