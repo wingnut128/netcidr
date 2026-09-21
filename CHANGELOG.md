@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.5](https://github.com/wingnut128/netcidr/compare/v0.28.4...v0.28.5) - 2026-09-21
+
+### Added
+
+- add opt-in Sentry error and panic reporting ([#395](https://github.com/wingnut128/netcidr/pull/395))
+- *(dashboard)* add optional Sentry error monitoring ([#391](https://github.com/wingnut128/netcidr/pull/391))
+
+### Fixed
+
+- *(ci)* give digestabot a PR token that triggers workflows ([#398](https://github.com/wingnut128/netcidr/pull/398))
+- *(security)* bump rustls to 0.23.45 for RUSTSEC-2026-0285 ([#394](https://github.com/wingnut128/netcidr/pull/394))
+
+### Other
+
+- *(deps)* bump release-plz/action from 0.5.136 to 0.5.138 ([#386](https://github.com/wingnut128/netcidr/pull/386))
+- *(deps)* bump docker/build-push-action from 7.3.0 to 7.4.0 ([#389](https://github.com/wingnut128/netcidr/pull/389))
+- *(deps)* bump docker/setup-buildx-action from 4.3.0 to 4.4.1 ([#384](https://github.com/wingnut128/netcidr/pull/384))
+- *(deps)* bump the cargo-minor-and-patch group with 2 updates ([#378](https://github.com/wingnut128/netcidr/pull/378))
+- *(deps)* bump github/codeql-action/upload-sarif ([#380](https://github.com/wingnut128/netcidr/pull/380))
+- *(deps)* bump github/codeql-action/init from 4.37.9 to 4.38.0 ([#383](https://github.com/wingnut128/netcidr/pull/383))
+- *(deps)* bump github/codeql-action/analyze from 4.37.9 to 4.38.0 ([#382](https://github.com/wingnut128/netcidr/pull/382))
+- *(deps)* bump release-plz/action from 0.5.132 to 0.5.136 ([#381](https://github.com/wingnut128/netcidr/pull/381))
+- *(deps)* bump cloudsmith-io/cloudsmith-cli-action ([#375](https://github.com/wingnut128/netcidr/pull/375))
+- *(deps)* bump the npm-minor-and-patch group in /dashboard with 4 updates ([#370](https://github.com/wingnut128/netcidr/pull/370))
+- *(deps)* bump the cargo-minor-and-patch group with 5 updates ([#373](https://github.com/wingnut128/netcidr/pull/373))
+- *(deps)* bump anchore/sbom-action from 0.24.1 to 0.24.2 ([#372](https://github.com/wingnut128/netcidr/pull/372))
+- *(deps)* bump anchore/scan-action from 7.4.1 to 7.4.2 ([#374](https://github.com/wingnut128/netcidr/pull/374))
+- *(deps)* bump release-plz/action from 0.5.131 to 0.5.132 ([#371](https://github.com/wingnut128/netcidr/pull/371))
+
 ### Added
 
 - *(dashboard)* optional Sentry error monitoring, tracing, and session replay via `@sentry/react` ([#390](https://github.com/wingnut128/netcidr/issues/390)). Enabled only when `VITE_SENTRY_DSN` is set at dashboard build time; builds without it report nothing. Request headers, bodies, cookies, and user IP are never collected, and replay masks all text and inputs, so bearer tokens and PAT secrets stay out of events.
