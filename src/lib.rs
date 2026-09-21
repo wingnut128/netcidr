@@ -40,7 +40,11 @@ pub mod error;
 pub mod error_presenter;
 pub mod logging;
 pub mod oauth;
+pub mod pii;
 pub mod validation;
+
+#[cfg(feature = "sentry")]
+pub mod error_reporting;
 
 #[cfg(feature = "otel")]
 pub mod telemetry;
