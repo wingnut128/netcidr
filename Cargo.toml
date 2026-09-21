@@ -33,7 +33,7 @@ chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
 anyhow = "1"
 async-trait = "0.1"
-dirs = "6"
+dirs = "7"
 rmcp = { version = "3.0", features = ["server", "transport-io", "transport-streamable-http-server", "macros"], optional = true }
 daemonize-me = "2"
 tokio-util = { version = "0.7", features = ["rt"], optional = true }
