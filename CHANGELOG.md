@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.6](https://github.com/wingnut128/netcidr/compare/v0.28.5...v0.28.6) - 2026-09-21
+
+### Other
+
+- *(deps-dev)* bump vitest from 4.1.11 to 5.0.0 in /dashboard ([#377](https://github.com/wingnut128/netcidr/pull/377))
+- *(deps)* bump dirs from 6.0.0 to 7.0.0 ([#379](https://github.com/wingnut128/netcidr/pull/379))
+- *(deps)* bump jsonwebtoken from 10.4.0 to 11.1.0 ([#388](https://github.com/wingnut128/netcidr/pull/388))
+- *(deps)* bump the cargo-minor-and-patch group across 1 directory with 3 updates ([#387](https://github.com/wingnut128/netcidr/pull/387))
+
 ## [0.28.5](https://github.com/wingnut128/netcidr/compare/v0.28.4...v0.28.5) - 2026-09-21
 
 ### Added
