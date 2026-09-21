@@ -1196,6 +1196,53 @@ mod tests {
     }
 
     #[test]
+    fn google_id_token_validation_rejects_token_signed_by_wrong_key() {
+        // Every other negative test short-circuits before the signature is ever
+        // checked: `rejects_unknown_key_id` fails the `keys` lookup and
+        // `rejects_malformed_jwt` fails at parsing. This one signs with a key
+        // that is not the one published under `TEST_KEY_ID`, so the header,
+        // claims and key id all line up and only the signature is wrong.
+        let (forged_private, _forged_public) = test_keypair();
+        let (genuine_private, genuine_public) = test_keypair();
+        let subject = "117290938723847238472";
+        let audience = "expected-audience";
+        let issuer = "https://accounts.google.com";
+
+        let forged = signed_id_token(
+            &forged_private,
+            subject,
+            audience,
+            issuer,
+            now_seconds() + 3600,
+            now_seconds(),
+            Some(true),
+        );
+        assert!(
+            validate_google_id_token(&forged, &[audience.to_string()], &key_map(&genuine_public))
+                .is_none(),
+            "a token signed by a key other than the published one must be rejected"
+        );
+
+        // Positive control: identical claims signed by the genuine key are
+        // accepted, so the rejection above is attributable to the signature
+        // rather than to an incidental claim mismatch.
+        let genuine = signed_id_token(
+            &genuine_private,
+            subject,
+            audience,
+            issuer,
+            now_seconds() + 3600,
+            now_seconds(),
+            Some(true),
+        );
+        assert!(
+            validate_google_id_token(&genuine, &[audience.to_string()], &key_map(&genuine_public))
+                .is_some(),
+            "the same claims signed by the published key must still be accepted"
+        );
+    }
+
+    #[test]
     fn google_id_token_validation_rejects_expired_token() {
         let (private, public) = test_keypair();
         let jwt = signed_id_token(
