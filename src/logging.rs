@@ -105,11 +105,6 @@ pub fn init_logging(config: &LogConfig) -> LogGuard {
 
     let registry = tracing_subscriber::registry().with(filter).with(fmt_layer);
 
-    // Opt-in Sentry error forwarding. `None` (no layer) unless the client was
-    // initialized in `main` via `error_reporting::init`.
-    #[cfg(feature = "sentry")]
-    let registry = registry.with(crate::error_reporting::layer());
-
     #[cfg(feature = "otel")]
     {
         let (otel_layer, otel) = match crate::telemetry::otel_layer() {

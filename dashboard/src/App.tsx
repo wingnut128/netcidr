@@ -1,5 +1,4 @@
 import { HashRouter, Routes, Route } from "react-router-dom";
-import { withSentryReactRouterV7Routing } from "@sentry/react";
 import { MainLayout } from "./components/layout/MainLayout";
 import { Calculator } from "./pages/Calculator";
 import { Splitter } from "./pages/Splitter";
@@ -13,13 +12,10 @@ import { UsersAdmin } from "./pages/UsersAdmin";
 import { Activity } from "./pages/Activity";
 import { Tokens } from "./pages/Tokens";
 
-// Names Sentry navigation transactions by route pattern instead of raw URL.
-const SentryRoutes = withSentryReactRouterV7Routing(Routes);
-
 export function App() {
   return (
     <HashRouter>
-      <SentryRoutes>
+      <Routes>
         <Route element={<MainLayout />}>
           <Route index element={<Calculator />} />
           <Route path="split" element={<Splitter />} />
@@ -33,7 +29,7 @@ export function App() {
           <Route path="admin/users" element={<UsersAdmin />} />
           <Route path="admin/activity" element={<Activity />} />
         </Route>
-      </SentryRoutes>
+      </Routes>
     </HashRouter>
   );
 }

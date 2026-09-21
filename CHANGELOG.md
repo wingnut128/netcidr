@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- Sentry integration added in 0.28.5 ([#400](https://github.com/wingnut128/netcidr/issues/400)): the dashboard's `@sentry/react` instrumentation (`VITE_SENTRY_DSN`) and the opt-in `sentry` cargo feature (`SENTRY_DSN`). Both were disabled unless explicitly configured, so deployments that never set a DSN are unaffected; the embedded dashboard bundle returns to its previous size. Builds passing `--features sentry` must drop the flag.
+
 ## [0.28.6](https://github.com/wingnut128/netcidr/compare/v0.28.5...v0.28.6) - 2026-09-21
 
 ### Other

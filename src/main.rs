@@ -134,12 +134,6 @@ fn main() {
         std::process::exit(1);
     }
 
-    // Sentry must start after any fork (its transport thread would not survive
-    // one) and before the runtime, so worker threads inherit the client. No-op
-    // unless SENTRY_DSN is set. The guard flushes pending events on drop.
-    #[cfg(feature = "sentry")]
-    let _sentry = netcidr::error_reporting::init();
-
     // Build the tokio runtime after any fork so file descriptors are valid.
     let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
     runtime.block_on(async_main(cli));
