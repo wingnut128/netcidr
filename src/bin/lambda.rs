@@ -32,19 +32,8 @@ fn env_parse<T: std::str::FromStr>(key: &str, fallback: T) -> T {
         .unwrap_or(fallback)
 }
 
-fn main() -> Result<(), Error> {
-    // Sentry must be initialized before the runtime is built so worker
-    // threads inherit the client. No-op unless SENTRY_DSN is set.
-    #[cfg(feature = "sentry")]
-    let _sentry = netcidr::error_reporting::init();
-
-    tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?
-        .block_on(async_main())
-}
-
-async fn async_main() -> Result<(), Error> {
+#[tokio::main]
+async fn main() -> Result<(), Error> {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
@@ -57,10 +46,6 @@ async fn async_main() -> Result<(), Error> {
         .without_time(); // Lambda already adds timestamps to log lines.
 
     let registry = tracing_subscriber::registry().with(filter).with(fmt_layer);
-
-    // Opt-in Sentry error forwarding (no layer unless the client is active).
-    #[cfg(feature = "sentry")]
-    let registry = registry.with(netcidr::error_reporting::layer());
 
     // Opt-in OTLP span export. When built without `otel` or with
     // OTEL_EXPORTER_OTLP_ENDPOINT unset, no layer is attached (true no-op).
@@ -133,8 +118,8 @@ async fn async_main() -> Result<(), Error> {
         None
     };
 
-    // `mut` is only needed when the otel or sentry layer is appended below.
-    #[cfg_attr(not(any(feature = "otel", feature = "sentry")), allow(unused_mut))]
+    // `mut` is only needed when the otel layer is appended below.
+    #[cfg_attr(not(feature = "otel"), allow(unused_mut))]
     let mut router = create_router(RouterConfig {
         server,
         ipam_ops,
@@ -155,23 +140,6 @@ async fn async_main() -> Result<(), Error> {
                     guard.force_flush();
                     response
                 }
-            },
-        ));
-    }
-
-    // Same freeze concern for Sentry: flush queued events before the response
-    // is returned. The flush blocks, so it runs on the blocking pool; it
-    // returns immediately when nothing is queued.
-    #[cfg(feature = "sentry")]
-    if netcidr::error_reporting::is_configured() {
-        router = router.layer(axum::middleware::from_fn(
-            |req: axum::extract::Request, next: axum::middleware::Next| async move {
-                let response = next.run(req).await;
-                let _ = tokio::task::spawn_blocking(|| {
-                    netcidr::error_reporting::flush(std::time::Duration::from_secs(2));
-                })
-                .await;
-                response
             },
         ));
     }
