@@ -69,3 +69,7 @@ CLAUDE.local.md
 
 # Git worktrees
 .worktrees/
+
+# Codex agent artifacts (local-only)
+AGENTS.md
+.agents/
