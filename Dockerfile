@@ -17,7 +17,7 @@ ARG FEATURES=default
 ARG WITH_DASHBOARD=true
 
 # ---------- Dashboard build (skipped when WITH_DASHBOARD=false) -----------
-FROM oven/bun:1-alpine@sha256:07235578f79ef8c6f97d94aee7938e76f5cdba5f21ae5dbfdd3d3d38058437eb AS dashboard-build
+FROM oven/bun:1-alpine@sha256:d888c0ae6c86d7866ff10c5aafdd9077b36aee6455b33dd270fb93c0dd5cef6f AS dashboard-build
 WORKDIR /app/dashboard
 COPY dashboard/package.json dashboard/bun.lock ./
 RUN bun install --frozen-lockfile
@@ -26,7 +26,7 @@ RUN bun run build
 
 # When dashboards are disabled, use the same Rust builder image to create an empty
 # placeholder directory. Chainguard/static has no shell, so we can't `mkdir` there.
-FROM rust:1.95-alpine3.23@sha256:606fd313a0f49743ee2a7bd49a0914bab7deedb12791f3a846a34a4711db7ed2 AS dashboard-false
+FROM rust:1.97-alpine3.23@sha256:c4a364ddbf684fe038e6fa6a4f25b30c8dc85247423e0e660676ece0d17be4a2 AS dashboard-false
 RUN mkdir -p /app/dashboard/dist
 
 FROM dashboard-build AS dashboard-true
@@ -40,7 +40,7 @@ FROM dashboard-${WITH_DASHBOARD} AS dashboard
 # so we keep Alpine for the build stage and rely on Chainguard only for the
 # runtime — the artifact copied into the final image is what matters for CVE
 # surface.
-FROM rust:1.95-alpine3.23@sha256:606fd313a0f49743ee2a7bd49a0914bab7deedb12791f3a846a34a4711db7ed2 AS builder
+FROM rust:1.97-alpine3.23@sha256:c4a364ddbf684fe038e6fa6a4f25b30c8dc85247423e0e660676ece0d17be4a2 AS builder
 
 ARG FEATURES
 
@@ -78,7 +78,7 @@ RUN touch src/main.rs && \
 # guarantees reproducibility. Chainguard's `static` image is not versioned
 # beyond `:latest` / `:latest-glibc`, so `:latest` is the recommended tag per
 # their docs. Digestabot refreshes the digest on a schedule (.github/workflows/digestabot.yml).
-FROM cgr.dev/chainguard/static:latest@sha256:96d02f455d5a73b817c0602910748609cf8471b1cc9522f78c75cedb1f67d072
+FROM cgr.dev/chainguard/static:latest@sha256:41e17ed83c594a64a9396b6ab96dd26d5ddc290dacf4c177464712ff21ad534f
 
 COPY --from=builder /app/target/release/netcidr /usr/local/bin/netcidr
 
