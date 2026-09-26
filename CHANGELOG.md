@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Lambda failed every cold start in 0.28.7 with `invalid bind address '127.0.0.1:0'`: the startup `validate_deployment` check ([#410](https://github.com/wingnut128/netcidr/pull/410)) passed an address with a port, which the loopback check cannot parse. It now passes a bare `127.0.0.1`, and the Lambda tests assert the specific rejection reason plus a passing OIDC + IPAM configuration ([#413](https://github.com/wingnut128/netcidr/issues/413)).
+
 ## [0.28.7](https://github.com/wingnut128/netcidr/compare/v0.28.6...v0.28.7) - 2026-09-26
 
 ### Fixed
