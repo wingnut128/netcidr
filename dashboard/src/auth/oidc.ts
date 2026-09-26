@@ -1,5 +1,5 @@
 /**
- * In-memory + localStorage cache of the Google ID token.
+ * In-memory cache of the Google ID token. A page reload requires sign-in.
  *
  * The dashboard uses Google Identity Services (`@react-oauth/google`)
  * which returns a JWT credential directly from the user's Google sign-in.
@@ -14,7 +14,7 @@
 
 import { jwtDecode } from "jwt-decode";
 
-const STORAGE_KEY = "netcidr.idToken";
+const LEGACY_STORAGE_KEY = "netcidr.idToken";
 
 export interface IdTokenClaims {
   sub: string;
@@ -36,37 +36,36 @@ export const oauthClientId = clientId ?? "";
 
 let cachedToken: string | null = null;
 
-/** Restore from localStorage on first read; returns null if expired or absent. */
-function loadFromStorage(): string | null {
+// Earlier versions persisted ID tokens. Remove that copy on load, never
+// restoring it into memory or sending it to the API.
+function removeLegacyToken(): void {
   try {
-    const t = window.localStorage.getItem(STORAGE_KEY);
-    if (!t) return null;
-    const claims = jwtDecode<IdTokenClaims>(t);
-    if (claims.exp * 1000 < Date.now()) {
-      window.localStorage.removeItem(STORAGE_KEY);
-      return null;
-    }
-    return t;
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY);
   } catch {
-    window.localStorage.removeItem(STORAGE_KEY);
-    return null;
+    // Storage may be disabled; auth still works in memory.
   }
 }
 
-cachedToken = loadFromStorage();
+removeLegacyToken();
 
 export function setIdToken(token: string | null): IdTokenClaims | null {
-  cachedToken = token;
-  if (token) {
-    window.localStorage.setItem(STORAGE_KEY, token);
-    try {
-      return jwtDecode<IdTokenClaims>(token);
-    } catch {
+  removeLegacyToken();
+  if (!token) {
+    cachedToken = null;
+    return null;
+  }
+  try {
+    const claims = jwtDecode<IdTokenClaims>(token);
+    if (claims.exp * 1000 <= Date.now()) {
+      cachedToken = null;
       return null;
     }
+    cachedToken = token;
+    return claims;
+  } catch {
+    cachedToken = null;
+    return null;
   }
-  window.localStorage.removeItem(STORAGE_KEY);
-  return null;
 }
 
 /** Synchronous read of the cached ID token. Used by api.ts. */
@@ -77,7 +76,6 @@ export function getCurrentIdToken(): string | null {
     const claims = jwtDecode<IdTokenClaims>(cachedToken);
     if (claims.exp * 1000 < Date.now()) {
       cachedToken = null;
-      window.localStorage.removeItem(STORAGE_KEY);
       return null;
     }
     return cachedToken;

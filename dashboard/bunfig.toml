@@ -5,3 +5,4 @@
 # postinstall scripts globally.
 [install]
 exact = true
+minimumReleaseAge = 604800
