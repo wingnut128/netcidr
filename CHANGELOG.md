@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.7](https://github.com/wingnut128/netcidr/compare/v0.28.6...v0.28.7) - 2026-09-26
+
+### Fixed
+
+- enforce minimum release age for Bun packages in dashboard ([#407](https://github.com/wingnut128/netcidr/pull/407))
+- add cooldown period to all Dependabot package ecosystems ([#403](https://github.com/wingnut128/netcidr/pull/403))
+
+### Other
+
+- Keep dashboard ID tokens in memory only ([#411](https://github.com/wingnut128/netcidr/pull/411))
+- Reject invalid Lambda authentication configuration ([#410](https://github.com/wingnut128/netcidr/pull/410))
+- *(deps)* bump chainguard/static from `bf639cb` to `41e17ed` ([#409](https://github.com/wingnut128/netcidr/pull/409))
+- gitignore Codex agent artifacts ([#408](https://github.com/wingnut128/netcidr/pull/408))
+- *(deps)* bump chainguard/static from `96d02f4` to `bf639cb` ([#404](https://github.com/wingnut128/netcidr/pull/404))
+- *(deps)* bump oven/bun from `0723557` to `d888c0a` ([#405](https://github.com/wingnut128/netcidr/pull/405))
+- *(deps)* bump rust from 1.95-alpine3.23 to 1.97-alpine3.23 ([#406](https://github.com/wingnut128/netcidr/pull/406))
+- remove Sentry SDK integration ([#401](https://github.com/wingnut128/netcidr/pull/401))
+
 ### Other
 
 - Ignore Codex agent artifacts (`AGENTS.md`, `.agents/`) in `.gitignore`.
