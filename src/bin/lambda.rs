@@ -32,6 +32,17 @@ fn env_parse<T: std::str::FromStr>(key: &str, fallback: T) -> T {
         .unwrap_or(fallback)
 }
 
+/// An unknown authentication mode must never become an unauthenticated router.
+fn parse_auth_mode(raw: &str) -> Result<AuthMode, String> {
+    match raw {
+        "oidc" => Ok(AuthMode::Oidc),
+        "bearer" => Ok(AuthMode::Bearer),
+        _ => Err(format!(
+            "invalid NETCIDR_AUTH_MODE {raw:?}; expected 'oidc' or 'bearer'"
+        )),
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     use tracing_subscriber::layer::SubscriberExt;
@@ -63,11 +74,7 @@ async fn main() -> Result<(), Error> {
     registry.init();
 
     let server = ServerConfig {
-        auth_mode: match env_or("NETCIDR_AUTH_MODE", "oidc").as_str() {
-            "bearer" => AuthMode::Bearer,
-            "oidc" => AuthMode::Oidc,
-            _ => AuthMode::None,
-        },
+        auth_mode: parse_auth_mode(&env_or("NETCIDR_AUTH_MODE", "oidc"))?,
         ipam_enabled: env_or("NETCIDR_IPAM_ENABLED", "true") == "true",
         ipam_backend: env_or("NETCIDR_IPAM_BACKEND", "postgres"),
         ipam_db: None,
@@ -82,6 +89,10 @@ async fn main() -> Result<(), Error> {
         rate_limit_burst: env_parse("NETCIDR_RATE_LIMIT_BURST", 50),
         ..ServerConfig::default()
     };
+
+    // Lambda has no TCP bind address, but this runs the same auth and IPAM
+    // startup checks as `serve` before any store or router is constructed.
+    server.validate_deployment("127.0.0.1:0")?;
 
     let ipam_ops = if server.ipam_enabled {
         let mut ipam_config = netcidr::ipam::config::IpamConfig::default();
@@ -145,4 +156,28 @@ async fn main() -> Result<(), Error> {
     }
 
     run(router).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lambda_rejects_every_unauthenticated_mode_and_typos() {
+        assert!(matches!(parse_auth_mode("oidc"), Ok(AuthMode::Oidc)));
+        assert!(matches!(parse_auth_mode("bearer"), Ok(AuthMode::Bearer)));
+        for value in ["", "none", "OIDC", "oidc ", "beerer", "disabled"] {
+            assert!(parse_auth_mode(value).is_err(), "accepted {value:?}");
+        }
+    }
+
+    #[test]
+    fn lambda_deployment_validation_rejects_missing_auth_configuration() {
+        let config = ServerConfig {
+            ipam_enabled: true,
+            auth_mode: AuthMode::None,
+            ..ServerConfig::default()
+        };
+        assert!(config.validate_deployment("127.0.0.1:0").is_err());
+    }
 }
