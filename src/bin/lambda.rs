@@ -32,6 +32,11 @@ fn env_parse<T: std::str::FromStr>(key: &str, fallback: T) -> T {
         .unwrap_or(fallback)
 }
 
+/// Loopback stand-in passed to `validate_deployment`: Lambda has no TCP bind
+/// address. Must be a bare IP (no port) — `is_loopback_bind_address` parses
+/// it as an `IpAddr`, so `"127.0.0.1:0"` would fail every cold start.
+const LAMBDA_VALIDATION_BIND_ADDRESS: &str = "127.0.0.1";
+
 /// An unknown authentication mode must never become an unauthenticated router.
 fn parse_auth_mode(raw: &str) -> Result<AuthMode, String> {
     match raw {
@@ -92,7 +97,7 @@ async fn main() -> Result<(), Error> {
 
     // Lambda has no TCP bind address, but this runs the same auth and IPAM
     // startup checks as `serve` before any store or router is constructed.
-    server.validate_deployment("127.0.0.1:0")?;
+    server.validate_deployment(LAMBDA_VALIDATION_BIND_ADDRESS)?;
 
     let ipam_ops = if server.ipam_enabled {
         let mut ipam_config = netcidr::ipam::config::IpamConfig::default();
@@ -178,6 +183,27 @@ mod tests {
             auth_mode: AuthMode::None,
             ..ServerConfig::default()
         };
-        assert!(config.validate_deployment("127.0.0.1:0").is_err());
+        let err = config
+            .validate_deployment(LAMBDA_VALIDATION_BIND_ADDRESS)
+            .expect_err("IPAM without auth must be rejected");
+        // Guard against passing for the wrong reason (e.g. an unparseable
+        // bind address rejecting every config).
+        assert!(
+            err.to_string().contains("auth_mode"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn lambda_deployment_validation_accepts_oidc_with_ipam() {
+        let config = ServerConfig {
+            ipam_enabled: true,
+            auth_mode: AuthMode::Oidc,
+            oidc_audience: Some("client-id.apps.googleusercontent.com".to_string()),
+            ..ServerConfig::default()
+        };
+        config
+            .validate_deployment(LAMBDA_VALIDATION_BIND_ADDRESS)
+            .expect("the production Lambda configuration must pass startup validation");
     }
 }
