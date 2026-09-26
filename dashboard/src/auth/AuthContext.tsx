@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -64,6 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [adminContact, setAdminContact] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const verificationId = useRef(0);
 
   /**
    * Verify the current token against the backend by calling /me.
@@ -72,8 +74,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    * token and after every successful sign-in.
    */
   const verifyWithBackend = useCallback(async (token: string) => {
+    const requestId = ++verificationId.current;
     try {
       const me = await fetchMe(token);
+      if (requestId !== verificationId.current || getCurrentIdToken() !== token) return;
       if (!me) {
         setIdToken(null);
         setClaims(null);
@@ -88,6 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setAdminContact(me.admin_contact);
       setStatus(me.is_allowlisted ? "authenticated" : "unallowlisted");
     } catch {
+      if (requestId !== verificationId.current || getCurrentIdToken() !== token) return;
       // Network error or non-200: fall back to "authenticated" so the
       // user can still see public surfaces. /ipam/* will 401/403 if
       // anything is actually broken — that surfaces as a separate error.
@@ -95,7 +100,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // On mount: hydrate from localStorage, then verify with backend.
+  // On mount: a reload has no credential and requires sign-in again.
   useEffect(() => {
     if (!isAuthConfigured) return;
     const token = getCurrentIdToken();
@@ -117,6 +122,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!claims) return;
     const msUntilExpiry = claims.exp * 1000 - Date.now();
     if (msUntilExpiry <= 0) {
+      ++verificationId.current;
       setIdToken(null);
       setClaims(null);
       setIsAdmin(false);
@@ -126,6 +132,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
     const id = window.setTimeout(() => {
+      ++verificationId.current;
       setIdToken(null);
       setClaims(null);
       setIsAdmin(false);
@@ -152,10 +159,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const signOut = useCallback(() => {
+    ++verificationId.current;
     setIdToken(null);
     setClaims(null);
     setIsAdmin(false);
     setIsPlatformAdmin(false);
+    setAdminContact(null);
     setStatus("anonymous");
     setError(null);
   }, []);
