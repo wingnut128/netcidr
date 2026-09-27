@@ -26,6 +26,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
+      packages: write
       id-token: write
       attestations: write
     strategy:
@@ -38,8 +39,8 @@ jobs:
             runner: ubuntu-24.04-arm
     env:
       RELEASE_TAG: ${{ inputs.tag }}
-      REGISTRY: docker.cloudsmith.io
-      IMAGE: docker.cloudsmith.io/cloudreaper/netcidr/netcidr
+      REGISTRY: ghcr.io
+      IMAGE: ghcr.io/wingnut128/netcidr
     steps:
       - name: Validate tag format
         run: |
@@ -55,17 +56,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - name: Authenticate to Cloudsmith via OIDC
-        uses: cloudsmith-io/cloudsmith-cli-action@69e169e2ad9bc9a1599c2dff464061a00fe9f8ba # v3.1.1
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
-          oidc-namespace: cloudreaper
-          oidc-service-slug: ${{ secrets.CLOUDSMITH_USER }}
-          oidc-auth-only: 'true'
-
-      - name: Log in to Cloudsmith registry
-        env:
-          CS_USER: ${{ secrets.CLOUDSMITH_USER }}
-        run: echo "$CLOUDSMITH_API_KEY" | docker login docker.cloudsmith.io -u "$CS_USER" --password-stdin
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push by digest
         id: build
@@ -76,6 +72,8 @@ jobs:
           push: true
           build-args: |
             FEATURES=mcp,tui,ipam-postgres
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true
 
       - name: Attest build provenance
@@ -105,12 +103,11 @@ jobs:
     needs: build
     permissions:
       contents: read
-      id-token: write
-      attestations: write
+      packages: write
     env:
       RELEASE_TAG: ${{ inputs.tag }}
-      REGISTRY: docker.cloudsmith.io
-      IMAGE: docker.cloudsmith.io/cloudreaper/netcidr/netcidr
+      REGISTRY: ghcr.io
+      IMAGE: ghcr.io/wingnut128/netcidr
     steps:
       - name: Validate tag format
         run: |
@@ -129,17 +126,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - name: Authenticate to Cloudsmith via OIDC
-        uses: cloudsmith-io/cloudsmith-cli-action@69e169e2ad9bc9a1599c2dff464061a00fe9f8ba # v3.1.1
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
-          oidc-namespace: cloudreaper
-          oidc-service-slug: ${{ secrets.CLOUDSMITH_USER }}
-          oidc-auth-only: 'true'
-
-      - name: Log in to Cloudsmith registry
-        env:
-          CS_USER: ${{ secrets.CLOUDSMITH_USER }}
-        run: echo "$CLOUDSMITH_API_KEY" | docker login docker.cloudsmith.io -u "$CS_USER" --password-stdin
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Generate image metadata
         id: meta
@@ -154,5 +146,6 @@ jobs:
         working-directory: /tmp/digests
         run: |
           docker buildx imagetools create \
+            --annotation "index:org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf '${{ env.IMAGE }}@sha256:%s ' *)

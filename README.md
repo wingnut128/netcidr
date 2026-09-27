@@ -664,13 +664,16 @@ If you need compose-level ordering, use `depends_on: { condition: service_starte
 
 ### Published images
 
-Release images are published to Cloudsmith by the **Publish Image** workflow
+Release images are published to the GitHub Container Registry by the **Publish Image** workflow
 (`.github/workflows/publish-image.yml`), not from a local machine. It builds `linux/amd64` and
-`linux/arm64` on native runners with `FEATURES=mcp,tui,ipam-postgres`, authenticates via OIDC,
-attests build provenance, and tags `vX.Y.Z` plus `latest`:
+`linux/arm64` on native runners with `FEATURES=mcp,tui,ipam-postgres`, attests build provenance,
+and tags `vX.Y.Z` plus `latest`:
 
 ```bash
-docker pull docker.cloudsmith.io/cloudreaper/netcidr/netcidr:latest
+docker pull ghcr.io/wingnut128/netcidr:latest
+
+# Verify the build provenance attestation
+gh attestation verify oci://ghcr.io/wingnut128/netcidr:latest --repo wingnut128/netcidr
 ```
 
 Maintainers can republish an existing tag from Actions → Publish Image → Run workflow, or
