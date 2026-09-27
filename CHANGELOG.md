@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Container images are now published automatically on every release: `release.yml` now calls `publish-image.yml` as a reusable workflow after attaching the binary. The previous `release: published` trigger never fired because the release is un-drafted with `GITHUB_TOKEN` ([#416](https://github.com/wingnut128/netcidr/issues/416))
+
+### Removed
+
+- `just docker-login` and `just docker-push` recipes. They pushed to Docker Hub unless `docker_image` was overridden, built only the host architecture with default features, and skipped attestations. Images are published to Cloudsmith exclusively by the Publish Image workflow; `just docker` / `just docker-run` remain for local builds ([#416](https://github.com/wingnut128/netcidr/issues/416))
+
 ## [0.28.8](https://github.com/wingnut128/netcidr/compare/v0.28.7...v0.28.8) - 2026-09-26
 
 ### Fixed

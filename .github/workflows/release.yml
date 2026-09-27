@@ -112,3 +112,15 @@ jobs:
             '{event_type: "netcidr-released", client_payload: {ref: $ref}}' \
             | gh api -X POST repos/wingnut128/netcidr-deploy/dispatches --input -
           echo "Dispatched netcidr-released for $RELEASE_TAG"
+
+  publish-image:
+    name: Publish container image
+    needs: build
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/publish-image.yml
+    with:
+      tag: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    secrets: inherit
