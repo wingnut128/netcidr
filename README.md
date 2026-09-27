@@ -670,7 +670,7 @@ Release images are published to Cloudsmith by the **Publish Image** workflow
 attests build provenance, and tags `vX.Y.Z` plus `latest`:
 
 ```bash
-docker pull docker.cloudsmith.io/cloudreaper/netcidr/netcidr:latest
+docker pull docker.cloudsmith.io/cloudreaper/artifacts/netcidr:latest
 ```
 
 Maintainers can republish an existing tag from Actions → Publish Image → Run workflow, or

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Publish Image workflow now pushes to the correct Cloudsmith repository, `docker.cloudsmith.io/cloudreaper/artifacts/netcidr` (was `cloudreaper/netcidr/netcidr`) ([#416](https://github.com/wingnut128/netcidr/issues/416))
+
 ### Removed
 
 - `just docker-login` and `just docker-push` recipes. They pushed to Docker Hub unless `docker_image` was overridden, built only the host architecture with default features, and skipped attestations. Images are published to Cloudsmith exclusively by the Publish Image workflow; `just docker` / `just docker-run` remain for local builds ([#416](https://github.com/wingnut128/netcidr/issues/416))
