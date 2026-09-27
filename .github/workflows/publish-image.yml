@@ -1,8 +1,15 @@
 name: Publish Image
 
 on:
-  release:
-    types: [published]
+  # Called by release.yml after the binary is attached. A `release: published`
+  # trigger never fires there: release.yml un-drafts the release with
+  # GITHUB_TOKEN, and GITHUB_TOKEN events don't start other workflows.
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag to publish (vX.Y.Z)"
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       tag:
@@ -30,7 +37,7 @@ jobs:
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
     env:
-      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}
+      RELEASE_TAG: ${{ inputs.tag }}
       REGISTRY: docker.cloudsmith.io
       IMAGE: docker.cloudsmith.io/cloudreaper/artifacts/netcidr
     steps:
@@ -101,7 +108,7 @@ jobs:
       id-token: write
       attestations: write
     env:
-      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}
+      RELEASE_TAG: ${{ inputs.tag }}
       REGISTRY: docker.cloudsmith.io
       IMAGE: docker.cloudsmith.io/cloudreaper/artifacts/netcidr
     steps:
