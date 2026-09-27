@@ -39,7 +39,7 @@ jobs:
     env:
       RELEASE_TAG: ${{ inputs.tag }}
       REGISTRY: docker.cloudsmith.io
-      IMAGE: docker.cloudsmith.io/cloudreaper/artifacts/netcidr
+      IMAGE: docker.cloudsmith.io/cloudreaper/netcidr/netcidr
     steps:
       - name: Validate tag format
         run: |
@@ -110,7 +110,7 @@ jobs:
     env:
       RELEASE_TAG: ${{ inputs.tag }}
       REGISTRY: docker.cloudsmith.io
-      IMAGE: docker.cloudsmith.io/cloudreaper/artifacts/netcidr
+      IMAGE: docker.cloudsmith.io/cloudreaper/netcidr/netcidr
     steps:
       - name: Validate tag format
         run: |
