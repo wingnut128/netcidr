@@ -118,6 +118,7 @@ jobs:
     needs: build
     permissions:
       contents: read
+      packages: write
       id-token: write
       attestations: write
     uses: ./.github/workflows/publish-image.yml

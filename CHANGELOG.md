@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Container images are now published to the GitHub Container Registry at `ghcr.io/wingnut128/netcidr` instead of Cloudsmith, authenticated with `GITHUB_TOKEN`. Build provenance attestations are pushed alongside the image and verifiable with `gh attestation verify oci://ghcr.io/wingnut128/netcidr:<tag> --repo wingnut128/netcidr` ([#419](https://github.com/wingnut128/netcidr/issues/419))
+
 ### Fixed
 
 - Container images are now published automatically on every release: `release.yml` now calls `publish-image.yml` as a reusable workflow after attaching the binary. The previous `release: published` trigger never fired because the release is un-drafted with `GITHUB_TOKEN` ([#416](https://github.com/wingnut128/netcidr/issues/416))
