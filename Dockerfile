@@ -26,7 +26,7 @@ RUN bun run build
 
 # When dashboards are disabled, use the same Rust builder image to create an empty
 # placeholder directory. Chainguard/static has no shell, so we can't `mkdir` there.
-FROM rust:1.97-alpine3.23@sha256:c4a364ddbf684fe038e6fa6a4f25b30c8dc85247423e0e660676ece0d17be4a2 AS dashboard-false
+FROM rust:1.98-alpine3.23@sha256:94a43bda4fd9b71fa3a74621c0982a646f83c7d1a3ba52bb4b7ddfd76d4dca93 AS dashboard-false
 RUN mkdir -p /app/dashboard/dist
 
 FROM dashboard-build AS dashboard-true
@@ -40,7 +40,7 @@ FROM dashboard-${WITH_DASHBOARD} AS dashboard
 # so we keep Alpine for the build stage and rely on Chainguard only for the
 # runtime — the artifact copied into the final image is what matters for CVE
 # surface.
-FROM rust:1.97-alpine3.23@sha256:c4a364ddbf684fe038e6fa6a4f25b30c8dc85247423e0e660676ece0d17be4a2 AS builder
+FROM rust:1.98-alpine3.23@sha256:94a43bda4fd9b71fa3a74621c0982a646f83c7d1a3ba52bb4b7ddfd76d4dca93 AS builder
 
 ARG FEATURES
 
