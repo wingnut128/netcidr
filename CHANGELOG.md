@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Container image provenance attestations now cover the digests that are actually published: per-arch builds no longer wrap the image in a BuildKit provenance index, and the multi-arch manifest list is attested too, so `gh attestation verify oci://ghcr.io/wingnut128/netcidr:<tag>` succeeds ([#421](https://github.com/wingnut128/netcidr/issues/421))
 - Container images are now published automatically on every release: `release.yml` now calls `publish-image.yml` as a reusable workflow after attaching the binary. The previous `release: published` trigger never fired because the release is un-drafted with `GITHUB_TOKEN` ([#416](https://github.com/wingnut128/netcidr/issues/416))
 
 ### Removed
