@@ -144,6 +144,26 @@ export interface SplitResult {
   new_prefix: number;
 }
 
+export interface VlsmResult {
+  cidr_block: Ipv4Subnet | Ipv6Subnet;
+  requested_count: number;
+  subnets: (Ipv4Subnet | Ipv6Subnet)[];
+  /** Decimal string: may exceed Number range for IPv6. */
+  allocated_addresses: string;
+  remaining_addresses: string;
+}
+
+export interface SplitTreeNode {
+  subnet: Ipv4Subnet | Ipv6Subnet;
+  children: SplitTreeNode[];
+}
+
+export interface SplitTreeResult {
+  root: SplitTreeNode;
+  steps: number[];
+  total_subnets: number;
+}
+
 // Contains result type
 
 export interface ContainsResult {
