@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- release-plz now bumps the minor version for `feat:` commits (`features_always_increment_minor = true`); previously pre-1.0 features only bumped the patch. SECURITY.md now supports 0.29.x and 0.28.x ([#434](https://github.com/wingnut128/netcidr/issues/434))
+
 ### Added
 
 - Dashboard Splitter page gains **VLSM** and **Steps** modes alongside fixed-size splitting, matching `netcidr split --vlsm` / `--steps`. VLSM shows the carved allocations with allocated/remaining address counts; Steps renders a collapsible subnet tree (capped at 4,096 subnets in the browser — larger trees are refused with a pointer to the CLI/API) ([#431](https://github.com/wingnut128/netcidr/issues/431))

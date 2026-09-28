@@ -11,6 +11,10 @@ changelog_update = true
 # artifacts before the release goes public. The publish workflow flips
 # it to non-draft after upload.
 git_release_draft = true
+# Pre-1.0, release-plz follows Cargo's convention of bumping only the patch
+# for `feat:` commits. New features should bump the minor version (and the
+# SECURITY.md supported-versions table) instead.
+features_always_increment_minor = true
 
 [[package]]
 name = "netcidr"
