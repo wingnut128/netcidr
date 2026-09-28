@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Dashboard Splitter page gains **VLSM** and **Steps** modes alongside fixed-size splitting, matching `netcidr split --vlsm` / `--steps`. VLSM shows the carved allocations with allocated/remaining address counts; Steps renders a collapsible subnet tree (capped at 4,096 subnets in the browser — larger trees are refused with a pointer to the CLI/API) ([#431](https://github.com/wingnut128/netcidr/issues/431))
+
 ## [0.28.9](https://github.com/wingnut128/netcidr/compare/v0.28.8...v0.28.9) - 2026-09-28
 
 ### Other

@@ -17,7 +17,7 @@ A fast IPv4 and IPv6 subnet calculator written in Rust. Available as a CLI tool,
 - **Batch processing**: process multiple CIDRs via positional arguments, `--stdin`, or the `POST /batch` API endpoint
 - **Multiple output formats**: JSON (default), plain text, CSV, and YAML
 - **File output**: write results directly to a file
-- **Web dashboard**: Full SPA at `http://localhost:8080/` with subnet calculator, splitter, contains check, summarize, from-range, IPAM dashboard, subnet visualizer, a **Hostnames** page (record IP↔hostname pointers and view their change history), a platform-admin-only **Users** page (add/disable/remove users and change roles at runtime, no redeploy) and an admin-only **Activity** view (audited mutations grouped by day, filterable by user) — served automatically when running `netcidr serve`. Light/dark themes (toggle with ⌘+J / Ctrl+J), and Google sign-in reveals IPAM, Visualize, and Hostnames navigation when the server runs in OIDC mode (set `VITE_OAUTH_WEB_CLIENT_ID` when building the dashboard — see `dashboard/.env.example`).
+- **Web dashboard**: Full SPA at `http://localhost:8080/` with subnet calculator, splitter (fixed, VLSM, and hierarchical steps), contains check, summarize, from-range, IPAM dashboard, subnet visualizer, a **Hostnames** page (record IP↔hostname pointers and view their change history), a platform-admin-only **Users** page (add/disable/remove users and change roles at runtime, no redeploy) and an admin-only **Activity** view (audited mutations grouped by day, filterable by user) — served automatically when running `netcidr serve`. Light/dark themes (toggle with ⌘+J / Ctrl+J), and Google sign-in reveals IPAM, Visualize, and Hostnames navigation when the server runs in OIDC mode (set `VITE_OAUTH_WEB_CLIENT_ID` when building the dashboard — see `dashboard/.env.example`).
 - **HTTP API**: REST endpoints for all calculations
 - **OpenAPI documentation**: Machine-readable API specification for easy integration with tools like Swagger Editor, Postman, and Insomnia
 - **MCP server**: [Model Context Protocol](https://modelcontextprotocol.io) server for AI assistant integration (Claude, etc.) via Streamable HTTP or stdio
@@ -172,6 +172,10 @@ total tree size is bounded by the 1,000,000-subnet generation limit. `--steps`
 is mutually exclusive with `--prefix`/`--vlsm`/`--count`/`--max`/`--count-only`.
 In the interactive TUI, entering a comma-separated list in the prefix field
 renders the same tree.
+
+The web dashboard's **Splitter** page offers the same three modes via a
+Fixed / VLSM / Steps toggle. Steps renders a collapsible tree and is capped at
+4,096 subnets in the browser; use the CLI or API for larger trees.
 
 ### Subnet Summarization
 
