@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MCP `subnet_vlsm` and `subnet_split_tree` tools expose IPv4/IPv6 variable-length and hierarchical splitting, with allocation/free-space counts and bounded tree generation ([#436](https://github.com/wingnut128/netcidr/issues/436)).
 - Reusable `netcidr-subnet-design` skill compares subnet layouts across variable address pools, sizes, tiers, AZs, exclusions, and growth requirements, with worked examples and MCP/CLI calculation guidance.
 
+### Fixed
+
+- *(ci)* Dependabot now groups `github/codeql-action*` and the opentelemetry crates into single PRs, and manages `/dashboard` with the `bun` ecosystem instead of `npm`, fixing recurring split-bump and frozen-lockfile CI failures ([#439](https://github.com/wingnut128/netcidr/issues/439)).
+
 ## [0.29.0](https://github.com/wingnut128/netcidr/compare/v0.28.9...v0.29.0) - 2026-09-28
 
 ### Added
