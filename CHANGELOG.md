@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.9](https://github.com/wingnut128/netcidr/compare/v0.28.8...v0.28.9) - 2026-09-28
+
+### Other
+
+- *(deps)* bump opentelemetry stack to 0.33 (coordinated upgrade) ([#430](https://github.com/wingnut128/netcidr/pull/430))
+- *(deps)* bump github/codeql-action/upload-sarif
+- attest the image digests that are actually published ([#429](https://github.com/wingnut128/netcidr/pull/429))
+- *(deps)* bump rust from 1.97-alpine3.23 to 1.98-alpine3.23 ([#428](https://github.com/wingnut128/netcidr/pull/428))
+- *(deps)* bump github/codeql-action/analyze from 4.38.0 to 4.38.1 ([#427](https://github.com/wingnut128/netcidr/pull/427))
+- *(deps)* bump github/codeql-action/init from 4.38.0 to 4.38.1 ([#426](https://github.com/wingnut128/netcidr/pull/426))
+- *(deps)* bump release-plz/action from 0.5.138 to 0.5.139 ([#422](https://github.com/wingnut128/netcidr/pull/422))
+- publish container images to GHCR ([#420](https://github.com/wingnut128/netcidr/pull/420))
+- publish container images automatically on release ([#417](https://github.com/wingnut128/netcidr/pull/417))
+
 ### Changed
 
 - Container images are now published to the GitHub Container Registry at `ghcr.io/wingnut128/netcidr` instead of Cloudsmith, authenticated with `GITHUB_TOKEN`. Build provenance attestations are pushed alongside the image and verifiable with `gh attestation verify oci://ghcr.io/wingnut128/netcidr:<tag> --repo wingnut128/netcidr` ([#419](https://github.com/wingnut128/netcidr/issues/419))
