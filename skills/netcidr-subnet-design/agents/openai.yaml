@@ -1,0 +1,4 @@
+interface:
+  display_name: "NetCIDR Subnet Design"
+  short_description: "Compare subnet layouts and verify growth reserves"
+  default_prompt: "Use $netcidr-subnet-design to compare subnet layouts for my address pools, capacity requirements, and growth goals."

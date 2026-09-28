@@ -361,7 +361,9 @@ launchctl load ~/Library/LaunchAgents/com.netcidr.mcp.plist
 | Tool | Description |
 |------|-------------|
 | `subnet_calc` | Calculate IPv4/IPv6 subnet details from CIDR notation |
-| `subnet_split` | Split a CIDR block into smaller subnets |
+| `subnet_split` | Split a CIDR block into equal-sized subnets, or count available subnets |
+| `subnet_vlsm` | Pack mixed-size subnets into a CIDR, returning allocated and remaining address counts |
+| `subnet_split_tree` | Generate a full hierarchical split tree from increasing prefix lengths |
 | `contains_check` | Check if an IP address is within a CIDR range |
 | `from_range` | Convert an IP address range to minimal CIDR blocks |
 | `summarize` | Aggregate CIDRs into the minimal covering set |
@@ -383,6 +385,42 @@ launchctl load ~/Library/LaunchAgents/com.netcidr.mcp.plist
 | `ipam_batch_allocate` | Batch allocate across CIDR blocks in one call (compact output) |
 | `ipam_batch_release` | Batch release by IDs, resource_id, or cidr_block_id |
 | `ipam_allocation_summary` | Grouped allocation overview by resource with utilization |
+
+#### Advanced splitting and subnet design
+
+The calculator tools work without IPAM and support both IPv4 and IPv6. For
+example, these MCP tool arguments carve mixed-size subnets or expand a hierarchy:
+
+```json
+{"name":"subnet_vlsm","arguments":{"cidr":"192.168.0.0/24","prefixes":[26,28,28]}}
+{"name":"subnet_split_tree","arguments":{"cidr":"10.0.0.0/22","steps":[23,24]}}
+```
+
+VLSM requires non-decreasing prefix lengths (largest blocks first), permits
+repeated sizes, and reports `allocated_addresses` and `remaining_addresses`.
+Tree steps must strictly increase and subdivide **every** node at each level;
+`total_subnets` includes all generated levels, excluding the root. Each target
+prefix must be longer than its parent. Requests that overflow the parent, have
+invalid ordering, or exceed the 1,000,000-subnet/node limit are rejected.
+
+All splitter tools are stateless calculations: they neither check existing
+allocations nor write IPAM. When planning around occupied or excluded ranges,
+first identify free CIDRs and split only those blocks.
+
+The reusable [netcidr-subnet-design skill](skills/netcidr-subnet-design/SKILL.md)
+helps assistants compare layouts with variable subnet counts/sizes, tiers,
+availability zones, existing allocations, and growth goals. It distinguishes
+the parent network, allowed allocation pool, grouping envelopes, actual subnets,
+and growth reserves, and verifies candidates using netcidr. Its
+[worked examples](skills/netcidr-subnet-design/references/scenarios.md) compare
+compact, tier-first, and AZ-first designs without making any of them a default.
+
+To install, copy `skills/netcidr-subnet-design` into your assistant's skill
+directory (for example, `~/.agents/skills/`), then connect the netcidr MCP server
+as described below. Invoke `$netcidr-subnet-design` in clients supporting named
+skills, or ask it to compare subnet designs. An installed netcidr CLI can also
+provide the calculations. The skill does not provision cloud resources or
+record IPAM allocations unless explicitly requested.
 
 #### Streamable HTTP (remote clients)
 

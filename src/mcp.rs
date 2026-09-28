@@ -13,7 +13,10 @@ use crate::ipam::operations::IpamOps;
 use crate::ipv4::Ipv4Subnet;
 use crate::ipv6::Ipv6Subnet;
 use crate::mcp_client::HttpIpamClient;
-use crate::subnet_generator::{count_subnets, generate_ipv4_subnets, generate_ipv6_subnets};
+use crate::subnet_generator::{
+    MAX_GENERATED_SUBNETS, count_subnets, generate_ipv4_subnets, generate_ipv6_subnets,
+    hierarchical_split_ipv4, hierarchical_split_ipv6, vlsm_split_ipv4, vlsm_split_ipv6,
+};
 use crate::summarize::{summarize_ipv4, summarize_ipv6};
 use crate::tenant::Tenant;
 
@@ -218,6 +221,24 @@ struct SubnetSplitParams {
     count: Option<u64>,
     /// Generate all possible subnets (mutually exclusive with count)
     max: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct SubnetVlsmParams {
+    /// Parent IPv4 or IPv6 CIDR block to carve into subnets
+    cidr: String,
+    /// Non-empty target prefixes, largest blocks first (non-decreasing lengths).
+    /// Each must be longer than the parent prefix. Repeated lengths are allowed.
+    prefixes: Vec<u8>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct SubnetSplitTreeParams {
+    /// Parent IPv4 or IPv6 CIDR block to subdivide
+    cidr: String,
+    /// Non-empty, strictly increasing prefix lengths, all longer than the parent.
+    /// Each step subdivides every node at the preceding level.
+    steps: Vec<u8>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -506,6 +527,36 @@ impl NetcidrMcp {
                 params.prefix,
                 Some(count),
             ))
+        }
+    }
+
+    #[tool(
+        name = "subnet_vlsm",
+        description = "Plan variable-length subnet allocations inside an IPv4 or IPv6 CIDR. Provide prefixes largest-block-first (non-decreasing prefix lengths, repeats allowed). Allocates sequentially from the parent network address; returns subnets and allocated/remaining address counts. Rejects overflow and invalid ordering. At most 1,000,000 subnets. Stateless calculation: does not consult existing allocations or write IPAM."
+    )]
+    async fn subnet_vlsm(&self, Parameters(params): Parameters<SubnetVlsmParams>) -> String {
+        if params.prefixes.len() as u64 > MAX_GENERATED_SUBNETS {
+            return format!("Error: VLSM request exceeds {MAX_GENERATED_SUBNETS} subnets");
+        }
+        if is_ipv6(&params.cidr) {
+            result_to_string(vlsm_split_ipv6(&params.cidr, &params.prefixes))
+        } else {
+            result_to_string(vlsm_split_ipv4(&params.cidr, &params.prefixes))
+        }
+    }
+
+    #[tool(
+        name = "subnet_split_tree",
+        description = "Plan a hierarchical IPv4 or IPv6 subnet split. Steps are strictly increasing prefix lengths; each step fully subdivides every node at the previous level. Returns a nested tree and total_subnets excluding the root. Limited to 1,000,000 generated nodes across all levels. For partial allocations or growth reserves, split selected child CIDRs separately or use subnet_vlsm/subnet_split. Stateless calculation; does not write IPAM."
+    )]
+    async fn subnet_split_tree(
+        &self,
+        Parameters(params): Parameters<SubnetSplitTreeParams>,
+    ) -> String {
+        if is_ipv6(&params.cidr) {
+            result_to_string(hierarchical_split_ipv6(&params.cidr, &params.steps))
+        } else {
+            result_to_string(hierarchical_split_ipv4(&params.cidr, &params.steps))
         }
     }
 
@@ -1054,6 +1105,148 @@ mod tests {
     // -------------------------------------------------------------------
     // Calculator tool tests
     // -------------------------------------------------------------------
+
+    #[test]
+    fn advanced_split_tools_are_discoverable() {
+        let tools = NetcidrMcp::tool_router().list_all();
+        for name in ["subnet_vlsm", "subnet_split_tree"] {
+            assert!(tools.iter().any(|tool| tool.name == name), "missing {name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_subnet_vlsm_allocations_and_remaining_space() {
+        for (cidr, prefixes, networks, allocated, remaining) in [
+            (
+                "192.168.0.0/24",
+                vec![26, 28, 28],
+                vec!["192.168.0.0", "192.168.0.64", "192.168.0.80"],
+                "96",
+                "160",
+            ),
+            (
+                "2001:db8::/120",
+                vec![122, 124, 124],
+                vec!["2001:db8::", "2001:db8::40", "2001:db8::50"],
+                "96",
+                "160",
+            ),
+        ] {
+            let result = calc_server()
+                .subnet_vlsm(Parameters(SubnetVlsmParams {
+                    cidr: cidr.into(),
+                    prefixes: prefixes.clone(),
+                }))
+                .await;
+            let value: serde_json::Value = serde_json::from_str(&result).expect(&result);
+            assert_eq!(value["allocated_addresses"], allocated);
+            assert_eq!(value["remaining_addresses"], remaining);
+            assert_eq!(value["requested_count"], 3);
+            for (i, network) in networks.iter().enumerate() {
+                assert_eq!(value["subnets"][i]["network_address"], *network);
+                assert_eq!(value["subnets"][i]["prefix_length"], prefixes[i]);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_subnet_vlsm_twelve_subnets_leave_growth_space() {
+        let result = calc_server()
+            .subnet_vlsm(Parameters(SubnetVlsmParams {
+                cidr: "10.20.0.0/17".into(),
+                prefixes: vec![24; 12],
+            }))
+            .await;
+        let value: serde_json::Value = serde_json::from_str(&result).expect(&result);
+        assert_eq!(value["subnets"].as_array().unwrap().len(), 12);
+        assert_eq!(value["subnets"][11]["network_address"], "10.20.11.0");
+        assert_eq!(value["allocated_addresses"], "3072");
+        assert_eq!(value["remaining_addresses"], "29696");
+    }
+
+    #[tokio::test]
+    async fn test_subnet_vlsm_rejects_invalid_requests() {
+        for (cidr, prefixes) in [
+            ("bad-cidr", vec![24]),
+            ("10.0.0.0/24", vec![]),
+            ("10.0.0.0/24", vec![28, 26]),
+            ("10.0.0.0/24", vec![25, 25, 26]),
+            ("10.0.0.0/24", vec![24]),
+            ("10.0.0.0/24", vec![33]),
+            ("2001:db8::/120", vec![121, 121, 122]),
+            ("2001:db8::/120", vec![129]),
+            ("::/0", vec![128; MAX_GENERATED_SUBNETS as usize + 1]),
+        ] {
+            let result = calc_server()
+                .subnet_vlsm(Parameters(SubnetVlsmParams {
+                    cidr: cidr.into(),
+                    prefixes,
+                }))
+                .await;
+            assert!(result.starts_with("Error:"), "{cidr}: {result}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_subnet_split_tree_nested_results() {
+        for (cidr, steps, second_child, last_leaf) in [
+            ("10.0.0.0/22", vec![23, 24], "10.0.2.0", "10.0.3.0"),
+            (
+                "2001:db8::/124",
+                vec![125, 126],
+                "2001:db8::8",
+                "2001:db8::c",
+            ),
+        ] {
+            let result = calc_server()
+                .subnet_split_tree(Parameters(SubnetSplitTreeParams {
+                    cidr: cidr.into(),
+                    steps: steps.clone(),
+                }))
+                .await;
+            let value: serde_json::Value = serde_json::from_str(&result).expect(&result);
+            assert_eq!(value["steps"], serde_json::json!(steps));
+            assert_eq!(value["total_subnets"], 6);
+            let children = value["root"]["children"].as_array().unwrap();
+            assert_eq!(children.len(), 2);
+            assert_eq!(children[1]["subnet"]["network_address"], second_child);
+            for child in children {
+                let leaves = child["children"].as_array().unwrap();
+                assert_eq!(leaves.len(), 2);
+                for leaf in leaves {
+                    assert_eq!(leaf["subnet"]["prefix_length"], steps[1]);
+                    assert!(leaf["children"].as_array().unwrap().is_empty());
+                }
+            }
+            assert_eq!(
+                children[1]["children"][1]["subnet"]["network_address"],
+                last_leaf
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_subnet_split_tree_rejects_invalid_or_excessive_requests() {
+        for (cidr, steps) in [
+            ("bad-cidr", vec![24]),
+            ("10.0.0.0/16", vec![]),
+            ("10.0.0.0/16", vec![16]),
+            ("10.0.0.0/16", vec![24, 24]),
+            ("10.0.0.0/16", vec![24, 20]),
+            ("10.0.0.0/16", vec![33]),
+            ("0.0.0.0/0", vec![32]),
+            ("2001:db8::/32", vec![64]),
+            ("2001:db8::/32", vec![129]),
+        ] {
+            let result = calc_server()
+                .subnet_split_tree(Parameters(SubnetSplitTreeParams {
+                    cidr: cidr.into(),
+                    steps,
+                }))
+                .await;
+            assert!(result.starts_with("Error:"), "{cidr}: {result}");
+        }
+    }
 
     #[test]
     fn http_bind_allows_loopback_without_override() {
