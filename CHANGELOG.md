@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.0](https://github.com/wingnut128/netcidr/compare/v0.28.9...v0.29.0) - 2026-09-28
+
+### Added
+
+- *(dashboard)* add VLSM and steps modes to the Splitter ([#432](https://github.com/wingnut128/netcidr/pull/432))
+
+### Other
+
+- bump minor version for feat commits; support 0.29.x ([#435](https://github.com/wingnut128/netcidr/pull/435))
+
 ### Changed
 
 - release-plz now bumps the minor version for `feat:` commits (`features_always_increment_minor = true`); previously pre-1.0 features only bumped the patch. SECURITY.md now supports 0.29.x and 0.28.x ([#434](https://github.com/wingnut128/netcidr/issues/434))
