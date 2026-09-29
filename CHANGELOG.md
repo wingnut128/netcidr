@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - *(ci)* Dependabot now groups `github/codeql-action*` and the opentelemetry crates into single PRs, and manages `/dashboard` with the `bun` ecosystem instead of `npm`, fixing recurring split-bump and frozen-lockfile CI failures ([#439](https://github.com/wingnut128/netcidr/issues/439)).
+- *(ci)* Dependabot auto-merge now merges with a PAT instead of `GITHUB_TOKEN`, so auto-merged bumps trigger CI and Release-plz on `main` instead of silently skipping them.
 
 ## [0.29.0](https://github.com/wingnut128/netcidr/compare/v0.28.9...v0.29.0) - 2026-09-28
 
