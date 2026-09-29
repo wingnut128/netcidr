@@ -1,5 +1,17 @@
 name: Dependabot Auto-Merge
 
+# The merge authenticates with a fine-grained PAT, not GITHUB_TOKEN.
+# GitHub does not fire other workflows' `push` triggers for events produced
+# with the default GITHUB_TOKEN (loop prevention), so a merge performed with
+# GITHUB_TOKEN silently skips CI, CodeQL and Release-plz on main, and the
+# release PR never picks up the merged change (this happened with #443).
+#
+# Dependabot-triggered runs can ONLY read *Dependabot* secrets, not Actions
+# secrets. DEPENDABOT_PAT must therefore live under Settings → Secrets and
+# variables → *Dependabot*. It needs Contents + Pull requests: write, plus
+# Workflows: write so it can merge github-actions bumps that edit
+# .github/workflows/.
+
 on:
   pull_request:
 
@@ -11,9 +23,9 @@ jobs:
     name: Auto-Merge
     runs-on: ubuntu-latest
     if: github.actor == 'dependabot[bot]'
+    # GITHUB_TOKEN only reads metadata now; the PAT performs the merge.
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     steps:
       - name: Fetch Dependabot metadata
         id: metadata
@@ -23,7 +35,12 @@ jobs:
 
       - name: Auto-merge patch and minor updates
         if: steps.metadata.outputs.update-type != 'version-update:semver-major'
-        run: gh pr merge --auto --squash "$PR_URL"
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::DEPENDABOT_PAT is empty. Add it as a Dependabot secret (not an Actions secret)."
+            exit 1
+          fi
+          gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.DEPENDABOT_PAT }}
