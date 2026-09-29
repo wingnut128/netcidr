@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.0](https://github.com/wingnut128/netcidr/compare/v0.29.0...v0.30.0) - 2026-09-29
+
+### Added
+
+- *(mcp)* expose advanced splitting and add subnet design skill ([#437](https://github.com/wingnut128/netcidr/pull/437))
+
+### Other
+
+- merge Dependabot PRs with a PAT so main runs CI and Release-plz ([#444](https://github.com/wingnut128/netcidr/pull/444))
+- *(deps)* bump reqwest ([#443](https://github.com/wingnut128/netcidr/pull/443))
+- *(deps-dev)* bump typescript from 6.0.3 to 7.0.2 in /dashboard ([#442](https://github.com/wingnut128/netcidr/pull/442))
+- *(deps-dev)* bump vitest ([#441](https://github.com/wingnut128/netcidr/pull/441))
+- group codeql/opentelemetry Dependabot bumps; use bun ecosystem for dashboard ([#440](https://github.com/wingnut128/netcidr/pull/440))
+
 ### Added
 
 - MCP `subnet_vlsm` and `subnet_split_tree` tools expose IPv4/IPv6 variable-length and hierarchical splitting, with allocation/free-space counts and bounded tree generation ([#436](https://github.com/wingnut128/netcidr/issues/436)).
