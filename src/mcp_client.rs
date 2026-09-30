@@ -185,6 +185,36 @@ impl HttpIpamClient {
         }
     }
 
+    pub async fn update_allocation(
+        &self,
+        id: &str,
+        input: &UpdateAllocation,
+    ) -> Result<Allocation> {
+        let body = serde_json::json!({
+            "name": input.name,
+            "description": input.description,
+            "resource_id": input.resource_id,
+            "resource_type": input.resource_type,
+            "environment": input.environment,
+            "owner": input.owner,
+            "status": input.status,
+        });
+        let resp = self
+            .client
+            .patch(self.seg_url(&["allocations", id])?)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
+        if resp.status().is_success() {
+            resp.json()
+                .await
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))
+        } else {
+            Err(Self::map_error(resp).await)
+        }
+    }
+
     pub async fn release_allocation(&self, id: &str) -> Result<Allocation> {
         let resp = self
             .client
@@ -481,7 +511,7 @@ impl HttpIpamClient {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn client() -> HttpIpamClient {
@@ -531,5 +561,173 @@ mod tests {
     fn new_rejects_token_with_control_chars() {
         // A token with a newline can't form a valid header value.
         assert!(HttpIpamClient::new("http://localhost:8080", Some("bad\ntoken")).is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // update_allocation against an in-process mock API
+    // -----------------------------------------------------------------------
+
+    /// What the mock API saw on its single PATCH route.
+    #[derive(Debug, Clone)]
+    pub(crate) struct SeenRequest {
+        /// Raw (still percent-encoded) request path.
+        pub(crate) path: String,
+        pub(crate) auth: Option<String>,
+        pub(crate) body: serde_json::Value,
+    }
+
+    pub(crate) fn sample_allocation() -> serde_json::Value {
+        serde_json::json!({
+            "id": "alloc-1",
+            "tenant_id": "local",
+            "cidr_block_id": "block-1",
+            "cidr": "10.0.1.0/24",
+            "network_address": "10.0.1.0",
+            "broadcast_address": "10.0.1.255",
+            "prefix_length": 24,
+            "total_hosts": 254,
+            "status": "active",
+            "resource_id": null,
+            "resource_type": null,
+            "name": "eks_az1",
+            "description": null,
+            "environment": null,
+            "owner": null,
+            "parent_allocation_id": null,
+            "tags": [],
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-02T00:00:00Z",
+            "released_at": null,
+            "expires_at": null,
+        })
+    }
+
+    /// Serve a mock `PATCH /ipam/allocations/{id}` that records the request
+    /// and replies with `status` + `reply`. Returns the base URL and the
+    /// recorded request slot.
+    pub(crate) async fn mock_update_api(
+        status: u16,
+        reply: serde_json::Value,
+    ) -> (
+        String,
+        std::sync::Arc<std::sync::Mutex<Option<SeenRequest>>>,
+    ) {
+        use axum::extract::{Json, OriginalUri, State};
+        use axum::http::{HeaderMap, StatusCode};
+        use axum::routing::patch;
+        use std::sync::{Arc, Mutex};
+
+        type Seen = Arc<Mutex<Option<SeenRequest>>>;
+        let seen: Seen = Arc::new(Mutex::new(None));
+
+        let app = axum::Router::new()
+            .route(
+                "/ipam/allocations/{id}",
+                patch(
+                    move |State(seen): State<Seen>,
+                          OriginalUri(uri): OriginalUri,
+                          headers: HeaderMap,
+                          Json(body): Json<serde_json::Value>| {
+                        let reply = reply.clone();
+                        async move {
+                            *seen.lock().unwrap() = Some(SeenRequest {
+                                path: uri.path().to_string(),
+                                auth: headers
+                                    .get(AUTHORIZATION)
+                                    .and_then(|v| v.to_str().ok())
+                                    .map(str::to_string),
+                                body,
+                            });
+                            (StatusCode::from_u16(status).unwrap(), Json(reply))
+                        }
+                    },
+                ),
+            )
+            .with_state(seen.clone());
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{addr}"), seen)
+    }
+
+    fn rename_only(name: &str) -> UpdateAllocation {
+        UpdateAllocation {
+            name: Some(name.to_string()),
+            description: None,
+            resource_id: None,
+            resource_type: None,
+            environment: None,
+            owner: None,
+            status: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn update_allocation_sends_patch_with_auth_and_returns_allocation() {
+        let (base, seen) = mock_update_api(200, sample_allocation()).await;
+        let client = HttpIpamClient::new(&base, Some("ncdr_pat_abc")).unwrap();
+
+        let alloc = client
+            .update_allocation("alloc-1", &rename_only("eks_az1"))
+            .await
+            .expect("update should succeed");
+        assert_eq!(alloc.id, "alloc-1");
+        assert_eq!(alloc.name.as_deref(), Some("eks_az1"));
+
+        let seen = seen.lock().unwrap().clone().expect("mock saw a request");
+        assert_eq!(seen.path, "/ipam/allocations/alloc-1");
+        assert_eq!(seen.auth.as_deref(), Some("Bearer ncdr_pat_abc"));
+        assert_eq!(seen.body["name"], "eks_az1");
+        // Fields the caller didn't set must not be sent as values.
+        for field in [
+            "description",
+            "resource_id",
+            "resource_type",
+            "environment",
+            "owner",
+            "status",
+        ] {
+            assert!(
+                seen.body.get(field).is_none_or(serde_json::Value::is_null),
+                "{field} should be unset, got {}",
+                seen.body
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn update_allocation_path_encodes_id() {
+        let (base, seen) = mock_update_api(404, serde_json::json!({"error": "not found"})).await;
+        let client = HttpIpamClient::new(&base, None).unwrap();
+
+        // A crafted id must stay one segment — it must not reach another route.
+        let _ = client
+            .update_allocation("x/release?y=1", &rename_only("n"))
+            .await;
+        let seen = seen.lock().unwrap().clone().expect("mock saw a request");
+        assert_eq!(seen.path, "/ipam/allocations/x%2Frelease%3Fy=1");
+    }
+
+    #[tokio::test]
+    async fn update_allocation_forwards_upstream_errors() {
+        for (status, message) in [(403, "Forbidden"), (404, "allocation not found")] {
+            let (base, _) = mock_update_api(status, serde_json::json!({ "error": message })).await;
+            let client = HttpIpamClient::new(&base, None).unwrap();
+            let err = client
+                .update_allocation("alloc-1", &rename_only("n"))
+                .await
+                .expect_err("non-2xx must be an error");
+            match err {
+                NetcidrError::Upstream {
+                    status: s,
+                    message: m,
+                } => {
+                    assert_eq!(s, status);
+                    assert_eq!(m, message);
+                }
+                other => panic!("expected Upstream, got {other:?}"),
+            }
+        }
     }
 }
