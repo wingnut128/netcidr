@@ -376,6 +376,7 @@ launchctl load ~/Library/LaunchAgents/com.netcidr.mcp.plist
 | `ipam_list_cidr_blocks` | List all CIDR blocks |
 | `ipam_allocate` | Auto-allocate next-available CIDR block(s) |
 | `ipam_allocate_specific` | Allocate a specific CIDR block |
+| `ipam_update_allocation` | Rename or retag an allocation in place (name, description, resource, environment, owner) |
 | `ipam_release` | Release an allocation |
 | `ipam_list_allocations` | List allocations (filterable by status/env/owner) |
 | `ipam_free_blocks` | Find free blocks in a cidr_block |

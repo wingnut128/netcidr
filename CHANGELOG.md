@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- MCP `ipam_update_allocation` tool renames or retags an allocation in place (name, description, resource ID/type, environment, owner) with a single audit event, instead of releasing and re-allocating. Works with both the local (`--ipam-db`) and remote (`--api-url`) backends ([#447](https://github.com/wingnut128/netcidr/issues/447)).
+
 ## [0.30.0](https://github.com/wingnut128/netcidr/compare/v0.29.0...v0.30.0) - 2026-09-29
 
 ### Added
