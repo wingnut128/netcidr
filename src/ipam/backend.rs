@@ -70,7 +70,27 @@ impl IpamBackend {
     pub async fn list_allocations(&self, filter: &AllocationFilter) -> Result<Vec<Allocation>> {
         match self {
             Self::Local(ops) => ops.list_allocations(Tenant::LOCAL, filter).await,
-            Self::Remote(client) => client.list_allocations(filter).await,
+            Self::Remote(client) if filter.cidr_block_id.is_some() => {
+                client.list_allocations(filter).await
+            }
+            // The API only lists allocations per CIDR block, so "every
+            // block" means asking each one. Paging applies to the combined
+            // result, as it does for the local store.
+            Self::Remote(client) => {
+                let mut all = Vec::new();
+                for block in client.list_cidr_blocks().await? {
+                    let per_block = AllocationFilter {
+                        cidr_block_id: Some(block.id),
+                        limit: None,
+                        offset: None,
+                        ..filter.clone()
+                    };
+                    all.extend(client.list_allocations(&per_block).await?);
+                }
+                let offset = filter.offset.unwrap_or(0) as usize;
+                let limit = filter.limit.map_or(usize::MAX, |l| l as usize);
+                Ok(all.into_iter().skip(offset).take(limit).collect())
+            }
         }
     }
 
@@ -168,5 +188,221 @@ impl IpamBackend {
             }
             Self::Remote(client) => client.delete_hostname_pointer(ip, hostname).await,
         }
+    }
+}
+
+impl IpamBackend {
+    pub async fn get_cidr_block(&self, id: &str) -> Result<CidrBlock> {
+        match self {
+            Self::Local(ops) => ops.get_cidr_block(Tenant::LOCAL, id).await,
+            Self::Remote(client) => client.get_cidr_block(id).await,
+        }
+    }
+
+    pub async fn delete_cidr_block(&self, id: &str) -> Result<()> {
+        match self {
+            Self::Local(ops) => ops.delete_cidr_block(Tenant::LOCAL, id).await,
+            Self::Remote(client) => client.delete_cidr_block(id).await,
+        }
+    }
+
+    pub async fn get_allocation(&self, id: &str) -> Result<Allocation> {
+        match self {
+            Self::Local(ops) => ops.get_allocation(Tenant::LOCAL, id).await,
+            Self::Remote(client) => client.get_allocation(id).await,
+        }
+    }
+
+    /// Replace an allocation's tags and return the updated allocation.
+    pub async fn set_tags(&self, allocation_id: &str, tags: &[Tag]) -> Result<Allocation> {
+        match self {
+            Self::Local(ops) => {
+                ops.set_tags(Tenant::LOCAL, allocation_id, tags).await?;
+                ops.get_allocation(Tenant::LOCAL, allocation_id).await
+            }
+            Self::Remote(client) => client.set_tags(allocation_id, tags).await,
+        }
+    }
+
+    pub async fn query_audit(&self, filter: &AuditFilter) -> Result<Vec<AuditEntry>> {
+        match self {
+            Self::Local(ops) => ops.query_audit(Tenant::LOCAL, filter).await,
+            Self::Remote(client) => client.query_audit(filter).await,
+        }
+    }
+
+    pub async fn get_hostname_pointers_for_ip(&self, ip: &str) -> Result<Vec<HostnamePointer>> {
+        match self {
+            Self::Local(ops) => ops.get_hostname_pointers_for_ip(Tenant::LOCAL, ip).await,
+            // Same lookup as the local op: pointers filtered by this IP. The
+            // server canonicalizes the address before filtering.
+            Self::Remote(client) => {
+                client
+                    .list_hostname_pointers(&HostnamePointerFilter {
+                        ip_address: Some(ip.to_string()),
+                        ..Default::default()
+                    })
+                    .await
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ipam::store::IpamStore;
+
+    async fn local_ops() -> Arc<IpamOps> {
+        let store = crate::ipam::sqlite::SqliteStore::in_memory().expect("in-memory store");
+        store.initialize().await.expect("init");
+        store.migrate().await.expect("migrate");
+        Arc::new(IpamOps::new(Arc::new(store)))
+    }
+
+    /// A real `netcidr serve` router in bearer-token mode on a loopback port,
+    /// fronted by the remote backend.
+    async fn remote_backend() -> IpamBackend {
+        use crate::api::{RouterConfig, create_router};
+        use crate::config::{AuthMode, ServerConfig};
+
+        let server = ServerConfig {
+            rate_limit_per_second: 0,
+            auth_mode: AuthMode::Bearer,
+            auth_token: Some("backend-test-token".to_string()),
+            ..Default::default()
+        };
+        // NETCIDR_API_TOKEN in the environment would win over the field, so
+        // ask the config which token the server will really accept.
+        let token = server.auth_token().expect("bearer token");
+        let app = create_router(RouterConfig {
+            server,
+            ipam_ops: Some(local_ops().await),
+            pat_pepper: None,
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        IpamBackend::Remote(HttpIpamClient::new(&format!("http://{addr}"), Some(&token)).unwrap())
+    }
+
+    fn block(cidr: &str) -> CreateCidrBlock {
+        CreateCidrBlock {
+            cidr: cidr.to_string(),
+            name: None,
+            description: None,
+        }
+    }
+
+    fn alloc(block_id: &str, cidr: &str) -> CreateAllocation {
+        CreateAllocation {
+            cidr_block_id: block_id.to_string(),
+            cidr: cidr.to_string(),
+            status: None,
+            resource_id: None,
+            resource_type: None,
+            name: None,
+            description: None,
+            environment: None,
+            owner: None,
+            parent_allocation_id: None,
+            tags: None,
+            ttl_seconds: None,
+        }
+    }
+
+    /// The operations `netcidr ipam` needs, which must behave the same
+    /// whether the backend is local or remote.
+    async fn cli_scenario(backend: &IpamBackend) {
+        let a = backend
+            .create_cidr_block(&block("10.0.0.0/16"))
+            .await
+            .unwrap();
+        let b = backend
+            .create_cidr_block(&block("10.1.0.0/16"))
+            .await
+            .unwrap();
+        let empty = backend
+            .create_cidr_block(&block("10.2.0.0/16"))
+            .await
+            .unwrap();
+        assert_eq!(
+            backend.get_cidr_block(&a.id).await.unwrap().cidr,
+            "10.0.0.0/16"
+        );
+
+        let in_a = backend
+            .allocate_specific(&alloc(&a.id, "10.0.1.0/24"))
+            .await
+            .unwrap();
+        backend
+            .allocate_specific(&alloc(&b.id, "10.1.1.0/24"))
+            .await
+            .unwrap();
+        assert_eq!(
+            backend.get_allocation(&in_a.id).await.unwrap().cidr,
+            "10.0.1.0/24"
+        );
+
+        // No CIDR block filter means every block, as with the local store.
+        let all = backend
+            .list_allocations(&AllocationFilter::default())
+            .await
+            .unwrap();
+        let mut cidrs: Vec<_> = all.iter().map(|a| a.cidr.as_str()).collect();
+        cidrs.sort();
+        assert_eq!(cidrs, vec!["10.0.1.0/24", "10.1.1.0/24"]);
+
+        let tagged = backend
+            .set_tags(
+                &in_a.id,
+                &[Tag {
+                    key: "team".to_string(),
+                    value: "platform".to_string(),
+                }],
+            )
+            .await
+            .unwrap();
+        assert_eq!(tagged.tags.len(), 1);
+        assert_eq!(tagged.tags[0].value, "platform");
+
+        backend
+            .set_hostname_pointer(&CreateHostnamePointer {
+                ip_address: "10.0.1.10".to_string(),
+                hostname: "web.example.com".to_string(),
+                allocation_id: None,
+                notes: None,
+            })
+            .await
+            .unwrap();
+        let pointers = backend
+            .get_hostname_pointers_for_ip("10.0.1.10")
+            .await
+            .unwrap();
+        assert_eq!(pointers.len(), 1);
+        assert_eq!(pointers[0].hostname, "web.example.com");
+
+        let audit = backend
+            .query_audit(&AuditFilter {
+                entity_id: Some(in_a.id.clone()),
+                limit: Some(50),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(audit.iter().any(|e| e.action == "allocate"), "{audit:?}");
+
+        backend.delete_cidr_block(&empty.id).await.unwrap();
+        assert!(backend.get_cidr_block(&empty.id).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn cli_operations_work_on_the_local_backend() {
+        cli_scenario(&IpamBackend::Local(local_ops().await)).await;
+    }
+
+    #[tokio::test]
+    async fn cli_operations_work_on_the_remote_backend() {
+        cli_scenario(&remote_backend().await).await;
     }
 }

@@ -552,6 +552,80 @@ impl HttpIpamClient {
             Err(Self::map_error(resp).await)
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Lookups and edits used by `netcidr ipam` in remote mode
+    // -----------------------------------------------------------------------
+
+    async fn send_json<T: serde::de::DeserializeOwned>(req: reqwest::RequestBuilder) -> Result<T> {
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
+        if resp.status().is_success() {
+            resp.json()
+                .await
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))
+        } else {
+            Err(Self::map_error(resp).await)
+        }
+    }
+
+    pub async fn get_cidr_block(&self, id: &str) -> Result<CidrBlock> {
+        Self::send_json(self.client.get(self.seg_url(&["cidr-blocks", id])?)).await
+    }
+
+    pub async fn delete_cidr_block(&self, id: &str) -> Result<()> {
+        let resp = self
+            .client
+            .delete(self.seg_url(&["cidr-blocks", id])?)
+            .send()
+            .await
+            .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            Err(Self::map_error(resp).await)
+        }
+    }
+
+    pub async fn get_allocation(&self, id: &str) -> Result<Allocation> {
+        Self::send_json(self.client.get(self.seg_url(&["allocations", id])?)).await
+    }
+
+    /// Replace an allocation's tags. The API answers with the updated
+    /// allocation, which is what callers display.
+    pub async fn set_tags(&self, allocation_id: &str, tags: &[Tag]) -> Result<Allocation> {
+        Self::send_json(
+            self.client
+                .put(self.seg_url(&["allocations", allocation_id, "tags"])?)
+                .json(&serde_json::json!({ "tags": tags })),
+        )
+        .await
+    }
+
+    /// Query the audit log. The endpoint takes a `limit` but no offset, so
+    /// this is always a single request.
+    pub async fn query_audit(&self, filter: &AuditFilter) -> Result<Vec<AuditEntry>> {
+        let mut params: Vec<(&str, String)> = Vec::new();
+        for (key, value) in [
+            ("entity_type", &filter.entity_type),
+            ("entity_id", &filter.entity_id),
+            ("action", &filter.action),
+            ("caller_email", &filter.caller_email),
+            ("pat_id", &filter.pat_id),
+        ] {
+            if let Some(v) = value {
+                params.push((key, v.clone()));
+            }
+        }
+        if let Some(limit) = filter.limit {
+            params.push(("limit", limit.to_string()));
+        }
+        let list: AuditList =
+            Self::send_json(self.client.get(self.seg_url(&["audit"])?).query(&params)).await?;
+        Ok(list.entries)
+    }
 }
 
 #[cfg(test)]
@@ -869,5 +943,177 @@ pub(crate) mod tests {
         assert_eq!(client.list_cidr_blocks().await.unwrap().len(), 1000);
         // One full page, then an empty one that ends the walk.
         assert_eq!(*seen.lock().unwrap(), vec![(1000, 0), (1000, 1000)]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Endpoints the CLI needs beyond the MCP tool set
+    // -----------------------------------------------------------------------
+
+    /// One request as the mock API saw it.
+    #[derive(Debug, Clone)]
+    struct Recorded {
+        method: String,
+        path: String,
+        query: String,
+        body: serde_json::Value,
+    }
+
+    /// Mock API that answers every request with `status` + `reply` and
+    /// records what was asked.
+    async fn mock_any(
+        status: u16,
+        reply: serde_json::Value,
+    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Recorded>>>) {
+        use axum::body::Bytes;
+        use axum::extract::{OriginalUri, State};
+        use axum::http::{Method, StatusCode};
+        use std::sync::{Arc, Mutex};
+
+        type Seen = Arc<Mutex<Vec<Recorded>>>;
+        let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+        let app = axum::Router::new()
+            .fallback(
+                move |State(seen): State<Seen>,
+                      method: Method,
+                      OriginalUri(uri): OriginalUri,
+                      body: Bytes| {
+                    let reply = reply.clone();
+                    async move {
+                        seen.lock().unwrap().push(Recorded {
+                            method: method.to_string(),
+                            path: uri.path().to_string(),
+                            query: uri.query().unwrap_or("").to_string(),
+                            body: serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null),
+                        });
+                        let status = StatusCode::from_u16(status).unwrap();
+                        if status == StatusCode::NO_CONTENT {
+                            status.into_response()
+                        } else {
+                            (status, axum::Json(reply)).into_response()
+                        }
+                    }
+                },
+            )
+            .with_state(seen.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{addr}"), seen)
+    }
+
+    use axum::response::IntoResponse;
+
+    fn only(seen: &std::sync::Mutex<Vec<Recorded>>) -> Recorded {
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1, "expected one request, got {seen:?}");
+        seen[0].clone()
+    }
+
+    #[tokio::test]
+    async fn get_cidr_block_gets_by_encoded_id() {
+        let (base, seen) = mock_any(200, sample_cidr_block(7)).await;
+        let client = HttpIpamClient::new(&base, None).unwrap();
+        let block = client.get_cidr_block("block-7").await.unwrap();
+        assert_eq!(block.id, "block-7");
+        let req = only(&seen);
+        assert_eq!(
+            (req.method.as_str(), req.path.as_str()),
+            ("GET", "/ipam/cidr-blocks/block-7")
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_cidr_block_accepts_no_content() {
+        let (base, seen) = mock_any(204, serde_json::Value::Null).await;
+        let client = HttpIpamClient::new(&base, None).unwrap();
+        client.delete_cidr_block("a/b").await.unwrap();
+        let req = only(&seen);
+        assert_eq!(
+            (req.method.as_str(), req.path.as_str()),
+            ("DELETE", "/ipam/cidr-blocks/a%2Fb")
+        );
+    }
+
+    #[tokio::test]
+    async fn get_allocation_gets_by_id() {
+        let (base, seen) = mock_any(200, sample_allocation()).await;
+        let client = HttpIpamClient::new(&base, None).unwrap();
+        assert_eq!(
+            client.get_allocation("alloc-1").await.unwrap().id,
+            "alloc-1"
+        );
+        let req = only(&seen);
+        assert_eq!(
+            (req.method.as_str(), req.path.as_str()),
+            ("GET", "/ipam/allocations/alloc-1")
+        );
+    }
+
+    #[tokio::test]
+    async fn set_tags_puts_tags_and_returns_allocation() {
+        let (base, seen) = mock_any(200, sample_allocation()).await;
+        let client = HttpIpamClient::new(&base, None).unwrap();
+        let tags = vec![Tag {
+            key: "team".to_string(),
+            value: "platform".to_string(),
+        }];
+        assert_eq!(
+            client.set_tags("alloc-1", &tags).await.unwrap().id,
+            "alloc-1"
+        );
+        let req = only(&seen);
+        assert_eq!(
+            (req.method.as_str(), req.path.as_str()),
+            ("PUT", "/ipam/allocations/alloc-1/tags")
+        );
+        assert_eq!(
+            req.body,
+            serde_json::json!({"tags": [{"key": "team", "value": "platform"}]})
+        );
+    }
+
+    #[tokio::test]
+    async fn query_audit_sends_filters_and_limit() {
+        let (base, seen) = mock_any(200, serde_json::json!({"entries": [], "count": 0})).await;
+        let client = HttpIpamClient::new(&base, None).unwrap();
+        let entries = client
+            .query_audit(&AuditFilter {
+                entity_type: Some("allocation".to_string()),
+                entity_id: Some("alloc-1".to_string()),
+                action: Some("update".to_string()),
+                limit: Some(25),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(entries.is_empty());
+        let req = only(&seen);
+        assert_eq!(
+            (req.method.as_str(), req.path.as_str()),
+            ("GET", "/ipam/audit")
+        );
+        for part in [
+            "entity_type=allocation",
+            "entity_id=alloc-1",
+            "action=update",
+            "limit=25",
+        ] {
+            assert!(
+                req.query.contains(part),
+                "query {:?} missing {part}",
+                req.query
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn new_endpoints_forward_upstream_errors() {
+        let (base, _) = mock_any(403, serde_json::json!({"error": "Forbidden"})).await;
+        let client = HttpIpamClient::new(&base, None).unwrap();
+        let err = client.delete_cidr_block("block-1").await.unwrap_err();
+        assert!(
+            matches!(err, NetcidrError::Upstream { status: 403, .. }),
+            "got {err:?}"
+        );
     }
 }
