@@ -6,12 +6,13 @@ use async_trait::async_trait;
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::path::Path;
+use std::time::Duration;
 
 use crate::error::{NetcidrError, Result};
 use crate::ipam::models::*;
-use crate::ipam::store::IpamStore;
+use crate::ipam::store::{DEFAULT_LOCK_TIMEOUT, IpamStore, Loaded, Read, Rows, TxUnit, Write};
 use crate::ipam::{parse_cidr_metadata, read_total_hosts};
 
 type ConnPool = Pool<SqliteConnectionManager>;
@@ -22,6 +23,12 @@ pub struct SqliteStore {
 
 impl SqliteStore {
     pub fn new(db_path: &str) -> Result<Self> {
+        Self::new_with_lock_timeout(db_path, DEFAULT_LOCK_TIMEOUT)
+    }
+
+    /// Like [`new`](Self::new), with a custom wait for locks and pooled
+    /// connections before `NetcidrError::StoreBusy`.
+    pub fn new_with_lock_timeout(db_path: &str, lock_timeout: Duration) -> Result<Self> {
         // Ensure parent directory exists
         // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path — db_path comes from CLI/config/env, not HTTP input
         if let Some(parent) = Path::new(db_path).parent()
@@ -36,11 +43,7 @@ impl SqliteStore {
             })?;
         }
 
-        let manager = SqliteConnectionManager::file(db_path);
-        let pool = Pool::builder()
-            .max_size(8)
-            .build(manager)
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        let pool = build_pool(SqliteConnectionManager::file(db_path), 8, lock_timeout)?;
 
         // Restrict the database file to owner-only (0600). It holds all IPAM
         // data (CIDR blocks, allocations, hostnames, audit log); the default
@@ -63,18 +66,20 @@ impl SqliteStore {
 
     /// Create an in-memory store (useful for testing).
     pub fn in_memory() -> Result<Self> {
-        let manager = SqliteConnectionManager::memory();
-        let pool = Pool::builder()
-            .max_size(1) // single connection for in-memory DB
-            .build(manager)
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+        Self::in_memory_with_lock_timeout(DEFAULT_LOCK_TIMEOUT)
+    }
+
+    /// Like [`in_memory`](Self::in_memory), with a custom lock timeout.
+    pub fn in_memory_with_lock_timeout(lock_timeout: Duration) -> Result<Self> {
+        // A single connection: each in-memory connection is its own database.
+        let pool = build_pool(SqliteConnectionManager::memory(), 1, lock_timeout)?;
         Ok(Self { pool })
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
-        self.pool
-            .get()
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))
+        // r2d2 only fails a checkout after waiting `connection_timeout`
+        // (the lock timeout) for a free connection.
+        self.pool.get().map_err(|_| NetcidrError::StoreBusy)
     }
 
     /// Test-only access to the underlying connection pool, used by migration
@@ -201,6 +206,182 @@ fn row_to_hostname_history(
     })
 }
 
+/// Build a connection pool whose every connection waits up to
+/// `lock_timeout` on a locked database and enforces foreign keys. Both are
+/// per-connection settings in SQLite, so they belong in the pool's init
+/// hook rather than a one-off statement.
+fn build_pool(
+    manager: SqliteConnectionManager,
+    max_size: u32,
+    lock_timeout: Duration,
+) -> Result<ConnPool> {
+    let manager = manager.with_init(move |c| {
+        c.busy_timeout(lock_timeout)?;
+        c.execute_batch("PRAGMA foreign_keys=ON;")
+    });
+    Pool::builder()
+        .max_size(max_size)
+        .connection_timeout(lock_timeout)
+        .build(manager)
+        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))
+}
+
+/// Map a rusqlite error, classifying lock contention as `StoreBusy`.
+fn db_err(e: rusqlite::Error) -> NetcidrError {
+    match &e {
+        rusqlite::Error::SqliteFailure(f, _)
+            if matches!(
+                f.code,
+                rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+            ) =>
+        {
+            NetcidrError::StoreBusy
+        }
+        _ => NetcidrError::DatabaseError(e.to_string()),
+    }
+}
+
+fn read_cidr_block(conn: &Connection, tenant_id: &str, id: &str) -> Result<Option<CidrBlock>> {
+    conn.query_row(
+        "SELECT id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM cidr_blocks WHERE id = ?1 AND tenant_id = ?2",
+        params![id, tenant_id],
+        |row| {
+            let total_hosts_text: String = row.get(6)?;
+            Ok(CidrBlock {
+                id: row.get(0)?,
+                tenant_id: row.get(1)?,
+                cidr: row.get(2)?,
+                network_address: row.get(3)?,
+                broadcast_address: row.get(4)?,
+                prefix_length: row.get(5)?,
+                total_hosts: read_total_hosts(Some(total_hosts_text), 0),
+                name: row.get(7)?,
+                description: row.get(8)?,
+                ip_version: row.get(9)?,
+                created_at: row.get(10)?,
+                updated_at: row.get(11)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(db_err)
+}
+
+fn read_idempotency(
+    conn: &Connection,
+    tenant_id: &str,
+    key: &str,
+    scope: &str,
+) -> Result<Option<IdempotencyRecord>> {
+    conn.query_row(
+        "SELECT tenant_id, key, scope, request_hash, status_code, response_body, created_at, expires_at \
+         FROM idempotency_keys WHERE tenant_id = ?1 AND key = ?2 AND scope = ?3",
+        params![tenant_id, key, scope],
+        |row| {
+            let status_code: i64 = row.get(4)?;
+            Ok(IdempotencyRecord {
+                tenant_id: row.get(0)?,
+                key: row.get(1)?,
+                scope: row.get(2)?,
+                request_hash: row.get(3)?,
+                status_code: status_code as u16,
+                response_body: row.get(5)?,
+                created_at: row.get(6)?,
+                expires_at: row.get(7)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(db_err)
+}
+
+fn insert_audit(conn: &Connection, entry: &AuditEntry) -> Result<()> {
+    conn.execute(
+        "INSERT INTO audit_log (tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id, auth_method, pat_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        params![
+            entry.tenant_id,
+            entry.timestamp,
+            entry.action,
+            entry.entity_type,
+            entry.entity_id,
+            entry.details,
+            entry.caller_sub,
+            entry.caller_email,
+            entry.source_ip,
+            entry.request_id,
+            if entry.auth_method.is_empty() { "oidc".to_string() } else { entry.auth_method.clone() },
+            entry.pat_id,
+        ],
+    )
+    .map_err(db_err)?;
+    Ok(())
+}
+
+fn insert_idempotency(conn: &Connection, record: &IdempotencyRecord) -> Result<()> {
+    conn.execute(
+        "INSERT INTO idempotency_keys \
+            (tenant_id, key, scope, request_hash, status_code, response_body, created_at, expires_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
+         ON CONFLICT(tenant_id, key, scope) DO NOTHING",
+        params![
+            record.tenant_id,
+            record.key,
+            record.scope,
+            record.request_hash,
+            record.status_code as i64,
+            record.response_body,
+            record.created_at,
+            record.expires_at,
+        ],
+    )
+    .map_err(db_err)?;
+    Ok(())
+}
+
+fn read_one(conn: &Connection, read: &Read) -> Result<Rows> {
+    match read {
+        Read::CidrBlock { tenant_id, id } => {
+            Ok(Rows::CidrBlock(read_cidr_block(conn, tenant_id, id)?))
+        }
+    }
+}
+
+fn apply_write(_conn: &Connection, write: &Write) -> Result<()> {
+    match *write {}
+}
+
+/// Run a transaction unit to completion on the calling (blocking) thread.
+/// `BEGIN IMMEDIATE` takes SQLite's database-wide write lock up front, which
+/// covers every Lock Scope; `busy_timeout` bounds the wait for it.
+fn run_unit(pool: &ConnPool, unit: TxUnit) -> Result<String> {
+    let mut conn = pool.get().map_err(|_| NetcidrError::StoreBusy)?;
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(db_err)?;
+    let rows = unit
+        .reads
+        .iter()
+        .map(|r| read_one(&tx, r))
+        .collect::<Result<Vec<_>>>()?;
+    let idempotency = match &unit.idempotency {
+        Some(l) => read_idempotency(&tx, &l.tenant_id, &l.key, &l.scope)?,
+        None => None,
+    };
+    // An `Err` here drops `tx`, which rolls back.
+    let plan = (unit.decide)(Loaded { rows, idempotency })?;
+    for write in &plan.writes {
+        apply_write(&tx, write)?;
+    }
+    for entry in &plan.audits {
+        insert_audit(&tx, entry)?;
+    }
+    if let Some(record) = &plan.idempotency {
+        insert_idempotency(&tx, record)?;
+    }
+    tx.commit().map_err(db_err)?;
+    Ok(plan.output_json)
+}
+
 #[async_trait]
 impl IpamStore for SqliteStore {
     async fn initialize(&self) -> Result<()> {
@@ -246,6 +427,16 @@ impl IpamStore for SqliteStore {
 
     // --- cidr_blocks ---
 
+    async fn transact(&self, unit: TxUnit) -> Result<String> {
+        // The whole unit runs on one blocking thread, so the rusqlite
+        // transaction never crosses an `.await` (ADR-0007). The spawned task
+        // finishes or rolls back even if this future is dropped.
+        let pool = self.pool.clone();
+        tokio::task::spawn_blocking(move || run_unit(&pool, unit))
+            .await
+            .map_err(|e| NetcidrError::DatabaseError(format!("transaction task failed: {e}")))?
+    }
+
     async fn create_cidr_block(
         &self,
         tenant_id: &str,
@@ -281,31 +472,11 @@ impl IpamStore for SqliteStore {
     }
 
     async fn get_cidr_block(&self, tenant_id: &str, id: &str) -> Result<CidrBlock> {
-        let conn = self.conn()?;
-        conn.query_row(
-            "SELECT id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM cidr_blocks WHERE id = ?1 AND tenant_id = ?2",
-            params![id, tenant_id],
-            |row| {
-                let total_hosts_text: String = row.get(6)?;
-                Ok(CidrBlock {
-                    id: row.get(0)?,
-                    tenant_id: row.get(1)?,
-                    cidr: row.get(2)?,
-                    network_address: row.get(3)?,
-                    broadcast_address: row.get(4)?,
-                    prefix_length: row.get(5)?,
-                    total_hosts: read_total_hosts(Some(total_hosts_text), 0),
-                    name: row.get(7)?,
-                    description: row.get(8)?,
-                    ip_version: row.get(9)?,
-                    created_at: row.get(10)?,
-                    updated_at: row.get(11)?,
-                })
-            },
-        ).map_err(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => NetcidrError::CidrBlockNotFound(id.to_string()),
-            _ => NetcidrError::DatabaseError(e.to_string()),
-        })
+        {
+            let conn = self.conn()?;
+            read_cidr_block(&conn, tenant_id, id)
+        }?
+        .ok_or_else(|| NetcidrError::CidrBlockNotFound(id.to_string()))
     }
 
     async fn list_cidr_blocks(&self, tenant_id: &str) -> Result<Vec<CidrBlock>> {
@@ -1209,25 +1380,10 @@ impl IpamStore for SqliteStore {
     // --- audit ---
 
     async fn append_audit(&self, entry: &AuditEntry) -> Result<()> {
-        let conn = self.conn()?;
-        conn.execute(
-            "INSERT INTO audit_log (tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id, auth_method, pat_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-            params![
-                entry.tenant_id,
-                entry.timestamp,
-                entry.action,
-                entry.entity_type,
-                entry.entity_id,
-                entry.details,
-                entry.caller_sub,
-                entry.caller_email,
-                entry.source_ip,
-                entry.request_id,
-                if entry.auth_method.is_empty() { "oidc".to_string() } else { entry.auth_method.clone() },
-                entry.pat_id,
-            ],
-        ).map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        Ok(())
+        {
+            let conn = self.conn()?;
+            insert_audit(&conn, entry)
+        }
     }
 
     async fn query_audit(&self, tenant_id: &str, filter: &AuditFilter) -> Result<Vec<AuditEntry>> {
@@ -1311,72 +1467,17 @@ impl IpamStore for SqliteStore {
         key: &str,
         scope: &str,
     ) -> Result<Option<IdempotencyRecord>> {
-        let conn = self.conn()?;
-        let mut stmt = conn
-            .prepare(
-                "SELECT tenant_id, key, scope, request_hash, status_code, response_body, created_at, expires_at \
-                 FROM idempotency_keys WHERE tenant_id = ?1 AND key = ?2 AND scope = ?3",
-            )
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        let mut rows = stmt
-            .query(params![tenant_id, key, scope])
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        if let Some(row) = rows
-            .next()
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
         {
-            let status_code: i64 = row
-                .get(4)
-                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-            Ok(Some(IdempotencyRecord {
-                tenant_id: row
-                    .get(0)
-                    .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?,
-                key: row
-                    .get(1)
-                    .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?,
-                scope: row
-                    .get(2)
-                    .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?,
-                request_hash: row
-                    .get(3)
-                    .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?,
-                status_code: status_code as u16,
-                response_body: row
-                    .get(5)
-                    .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?,
-                created_at: row
-                    .get(6)
-                    .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?,
-                expires_at: row
-                    .get(7)
-                    .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?,
-            }))
-        } else {
-            Ok(None)
+            let conn = self.conn()?;
+            read_idempotency(&conn, tenant_id, key, scope)
         }
     }
 
     async fn idempotency_put(&self, record: &IdempotencyRecord) -> Result<()> {
-        let conn = self.conn()?;
-        conn.execute(
-            "INSERT INTO idempotency_keys \
-                (tenant_id, key, scope, request_hash, status_code, response_body, created_at, expires_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
-             ON CONFLICT(tenant_id, key, scope) DO NOTHING",
-            params![
-                record.tenant_id,
-                record.key,
-                record.scope,
-                record.request_hash,
-                record.status_code as i64,
-                record.response_body,
-                record.created_at,
-                record.expires_at,
-            ],
-        )
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        Ok(())
+        {
+            let conn = self.conn()?;
+            insert_idempotency(&conn, record)
+        }
     }
 
     async fn idempotency_reap_expired(&self, now_rfc3339: &str) -> Result<u64> {

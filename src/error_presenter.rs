@@ -19,6 +19,22 @@ pub enum LogLevel {
     /// variants, where the operator needs the full unscrubbed message
     /// to diagnose.
     Error,
+    /// Frontend should emit `tracing::warn!` with the original `err`.
+    /// Used for transient server-side conditions (contention) that an
+    /// operator should notice in aggregate but that need no single fix.
+    Warn,
+}
+
+impl PresentedError {
+    /// Emit the log line this error's [`LogLevel`] asks for, tagged with
+    /// the frontend's `context` (e.g. "ipam request failed").
+    pub fn log(&self, err: &NetcidrError, context: &str) {
+        match self.log_level {
+            LogLevel::Error => tracing::error!(error = %err, "{context}"),
+            LogLevel::Warn => tracing::warn!(error = %err, "{context}"),
+            LogLevel::None => {}
+        }
+    }
 }
 
 /// Wire-format-neutral view of a [`NetcidrError`]. HTTP frontends
@@ -109,6 +125,13 @@ pub fn present(err: &NetcidrError) -> PresentedError {
             status: 409,
             client_msg: "Idempotency-Key reused with a different request body".to_string(),
             log_level: LogLevel::None,
+        },
+
+        // 503 — a lock or connection wait timed out; safe to retry.
+        StoreBusy => PresentedError {
+            status: 503,
+            client_msg: err.to_string(),
+            log_level: LogLevel::Warn,
         },
 
         // 422 — domain rule violated by an otherwise-valid request
@@ -489,6 +512,16 @@ mod tests {
     /// Compile-time guard: every `NetcidrError` variant has a presenter
     /// arm. Adding a new variant without updating `present` produces a
     /// non-exhaustive-match error here.
+    #[test]
+    fn store_busy_is_retryable_503_logged_at_warn() {
+        case(
+            NetcidrError::StoreBusy,
+            503,
+            "storage busy, retry",
+            LogLevel::Warn,
+        );
+    }
+
     #[test]
     fn every_variant_is_explicit_in_presenter() {
         // No assertion needed — this test exists so reviewers see the

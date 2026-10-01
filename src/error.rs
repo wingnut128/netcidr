@@ -90,6 +90,11 @@ pub enum NetcidrError {
     #[error("cannot remove, disable, or demote the last active platform admin")]
     LastPlatformAdmin,
 
+    /// Waited longer than the store's lock timeout for a lock or a pooled
+    /// connection. Transient: the caller may safely retry.
+    #[error("storage busy, retry")]
+    StoreBusy,
+
     #[error("CIDR block {0} has active allocations and cannot be deleted")]
     CidrBlockHasActiveAllocations(String),
 

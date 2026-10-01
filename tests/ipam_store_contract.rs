@@ -1365,6 +1365,302 @@ macro_rules! store_contract_tests {
 }
 
 // ---------------------------------------------------------------------------
+// Transaction units (ADR-0007): commit, rollback, reads, lock exclusion
+// ---------------------------------------------------------------------------
+
+mod transact_support {
+    use netcidr::ipam::models::{AuditEntry, IdempotencyRecord};
+
+    pub fn audit(tenant: &str, entity_id: &str) -> AuditEntry {
+        AuditEntry {
+            id: String::new(),
+            tenant_id: tenant.to_string(),
+            entity_type: "test".to_string(),
+            entity_id: entity_id.to_string(),
+            action: "transact_test".to_string(),
+            details: None,
+            timestamp: "2026-10-01T00:00:00+00:00".to_string(),
+            caller_sub: None,
+            caller_email: None,
+            source_ip: None,
+            request_id: None,
+            auth_method: "oidc".to_string(),
+            pat_id: None,
+        }
+    }
+
+    pub fn idempotency(tenant: &str, key: &str) -> IdempotencyRecord {
+        IdempotencyRecord {
+            tenant_id: tenant.to_string(),
+            key: key.to_string(),
+            scope: "transact-test".to_string(),
+            request_hash: "hash".to_string(),
+            status_code: 200,
+            response_body: "\"stored\"".to_string(),
+            created_at: "2026-10-01T00:00:00+00:00".to_string(),
+            expires_at: "2099-01-01T00:00:00+00:00".to_string(),
+        }
+    }
+}
+
+/// Contract tests for `IpamStore::transact`. `$factory` must build a store
+/// with `store_support::SHORT_LOCK_TIMEOUT`.
+macro_rules! transact_contract_tests {
+    ($factory:ident) => {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Duration;
+
+        use netcidr::ipam::store::{IdempotencyLookup, LockScope, Plan, Read, Rows, TxUnit};
+
+        use super::transact_support::{audit, idempotency};
+
+        fn block_scope(id: &str) -> LockScope {
+            LockScope::CidrBlock {
+                tenant_id: TEST_TENANT.to_string(),
+                cidr_block_id: id.to_string(),
+            }
+        }
+
+        async fn audit_ids(store: &dyn IpamStore) -> Vec<String> {
+            store
+                .query_audit(TEST_TENANT, &AuditFilter::default())
+                .await
+                .unwrap()
+                .into_iter()
+                .filter(|e| e.action == "transact_test")
+                .map(|e| e.entity_id)
+                .collect()
+        }
+
+        #[tokio::test]
+        async fn transact_commits_audit_and_idempotency_and_returns_output() {
+            let store = $factory().await;
+            let block = store
+                .create_cidr_block(
+                    TEST_TENANT,
+                    &CreateCidrBlock {
+                        cidr: "10.0.0.0/8".to_string(),
+                        name: Some("Corp".to_string()),
+                        description: None,
+                    },
+                )
+                .await
+                .unwrap();
+
+            let out = store
+                .transact(TxUnit {
+                    scope: block_scope(&block.id),
+                    reads: vec![Read::CidrBlock {
+                        tenant_id: TEST_TENANT.to_string(),
+                        id: block.id.clone(),
+                    }],
+                    idempotency: None,
+                    decide: Box::new(|loaded| {
+                        let Rows::CidrBlock(Some(b)) = &loaded.rows[0] else {
+                            panic!("expected the cidr block");
+                        };
+                        Ok(Plan {
+                            writes: vec![],
+                            audits: vec![audit(TEST_TENANT, &b.id)],
+                            idempotency: Some(idempotency(TEST_TENANT, "k1")),
+                            output_json: format!("{:?}", b.name.clone().unwrap()),
+                        })
+                    }),
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(out, "\"Corp\"");
+            assert_eq!(audit_ids(&*store).await, vec![block.id.clone()]);
+            let rec = store
+                .idempotency_get(TEST_TENANT, "k1", "transact-test")
+                .await
+                .unwrap();
+            assert_eq!(rec, Some(idempotency(TEST_TENANT, "k1")));
+        }
+
+        #[tokio::test]
+        async fn transact_reads_a_row_in_another_tenant_as_absent() {
+            let store = $factory().await;
+            let block = store
+                .create_cidr_block(
+                    "someone-else@example.com",
+                    &CreateCidrBlock {
+                        cidr: "10.0.0.0/8".to_string(),
+                        name: None,
+                        description: None,
+                    },
+                )
+                .await
+                .unwrap();
+
+            store
+                .transact(TxUnit {
+                    scope: block_scope(&block.id),
+                    reads: vec![Read::CidrBlock {
+                        tenant_id: TEST_TENANT.to_string(),
+                        id: block.id.clone(),
+                    }],
+                    idempotency: None,
+                    decide: Box::new(|loaded| {
+                        assert!(matches!(loaded.rows[..], [Rows::CidrBlock(None)]));
+                        Ok(Plan::default())
+                    }),
+                })
+                .await
+                .unwrap();
+        }
+
+        #[tokio::test]
+        async fn transact_decide_error_persists_nothing_and_passes_through() {
+            let store = $factory().await;
+            let err = store
+                .transact(TxUnit {
+                    scope: block_scope("b1"),
+                    reads: vec![],
+                    idempotency: None,
+                    decide: Box::new(|_| {
+                        // Building a plan, then failing, must leave no trace.
+                        let _plan = Plan {
+                            audits: vec![audit(TEST_TENANT, "never")],
+                            idempotency: Some(idempotency(TEST_TENANT, "k2")),
+                            ..Plan::default()
+                        };
+                        Err(NetcidrError::NoFreeSpace {
+                            cidr_block: "10.0.0.0/30".to_string(),
+                            prefix: 24,
+                        })
+                    }),
+                })
+                .await
+                .unwrap_err();
+
+            assert!(matches!(err, NetcidrError::NoFreeSpace { prefix: 24, .. }));
+            assert!(audit_ids(&*store).await.is_empty());
+            assert_eq!(
+                store
+                    .idempotency_get(TEST_TENANT, "k2", "transact-test")
+                    .await
+                    .unwrap(),
+                None
+            );
+        }
+
+        #[tokio::test]
+        async fn transact_loads_the_idempotency_record_it_looks_up() {
+            let store = $factory().await;
+            store
+                .idempotency_put(&idempotency(TEST_TENANT, "k3"))
+                .await
+                .unwrap();
+            store
+                .transact(TxUnit {
+                    scope: block_scope("b1"),
+                    reads: vec![],
+                    idempotency: Some(IdempotencyLookup {
+                        tenant_id: TEST_TENANT.to_string(),
+                        key: "k3".to_string(),
+                        scope: "transact-test".to_string(),
+                    }),
+                    decide: Box::new(|loaded| {
+                        assert_eq!(loaded.idempotency, Some(idempotency(TEST_TENANT, "k3")));
+                        Ok(Plan::default())
+                    }),
+                })
+                .await
+                .unwrap();
+        }
+
+        /// Starts a unit on `scope` whose `decide` holds the lock until
+        /// `release` is sent. Resolves once that `decide` is running.
+        async fn hold_scope(
+            store: Arc<dyn IpamStore>,
+            scope: LockScope,
+        ) -> (
+            tokio::task::JoinHandle<netcidr::error::Result<String>>,
+            std::sync::mpsc::Sender<()>,
+        ) {
+            let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+            let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+            let holder = tokio::spawn(async move {
+                store
+                    .transact(TxUnit {
+                        scope,
+                        reads: vec![],
+                        idempotency: None,
+                        decide: Box::new(move |_| {
+                            entered_tx.send(()).unwrap();
+                            // Adapters run `decide` off the async workers,
+                            // so blocking here holds only the lock.
+                            release_rx.recv().unwrap();
+                            Ok(Plan::default())
+                        }),
+                    })
+                    .await
+            });
+            entered_rx.await.unwrap();
+            (holder, release_tx)
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn transact_units_on_the_same_scope_never_interleave() {
+            let (store, _guard) = $factory().await.into_parts();
+            let store: Arc<dyn IpamStore> = Arc::new(store);
+            let (holder, release) = hold_scope(Arc::clone(&store), block_scope("b1")).await;
+
+            let entered = Arc::new(AtomicBool::new(false));
+            let flag = Arc::clone(&entered);
+            let waiter_store = Arc::clone(&store);
+            let waiter = tokio::spawn(async move {
+                waiter_store
+                    .transact(TxUnit {
+                        scope: block_scope("b1"),
+                        reads: vec![],
+                        idempotency: None,
+                        decide: Box::new(move |_| {
+                            flag.store(true, Ordering::SeqCst);
+                            Ok(Plan::default())
+                        }),
+                    })
+                    .await
+            });
+
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            assert!(
+                !entered.load(Ordering::SeqCst),
+                "second unit decided while the first held the scope"
+            );
+            release.send(()).unwrap();
+            holder.await.unwrap().unwrap();
+            waiter.await.unwrap().unwrap();
+            assert!(entered.load(Ordering::SeqCst));
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn transact_waiting_past_the_lock_timeout_is_store_busy() {
+            let (store, _guard) = $factory().await.into_parts();
+            let store: Arc<dyn IpamStore> = Arc::new(store);
+            let (holder, release) = hold_scope(Arc::clone(&store), block_scope("b1")).await;
+
+            let err = store
+                .transact(TxUnit {
+                    scope: block_scope("b1"),
+                    reads: vec![],
+                    idempotency: None,
+                    decide: Box::new(|_| panic!("must not decide while the scope is held")),
+                })
+                .await
+                .unwrap_err();
+            assert!(matches!(err, NetcidrError::StoreBusy), "got {err:?}");
+
+            release.send(()).unwrap();
+            holder.await.unwrap().unwrap();
+        }
+    };
+}
+
+// ---------------------------------------------------------------------------
 // Run contract tests against every store adapter
 // ---------------------------------------------------------------------------
 
@@ -1384,6 +1680,25 @@ mod postgres_contract {
     use super::*;
     use store_support::postgres_store;
     store_contract_tests!(postgres_store);
+}
+
+mod sqlite_transact_contract {
+    use super::*;
+    use store_support::sqlite_memory_store_short_timeout;
+    transact_contract_tests!(sqlite_memory_store_short_timeout);
+}
+
+mod sqlite_file_transact_contract {
+    use super::*;
+    use store_support::sqlite_file_store_short_timeout;
+    transact_contract_tests!(sqlite_file_store_short_timeout);
+}
+
+#[cfg(feature = "ipam-postgres")]
+mod postgres_transact_contract {
+    use super::*;
+    use store_support::postgres_store_short_timeout;
+    transact_contract_tests!(postgres_store_short_timeout);
 }
 
 /// Users directory: get/list/upsert/delete, active-platform-admin counting,

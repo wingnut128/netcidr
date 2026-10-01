@@ -4,6 +4,7 @@ pub mod config;
 pub mod http_client;
 pub mod idempotency;
 pub mod models;
+pub mod mutation;
 pub mod operations;
 pub mod output;
 #[cfg(feature = "ipam-postgres")]

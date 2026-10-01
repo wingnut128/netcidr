@@ -38,7 +38,7 @@ use tracing::{info, instrument, warn};
 
 use crate::auth::{AuthMethod, AuthenticatedPrincipal, Role};
 use crate::error::NetcidrError;
-use crate::error_presenter::{LogLevel, present};
+use crate::error_presenter::present;
 use crate::ipam::models::PersonalAccessTokenSummary;
 use crate::pat_lifecycle::{CreatePatRequest, MintForPrincipalError, PatLifecycle};
 
@@ -267,9 +267,7 @@ fn map_principal_error(err: MintForPrincipalError, action: &str) -> Response {
 /// Identical classification, scrubbing, and log policy as `ipam_api`.
 fn map_pat_error(err: NetcidrError) -> Response {
     let p = present(&err);
-    if p.log_level == LogLevel::Error {
-        tracing::error!(error = %err, "error in /me/tokens");
-    }
+    p.log(&err, "error in /me/tokens");
     let status = StatusCode::from_u16(p.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     error_response(status, p.client_msg)
 }
