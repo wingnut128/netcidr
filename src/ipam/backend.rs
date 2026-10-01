@@ -1,7 +1,7 @@
 //! IPAM backend switch: the same operations against a local [`IpamOps`] or a
 //! remote `netcidr serve` API via [`HttpIpamClient`].
 //!
-//! Used by the MCP server.
+//! Shared by the MCP server and `netcidr ipam`.
 
 use std::sync::Arc;
 
