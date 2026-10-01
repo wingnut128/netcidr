@@ -956,10 +956,10 @@ The IPAM module provides library-level IP address allocation tracking with a plu
 
 ```bash
 # Create a cidr_block
-netcidr ipam cidr_block create 10.0.0.0/8 --name "Corporate Network"
+netcidr ipam cidr-block create 10.0.0.0/8 --name "Corporate Network"
 
 # List cidr_blocks
-netcidr ipam cidr_block list --format text
+netcidr ipam cidr-block list --format text
 
 # Allocate a specific block
 netcidr ipam allocate <cidr_block-id> 10.0.1.0/24 --name "Web Tier" --environment production
@@ -1001,13 +1001,13 @@ netcidr ipam hostname history 10.0.1.5                      # append-only trail 
 netcidr ipam hostname delete 10.0.1.5 app.example.com       # hard delete, kept in history
 
 # IPv6 IPAM — same commands, IPv6 CIDRs
-netcidr ipam cidr_block create 2001:db8::/32 --name "IPv6 Space"
+netcidr ipam cidr-block create 2001:db8::/32 --name "IPv6 Space"
 netcidr ipam allocate <cidr_block-id> 2001:db8:1::/48 --name "Site A"
 netcidr ipam auto-allocate <cidr_block-id> -p 48 -n 5
 netcidr ipam find-ip 2001:db8:1::50
 
 # Use a specific database file
-netcidr ipam --db /path/to/my.db cidr_block list
+netcidr ipam --db /path/to/my.db cidr-block list
 ```
 
 **Database location** (precedence order): `--db` flag > `NETCIDR_DB` env var > `db_path` in config file > `~/.local/share/netcidr/netcidr.db`
