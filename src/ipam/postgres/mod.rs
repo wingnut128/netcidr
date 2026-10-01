@@ -265,12 +265,13 @@ async fn insert_audit<'e>(ex: impl PgExecutor<'e>, entry: &AuditEntry) -> Result
     Ok(())
 }
 
-async fn insert_idempotency<'e>(ex: impl PgExecutor<'e>, record: &IdempotencyRecord) -> Result<()> {
+async fn put_idempotency<'e>(ex: impl PgExecutor<'e>, record: &IdempotencyRecord) -> Result<()> {
     sqlx::query(
         "INSERT INTO idempotency_keys \
             (tenant_id, key, scope, request_hash, status_code, response_body, created_at, expires_at) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
-         ON CONFLICT (tenant_id, key, scope) DO NOTHING",
+         ON CONFLICT (tenant_id, key, scope) DO UPDATE SET request_hash = $4, status_code = $5, \
+             response_body = $6, created_at = $7, expires_at = $8",
     )
     .bind(&record.tenant_id)
     .bind(&record.key)
@@ -484,12 +485,21 @@ async fn insert_allocation(conn: &mut sqlx::PgConnection, a: &Allocation) -> Res
     .execute(&mut *conn)
     .await
     .map_err(db_err)?;
-    for tag in &a.tags {
+    insert_tags(conn, &a.tenant_id, &a.id, &a.tags).await
+}
+
+async fn insert_tags(
+    conn: &mut sqlx::PgConnection,
+    tenant_id: &str,
+    allocation_id: &str,
+    tags: &[Tag],
+) -> Result<()> {
+    for tag in tags {
         sqlx::query(
             "INSERT INTO allocation_tags (allocation_id, tenant_id, key, value) VALUES ($1, $2, $3, $4)",
         )
-        .bind(&a.id)
-        .bind(&a.tenant_id)
+        .bind(allocation_id)
+        .bind(tenant_id)
         .bind(&tag.key)
         .bind(&tag.value)
         .execute(&mut *conn)
@@ -497,6 +507,21 @@ async fn insert_allocation(conn: &mut sqlx::PgConnection, a: &Allocation) -> Res
         .map_err(db_err)?;
     }
     Ok(())
+}
+
+async fn replace_tags(
+    conn: &mut sqlx::PgConnection,
+    tenant_id: &str,
+    allocation_id: &str,
+    tags: &[Tag],
+) -> Result<()> {
+    sqlx::query("DELETE FROM allocation_tags WHERE allocation_id = $1 AND tenant_id = $2")
+        .bind(allocation_id)
+        .bind(tenant_id)
+        .execute(&mut *conn)
+        .await
+        .map_err(db_err)?;
+    insert_tags(conn, tenant_id, allocation_id, tags).await
 }
 
 async fn replace_allocation(conn: &mut sqlx::PgConnection, a: &Allocation) -> Result<()> {
@@ -843,6 +868,11 @@ async fn apply_write(conn: &mut sqlx::PgConnection, write: &Write) -> Result<()>
         }
         Write::InsertAllocation(a) => insert_allocation(conn, a).await,
         Write::ReplaceAllocation(a) => replace_allocation(conn, a).await,
+        Write::ReplaceTags {
+            tenant_id,
+            allocation_id,
+            tags,
+        } => replace_tags(conn, tenant_id, allocation_id, tags).await,
         Write::PutUser(u) => put_user(&mut *conn, u).await,
         Write::DeleteUser { email } => delete_user_row(&mut *conn, email).await,
         Write::SetBootstrapMarker { key, applied_at } => {
@@ -950,7 +980,7 @@ impl IpamStore for PostgresStore {
             insert_audit(&mut *tx, entry).await?;
         }
         if let Some(record) = &plan.idempotency {
-            insert_idempotency(&mut *tx, record).await?;
+            put_idempotency(&mut *tx, record).await?;
         }
         tx.commit().await.map_err(db_err)?;
         Ok(plan.output_json)
@@ -1048,32 +1078,6 @@ impl IpamStore for PostgresStore {
         read_allocations_in_block(&mut conn, tenant_id, cidr_block_id, statuses).await
     }
 
-    async fn set_tags(&self, tenant_id: &str, allocation_id: &str, tags: &[Tag]) -> Result<()> {
-        self.assert_allocation_in_tenant(tenant_id, allocation_id)
-            .await?;
-
-        sqlx::query("DELETE FROM allocation_tags WHERE allocation_id = $1 AND tenant_id = $2")
-            .bind(allocation_id)
-            .bind(tenant_id)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        for tag in tags {
-            sqlx::query(
-                "INSERT INTO allocation_tags (allocation_id, tenant_id, key, value) VALUES ($1, $2, $3, $4)",
-            )
-            .bind(allocation_id)
-            .bind(tenant_id)
-            .bind(&tag.key)
-            .bind(&tag.value)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        }
-        Ok(())
-    }
-
     async fn get_tags(&self, tenant_id: &str, allocation_id: &str) -> Result<Vec<Tag>> {
         self.assert_allocation_in_tenant(tenant_id, allocation_id)
             .await?;
@@ -1167,10 +1171,6 @@ impl IpamStore for PostgresStore {
 
     // --- audit ---
 
-    async fn append_audit(&self, entry: &AuditEntry) -> Result<()> {
-        insert_audit(&self.pool, entry).await
-    }
-
     async fn query_audit(&self, tenant_id: &str, filter: &AuditFilter) -> Result<Vec<AuditEntry>> {
         let mut builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
             "SELECT id, tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id, auth_method, pat_id FROM audit_log WHERE tenant_id = ",
@@ -1245,10 +1245,6 @@ impl IpamStore for PostgresStore {
         scope: &str,
     ) -> Result<Option<IdempotencyRecord>> {
         read_idempotency(&self.pool, tenant_id, key, scope).await
-    }
-
-    async fn idempotency_put(&self, record: &IdempotencyRecord) -> Result<()> {
-        insert_idempotency(&self.pool, record).await
     }
 
     async fn idempotency_reap_expired(&self, now_rfc3339: &str) -> Result<u64> {

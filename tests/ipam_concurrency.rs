@@ -528,6 +528,48 @@ mod cross_process {
         }
     }
 
+    /// Per round, 8 tasks split across both processes send the same batch
+    /// with the same idempotency key. Exactly one may run it; the others
+    /// replay its result or are told it is still in progress.
+    pub async fn batch_with_one_key_runs_once(pair: Pair) {
+        for round in 0..ROUNDS {
+            let block_id = block(&pair.ops[0], &format!("10.{round}.0.0/16")).await;
+            let items = vec![BatchAllocateItem {
+                cidr_block_id: block_id.clone(),
+                prefix_length: 24,
+                count: Some(2),
+                name: None,
+                resource_id: None,
+                environment: None,
+                owner: None,
+            }];
+            let key = format!("batch-{round}");
+            let mut handles = Vec::new();
+            for task in 0..8 {
+                let ops = Arc::clone(&pair.ops[task % 2]);
+                let (items, key) = (items.clone(), key.clone());
+                handles.push(tokio::spawn(async move {
+                    ops.batch_allocate_idempotent(TEST_TENANT, &items, &key)
+                        .await
+                }));
+            }
+            let mut fresh = 0;
+            for h in handles {
+                match h.await.unwrap() {
+                    Ok(outcome) if !outcome.is_replayed() => fresh += 1,
+                    Ok(_) | Err(NetcidrError::IdempotencyInProgress) => {}
+                    Err(e) => panic!("round {round}: unexpected error: {e:?}"),
+                }
+            }
+            assert_eq!(fresh, 1, "round {round}: batch ran {fresh} times");
+            let allocated = pair.stores[0]
+                .find_allocations_in_cidr_block(TEST_TENANT, &block_id, &[AllocationStatus::Active])
+                .await
+                .unwrap();
+            assert_eq!(allocated.len(), 2, "round {round}: {allocated:?}");
+        }
+    }
+
     macro_rules! cross_process_tests {
         ($pair:expr) => {
             #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -563,6 +605,11 @@ mod cross_process {
             #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
             async fn pat_limit_holds() {
                 super::pat_limit_holds($pair.await).await;
+            }
+
+            #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+            async fn batch_with_one_key_runs_once() {
+                super::batch_with_one_key_runs_once($pair.await).await;
             }
 
             #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

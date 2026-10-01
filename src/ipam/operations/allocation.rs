@@ -11,7 +11,7 @@ use super::{
 };
 use crate::error::{NetcidrError, Result};
 use crate::ipam::models::{
-    Allocation, AllocationStatus, AutoAllocateRequest, CidrBlock, CreateAllocation,
+    Allocation, AllocationStatus, AutoAllocateRequest, CidrBlock, CreateAllocation, Tag,
     UpdateAllocation,
 };
 use crate::ipam::mutation::{
@@ -393,6 +393,68 @@ impl Mutation for ReleaseAllocationMutation {
             },
         );
         Ok(Decision::new(alloc, change))
+    }
+}
+
+/// Replace every tag on an allocation. Tag keys must already be unique.
+/// Setting the tags it already has changes nothing and records no audit row.
+pub(super) struct SetTags {
+    pub tenant_id: String,
+    pub id: String,
+    pub cidr_block_id: String,
+    pub tags: Vec<Tag>,
+}
+
+/// Tags as a key → value map, so order doesn't make two sets differ.
+fn tag_map(tags: &[Tag]) -> std::collections::BTreeMap<&str, &str> {
+    tags.iter()
+        .map(|t| (t.key.as_str(), t.value.as_str()))
+        .collect()
+}
+
+impl Mutation for SetTags {
+    type Output = ();
+    type Reads = Handle<Option<Allocation>>;
+
+    fn scope(&self) -> LockScope {
+        block_scope(&self.tenant_id, &self.cidr_block_id)
+    }
+
+    fn reads(&self, set: &mut ReadSet) -> Self::Reads {
+        set.allocation(&self.tenant_id, &self.id)
+    }
+
+    fn decide(
+        self,
+        alloc: Self::Reads,
+        snapshot: &Snapshot,
+        _cx: &DecideCtx,
+    ) -> Result<Decision<()>> {
+        let alloc = snapshot
+            .get(alloc)?
+            .as_ref()
+            .ok_or_else(|| NetcidrError::AllocationNotFound(self.id.clone()))?;
+        if tag_map(&alloc.tags) == tag_map(&self.tags) {
+            return Ok(Decision::unchanged(()));
+        }
+        let keys = tag_map(&self.tags)
+            .into_keys()
+            .collect::<Vec<_>>()
+            .join(",");
+        let change = Change::new(
+            Write::ReplaceTags {
+                tenant_id: self.tenant_id,
+                allocation_id: alloc.id.clone(),
+                tags: self.tags,
+            },
+            AuditFact {
+                action: "set_tags",
+                entity_type: "allocation",
+                entity_id: alloc.id.clone(),
+                details: Some(format!("keys=[{keys}]")),
+            },
+        );
+        Ok(Decision::new((), change))
     }
 }
 
@@ -781,5 +843,59 @@ mod tests {
         .unwrap();
         assert_eq!(*d.output(), 1);
         assert_eq!(d.changes().len(), 1);
+    }
+
+    fn tag(k: &str, v: &str) -> Tag {
+        Tag {
+            key: k.to_string(),
+            value: v.to_string(),
+        }
+    }
+
+    fn set_tags(tags: Vec<Tag>) -> SetTags {
+        SetTags {
+            tenant_id: T.to_string(),
+            id: "a".to_string(),
+            cidr_block_id: "b1".to_string(),
+            tags,
+        }
+    }
+
+    #[test]
+    fn set_tags_replaces_the_tags_and_audits_their_keys() {
+        let mut current = alloc("a", "10.0.1.0/24", AllocationStatus::Active);
+        current.tags = vec![tag("env", "dev")];
+        let d = decide(
+            set_tags(vec![tag("team", "net"), tag("env", "prod")]),
+            vec![Rows::Allocation(Some(current))],
+        )
+        .unwrap();
+        let [change] = d.changes() else {
+            panic!("one change")
+        };
+        assert_eq!(change.audit().action, "set_tags");
+        assert_eq!(change.audit().details.as_deref(), Some("keys=[env,team]"));
+        assert!(matches!(
+            change.writes().next(),
+            Some(Write::ReplaceTags { tags, .. }) if tags.len() == 2
+        ));
+    }
+
+    #[test]
+    fn set_tags_to_the_same_set_changes_nothing() {
+        let mut current = alloc("a", "10.0.1.0/24", AllocationStatus::Active);
+        current.tags = vec![tag("a", "1"), tag("b", "2")];
+        let d = decide(
+            set_tags(vec![tag("b", "2"), tag("a", "1")]),
+            vec![Rows::Allocation(Some(current))],
+        )
+        .unwrap();
+        assert!(d.changes().is_empty());
+    }
+
+    #[test]
+    fn set_tags_on_a_missing_allocation_is_not_found() {
+        let err = decide(set_tags(vec![]), vec![Rows::Allocation(None)]).unwrap_err();
+        assert!(matches!(err, NetcidrError::AllocationNotFound(_)));
     }
 }

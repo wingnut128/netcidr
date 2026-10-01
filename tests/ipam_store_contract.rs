@@ -886,11 +886,12 @@ macro_rules! store_contract_tests {
                 .unwrap();
 
             // Set initial tags
-            store
-                .set_tags(
-                    TEST_TENANT,
-                    &alloc.id,
-                    &[
+            write_rows(
+                &*store,
+                vec![netcidr::ipam::store::Write::ReplaceTags {
+                    tenant_id: TEST_TENANT.to_string(),
+                    allocation_id: alloc.id.clone(),
+                    tags: vec![
                         Tag {
                             key: "env".to_string(),
                             value: "prod".to_string(),
@@ -900,25 +901,28 @@ macro_rules! store_contract_tests {
                             value: "platform".to_string(),
                         },
                     ],
-                )
-                .await
-                .unwrap();
+                }],
+            )
+            .await
+            .unwrap();
 
             let tags = store.get_tags(TEST_TENANT, &alloc.id).await.unwrap();
             assert_eq!(tags.len(), 2);
 
             // Replace with different tags
-            store
-                .set_tags(
-                    TEST_TENANT,
-                    &alloc.id,
-                    &[Tag {
+            write_rows(
+                &*store,
+                vec![netcidr::ipam::store::Write::ReplaceTags {
+                    tenant_id: TEST_TENANT.to_string(),
+                    allocation_id: alloc.id.clone(),
+                    tags: vec![Tag {
                         key: "env".to_string(),
                         value: "staging".to_string(),
                     }],
-                )
-                .await
-                .unwrap();
+                }],
+            )
+            .await
+            .unwrap();
 
             let tags = store.get_tags(TEST_TENANT, &alloc.id).await.unwrap();
             assert_eq!(tags.len(), 1);
@@ -1921,28 +1925,58 @@ macro_rules! transact_contract_tests {
         }
 
         #[tokio::test]
-        async fn transact_loads_the_idempotency_record_it_looks_up() {
+        async fn transact_loads_the_idempotency_record_and_a_plan_replaces_it() {
             let store = $factory().await;
-            store
-                .idempotency_put(&idempotency(TEST_TENANT, "k3"))
-                .await
-                .unwrap();
+            let lookup = IdempotencyLookup {
+                tenant_id: TEST_TENANT.to_string(),
+                key: "k3".to_string(),
+                scope: "transact-test".to_string(),
+            };
+            let first = idempotency(TEST_TENANT, "k3");
+            let seeded = first.clone();
             store
                 .transact(TxUnit {
                     scope: block_scope("b1"),
                     reads: vec![],
-                    idempotency: Some(IdempotencyLookup {
-                        tenant_id: TEST_TENANT.to_string(),
-                        key: "k3".to_string(),
-                        scope: "transact-test".to_string(),
-                    }),
-                    decide: Box::new(|loaded| {
-                        assert_eq!(loaded.idempotency, Some(idempotency(TEST_TENANT, "k3")));
-                        Ok(Plan::default())
+                    idempotency: None,
+                    decide: Box::new(move |_| {
+                        Ok(Plan {
+                            idempotency: Some(seeded),
+                            ..Plan::default()
+                        })
                     }),
                 })
                 .await
                 .unwrap();
+
+            let replacement = IdempotencyRecord {
+                status_code: 0,
+                response_body: String::new(),
+                ..first.clone()
+            };
+            let written = replacement.clone();
+            store
+                .transact(TxUnit {
+                    scope: block_scope("b1"),
+                    reads: vec![],
+                    idempotency: Some(lookup.clone()),
+                    decide: Box::new(move |loaded| {
+                        assert_eq!(loaded.idempotency, Some(first));
+                        Ok(Plan {
+                            idempotency: Some(written),
+                            ..Plan::default()
+                        })
+                    }),
+                })
+                .await
+                .unwrap();
+            assert_eq!(
+                store
+                    .idempotency_get(TEST_TENANT, "k3", "transact-test")
+                    .await
+                    .unwrap(),
+                Some(replacement)
+            );
         }
 
         /// Starts a unit on `scope` whose `decide` holds the lock until

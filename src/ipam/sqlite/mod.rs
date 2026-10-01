@@ -312,12 +312,13 @@ fn insert_audit(conn: &Connection, entry: &AuditEntry) -> Result<()> {
     Ok(())
 }
 
-fn insert_idempotency(conn: &Connection, record: &IdempotencyRecord) -> Result<()> {
+fn put_idempotency(conn: &Connection, record: &IdempotencyRecord) -> Result<()> {
     conn.execute(
         "INSERT INTO idempotency_keys \
             (tenant_id, key, scope, request_hash, status_code, response_body, created_at, expires_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
-         ON CONFLICT(tenant_id, key, scope) DO NOTHING",
+         ON CONFLICT(tenant_id, key, scope) DO UPDATE SET request_hash = ?4, status_code = ?5, \
+             response_body = ?6, created_at = ?7, expires_at = ?8",
         params![
             record.tenant_id,
             record.key,
@@ -467,14 +468,37 @@ fn insert_allocation(conn: &Connection, a: &Allocation) -> Result<()> {
         ],
     )
     .map_err(db_err)?;
-    for tag in &a.tags {
+    insert_tags(conn, &a.tenant_id, &a.id, &a.tags)
+}
+
+fn insert_tags(
+    conn: &Connection,
+    tenant_id: &str,
+    allocation_id: &str,
+    tags: &[Tag],
+) -> Result<()> {
+    for tag in tags {
         conn.execute(
             "INSERT INTO allocation_tags (allocation_id, tenant_id, key, value) VALUES (?1, ?2, ?3, ?4)",
-            params![a.id, a.tenant_id, tag.key, tag.value],
+            params![allocation_id, tenant_id, tag.key, tag.value],
         )
         .map_err(db_err)?;
     }
     Ok(())
+}
+
+fn replace_tags(
+    conn: &Connection,
+    tenant_id: &str,
+    allocation_id: &str,
+    tags: &[Tag],
+) -> Result<()> {
+    conn.execute(
+        "DELETE FROM allocation_tags WHERE allocation_id = ?1 AND tenant_id = ?2",
+        params![allocation_id, tenant_id],
+    )
+    .map_err(db_err)?;
+    insert_tags(conn, tenant_id, allocation_id, tags)
 }
 
 fn replace_allocation(conn: &Connection, a: &Allocation) -> Result<()> {
@@ -824,6 +848,11 @@ fn apply_write(conn: &Connection, write: &Write) -> Result<()> {
         Write::DeleteCidrBlock { tenant_id, id } => delete_cidr_block_rows(conn, tenant_id, id),
         Write::InsertAllocation(a) => insert_allocation(conn, a),
         Write::ReplaceAllocation(a) => replace_allocation(conn, a),
+        Write::ReplaceTags {
+            tenant_id,
+            allocation_id,
+            tags,
+        } => replace_tags(conn, tenant_id, allocation_id, tags),
         Write::PutUser(u) => put_user(conn, u),
         Write::DeleteUser { email } => delete_user_row(conn, email),
         Write::SetBootstrapMarker { key, applied_at } => {
@@ -870,7 +899,7 @@ fn run_unit(pool: &ConnPool, unit: TxUnit) -> Result<String> {
         insert_audit(&tx, entry)?;
     }
     if let Some(record) = &plan.idempotency {
-        insert_idempotency(&tx, record)?;
+        put_idempotency(&tx, record)?;
     }
     tx.commit().map_err(db_err)?;
     Ok(plan.output_json)
@@ -1044,26 +1073,6 @@ impl IpamStore for SqliteStore {
         read_allocations_in_block(&conn, tenant_id, cidr_block_id, statuses)
     }
 
-    async fn set_tags(&self, tenant_id: &str, allocation_id: &str, tags: &[Tag]) -> Result<()> {
-        let conn = self.conn()?;
-        Self::assert_allocation_in_tenant(&conn, tenant_id, allocation_id)?;
-
-        conn.execute(
-            "DELETE FROM allocation_tags WHERE allocation_id = ?1 AND tenant_id = ?2",
-            params![allocation_id, tenant_id],
-        )
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        for tag in tags {
-            conn.execute(
-                "INSERT INTO allocation_tags (allocation_id, tenant_id, key, value) VALUES (?1, ?2, ?3, ?4)",
-                params![allocation_id, tenant_id, tag.key, tag.value],
-            )
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        }
-        Ok(())
-    }
-
     async fn get_tags(&self, tenant_id: &str, allocation_id: &str) -> Result<Vec<Tag>> {
         let conn = self.conn()?;
         Self::assert_allocation_in_tenant(&conn, tenant_id, allocation_id)?;
@@ -1169,13 +1178,6 @@ impl IpamStore for SqliteStore {
 
     // --- audit ---
 
-    async fn append_audit(&self, entry: &AuditEntry) -> Result<()> {
-        {
-            let conn = self.conn()?;
-            insert_audit(&conn, entry)
-        }
-    }
-
     async fn query_audit(&self, tenant_id: &str, filter: &AuditFilter) -> Result<Vec<AuditEntry>> {
         let conn = self.conn()?;
         let mut sql = String::from(
@@ -1260,13 +1262,6 @@ impl IpamStore for SqliteStore {
         {
             let conn = self.conn()?;
             read_idempotency(&conn, tenant_id, key, scope)
-        }
-    }
-
-    async fn idempotency_put(&self, record: &IdempotencyRecord) -> Result<()> {
-        {
-            let conn = self.conn()?;
-            insert_idempotency(&conn, record)
         }
     }
 
@@ -1422,6 +1417,7 @@ mod tests {
             input: &CreateAllocation,
         ) -> Result<Allocation>;
         async fn delete_cidr_block(&self, tenant_id: &str, id: &str) -> Result<()>;
+        async fn append_audit(&self, entry: &AuditEntry) -> Result<()>;
         async fn pat_create(
             &self,
             input: &CreatePersonalAccessToken,
@@ -1495,6 +1491,25 @@ mod tests {
                 },
             )
             .await
+        }
+
+        async fn append_audit(&self, entry: &AuditEntry) -> Result<()> {
+            let entry = entry.clone();
+            self.transact(TxUnit {
+                scope: crate::ipam::store::LockScope::Tenant {
+                    tenant_id: entry.tenant_id.clone(),
+                },
+                reads: vec![],
+                idempotency: None,
+                decide: Box::new(move |_| {
+                    Ok(crate::ipam::store::Plan {
+                        audits: vec![entry],
+                        ..Default::default()
+                    })
+                }),
+            })
+            .await
+            .map(|_| ())
         }
 
         async fn pat_create(
@@ -2009,11 +2024,13 @@ mod tests {
             .await
             .unwrap();
 
-        store
-            .set_tags(
-                TEST_TENANT,
-                &alloc.id,
-                &[
+        commit(
+            &store,
+            TEST_TENANT,
+            Write::ReplaceTags {
+                tenant_id: TEST_TENANT.to_string(),
+                allocation_id: alloc.id.clone(),
+                tags: vec![
                     Tag {
                         key: "env".to_string(),
                         value: "prod".to_string(),
@@ -2023,25 +2040,29 @@ mod tests {
                         value: "platform".to_string(),
                     },
                 ],
-            )
-            .await
-            .unwrap();
+            },
+        )
+        .await
+        .unwrap();
 
         let tags = store.get_tags(TEST_TENANT, &alloc.id).await.unwrap();
         assert_eq!(tags.len(), 2);
 
         // Replace tags
-        store
-            .set_tags(
-                TEST_TENANT,
-                &alloc.id,
-                &[Tag {
+        commit(
+            &store,
+            TEST_TENANT,
+            Write::ReplaceTags {
+                tenant_id: TEST_TENANT.to_string(),
+                allocation_id: alloc.id.clone(),
+                tags: vec![Tag {
                     key: "env".to_string(),
                     value: "staging".to_string(),
                 }],
-            )
-            .await
-            .unwrap();
+            },
+        )
+        .await
+        .unwrap();
         let tags = store.get_tags(TEST_TENANT, &alloc.id).await.unwrap();
         assert_eq!(tags.len(), 1);
         assert_eq!(tags[0].value, "staging");

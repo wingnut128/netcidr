@@ -55,6 +55,13 @@ pub enum LockScope {
         tenant_id: String,
         owner_sub: String,
     },
+    /// One idempotency key, for operations that span several units and so
+    /// claim and complete their key in units of their own (batch allocate).
+    IdempotencyKey {
+        tenant_id: String,
+        key: String,
+        scope: String,
+    },
 }
 
 impl LockScope {
@@ -74,6 +81,11 @@ impl LockScope {
                 tenant_id,
                 owner_sub,
             } => format!("pat_owner{SEP}{tenant_id}{SEP}{owner_sub}"),
+            Self::IdempotencyKey {
+                tenant_id,
+                key,
+                scope,
+            } => format!("idempotency_key{SEP}{tenant_id}{SEP}{scope}{SEP}{key}"),
         }
     }
 }
@@ -171,6 +183,12 @@ pub enum Write {
     /// descriptive fields, `updated_at`, `released_at`, `expires_at`),
     /// matched by tenant and id. Tags are left as they are.
     ReplaceAllocation(Allocation),
+    /// Replace every tag on an allocation, matched by tenant and id.
+    ReplaceTags {
+        tenant_id: String,
+        allocation_id: String,
+        tags: Vec<Tag>,
+    },
     /// Insert a user, or overwrite every column of the existing row with the
     /// same email.
     PutUser(UserRecord),
@@ -214,7 +232,8 @@ pub struct Loaded {
 }
 
 /// What a unit commits: its writes, then its audit rows, then its
-/// idempotency record, all in one transaction. `output_json` is returned
+/// idempotency record (inserted, or replacing the key's existing record),
+/// all in one transaction. `output_json` is returned
 /// to the caller of [`IpamStore::transact`].
 #[derive(Debug, Clone, Default)]
 pub struct Plan {
@@ -299,7 +318,6 @@ pub trait IpamStore: Send + Sync {
     ) -> Result<Vec<Allocation>>;
 
     // --- tags ---
-    async fn set_tags(&self, tenant_id: &str, allocation_id: &str, tags: &[Tag]) -> Result<()>;
     async fn get_tags(&self, tenant_id: &str, allocation_id: &str) -> Result<Vec<Tag>>;
 
     // --- hostname pointers ---
@@ -323,8 +341,6 @@ pub trait IpamStore: Send + Sync {
     async fn count_active_platform_admins(&self) -> Result<u64>;
 
     // --- audit ---
-    /// `entry.tenant_id` is the source of truth (already populated by caller).
-    async fn append_audit(&self, entry: &AuditEntry) -> Result<()>;
     async fn query_audit(&self, tenant_id: &str, filter: &AuditFilter) -> Result<Vec<AuditEntry>>;
 
     // --- idempotency ---
@@ -334,8 +350,6 @@ pub trait IpamStore: Send + Sync {
         key: &str,
         scope: &str,
     ) -> Result<Option<IdempotencyRecord>>;
-    /// `record.tenant_id` is the source of truth.
-    async fn idempotency_put(&self, record: &IdempotencyRecord) -> Result<()>;
     /// Tenant-agnostic: prunes expired rows across all tenants.
     async fn idempotency_reap_expired(&self, now_rfc3339: &str) -> Result<u64>;
 

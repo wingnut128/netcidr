@@ -1088,7 +1088,7 @@ netcidr serve --config netcidr.toml --ipam-enabled --ipam-db /path/to/ipam.db
 
 #### Idempotency keys
 
-The three allocation endpoints (`POST /ipam/cidr-blocks/{id}/allocate`, `/allocate-specific`, and `/ipam/batch/allocate`) accept an `Idempotency-Key: <opaque>` request header. Replays with the same key + same body return the original response (with `Idempotent-Replay: true`); replays with the same key + a different body return `409`. Cached records are scoped per-endpoint + per-cidr_block and expire after 24 hours.
+The three allocation endpoints (`POST /ipam/cidr-blocks/{id}/allocate`, `/allocate-specific`, and `/ipam/batch/allocate`) accept an `Idempotency-Key: <opaque>` request header. Replays with the same key + same body return the original response (with `Idempotent-Replay: true`); replays with the same key + a different body return `409`. A replay that arrives while the first batch request is still running also returns `409` ("still in progress; retry later") instead of allocating twice. Cached records are scoped per-endpoint + per-cidr_block and expire after 24 hours.
 
 ## Telemetry (OpenTelemetry / OTLP span export)
 

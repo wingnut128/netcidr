@@ -119,6 +119,11 @@ pub enum NetcidrError {
     #[error("idempotency key reused with a different request body")]
     IdempotencyConflict { key: String, scope: String },
 
+    /// An earlier request with the same idempotency key and body is
+    /// still running. Maps to HTTP 409; the client should retry later.
+    #[error("a request with this idempotency key is still in progress")]
+    IdempotencyInProgress,
+
     /// A response from an upstream HTTP API (e.g. the MCP server's
     /// remote-API backend, or the `netcidr token` CLI talking to a
     /// remote `netcidr serve`). Carries the status code and a message
