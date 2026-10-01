@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other
 
-- Dependabot no longer bumps the `chainguard/static` base image digest; Digestabot owns it, which stops duplicate digest PRs ([#462](https://github.com/wingnut128/netcidr/issues/462)).
+- Digestabot is removed; Dependabot alone keeps the Dockerfile's base-image digests fresh. Digestabot's commits could never satisfy `main`'s required signed commits (gitsign signatures don't verify on GitHub), so its PRs were unmergeable, and it duplicated Dependabot's digest bumps ([#462](https://github.com/wingnut128/netcidr/issues/462), [#469](https://github.com/wingnut128/netcidr/issues/469)).
 
 ## [0.31.0](https://github.com/wingnut128/netcidr/compare/v0.30.0...v0.31.0) - 2026-10-01
 
