@@ -2,17 +2,16 @@
 
 //! PostgreSQL integration tests.
 //!
-//! These tests start a Docker container running PostgreSQL, exercise the
-//! `PostgresStore` implementation against it, then tear the container down.
+//! Exercises `PostgresStore` and the operations layer on a per-test
+//! database. See `store_support` for how the Postgres server is found
+//! (`NETCIDR_TEST_DATABASE_URL`, or a local Docker container).
 //!
-//! Requirements: Docker must be running locally.
 //! Run with: `cargo test --features ipam-postgres --test postgres_integration`
 
-use std::process::Command;
-use std::sync::Arc;
-use std::time::Duration;
+mod store_support;
 
-use netcidr::ipam::config::PostgresConfig;
+use std::sync::Arc;
+
 use netcidr::ipam::models::*;
 use netcidr::ipam::operations::IpamOps;
 use netcidr::ipam::postgres::PostgresStore;
@@ -20,115 +19,62 @@ use netcidr::ipam::store::IpamStore;
 
 const TEST_TENANT: &str = "test@example.com";
 
-const CONTAINER_NAME: &str = "netcidr-test-pg";
-const PG_PORT: u16 = 15432;
-const PG_DB: &str = "netcidr_test";
-const PG_USER: &str = "postgres";
-
-fn pg_url() -> String {
-    format!("postgresql://{PG_USER}@127.0.0.1:{PG_PORT}/{PG_DB}")
-}
-
-fn start_container() {
-    // Remove any leftover container from a previous run
-    let _ = Command::new("docker")
-        .args(["rm", "-f", CONTAINER_NAME])
-        .output();
-
-    let status = Command::new("docker")
-        .args([
-            "run",
-            "-d",
-            "--name",
-            CONTAINER_NAME,
-            "-e",
-            "POSTGRES_HOST_AUTH_METHOD=trust",
-            "-e",
-            &format!("POSTGRES_DB={PG_DB}"),
-            "-e",
-            &format!("POSTGRES_USER={PG_USER}"),
-            "-p",
-            &format!("{PG_PORT}:5432"),
-            "postgres:16-alpine",
-        ])
-        .status()
-        .expect("failed to start postgres container — is Docker running?");
-    assert!(status.success(), "docker run failed");
-}
-
-fn stop_container() {
-    let _ = Command::new("docker")
-        .args(["rm", "-f", CONTAINER_NAME])
-        .output();
-}
-
-fn wait_for_pg() {
-    for _ in 0..30 {
-        let output = Command::new("docker")
-            .args(["exec", CONTAINER_NAME, "pg_isready", "-U", PG_USER])
-            .output()
-            .expect("failed to run pg_isready");
-        if output.status.success() {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(500));
-    }
-    panic!("PostgreSQL did not become ready within 15 seconds");
-}
-
-async fn new_store() -> PostgresStore {
-    let config = PostgresConfig {
-        url: Some(pg_url()),
-        max_connections: 5,
-        min_connections: 1,
-    };
-    let store = PostgresStore::new(&pg_url(), &config)
-        .await
-        .expect("failed to connect to PostgreSQL");
-    store.initialize().await.expect("initialize failed");
-    store.migrate().await.expect("migrate failed");
-    store
-}
-
-/// Single test function that runs all PostgreSQL assertions sequentially
-/// against one container to avoid port/container conflicts.
 #[tokio::test]
 async fn test_postgres_backend() {
-    start_container();
-    wait_for_pg();
+    let (store, _db) = store_support::postgres_store().await.into_parts();
 
-    // Wrap in a closure so we always stop the container, even on panic
-    let result = tokio::spawn(async {
-        let store = new_store().await;
+    // --- idempotent migrate ---
+    store
+        .migrate()
+        .await
+        .expect("second migrate should be idempotent");
 
-        // --- idempotent migrate ---
-        store
-            .migrate()
-            .await
-            .expect("second migrate should be idempotent");
+    cidr_block_crud(&store).await;
+    allocation_lifecycle(&store).await;
+    tags(&store).await;
+    audit_log(&store).await;
+    personal_access_tokens(&store).await;
 
-        // --- cidr_block CRUD ---
-        cidr_block_crud(&store).await;
+    // --- operations layer (auto-allocate, utilization, free blocks) ---
+    operations_layer(store).await;
+}
 
-        // --- allocation lifecycle ---
-        allocation_lifecycle(&store).await;
+/// The `allocations` tenant trigger rejects an allocation whose tenant
+/// differs from its cidr block's, even for raw SQL that bypasses IpamOps.
+#[tokio::test]
+async fn allocation_with_mismatched_tenant_id_is_rejected_by_trigger() {
+    let db = store_support::pg::test_database().await;
+    let _store = store_support::open_postgres(&db.url()).await; // runs migrations
+    let pool = sqlx::PgPool::connect(&db.url()).await.unwrap();
 
-        // --- tags ---
-        tags(&store).await;
+    sqlx::query(
+        r#"INSERT INTO cidr_blocks
+           (id, tenant_id, cidr, network_address, broadcast_address,
+            prefix_length, total_hosts, ip_version, created_at, updated_at)
+           VALUES ('s1','a@x','10.0.0.0/8','10.0.0.0','10.255.255.255',
+                   8,'16777216',4,'2026-05-02T00:00:00Z','2026-05-02T00:00:00Z')"#,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
 
-        // --- audit log ---
-        audit_log(&store).await;
-
-        // --- personal access tokens smoke ---
-        personal_access_tokens(&store).await;
-
-        // --- operations layer (auto-allocate, utilization, free blocks) ---
-        operations_layer(store).await;
-    })
+    let result = sqlx::query(
+        r#"INSERT INTO allocations
+           (id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address,
+            prefix_length, total_hosts, status, created_at, updated_at)
+           VALUES ('a1','b@x','s1','10.1.0.0/16','10.1.0.0','10.1.255.255',
+                   16,'65536','active','2026-05-02T00:00:00Z','2026-05-02T00:00:00Z')"#,
+    )
+    .execute(&pool)
     .await;
 
-    stop_container();
-    result.expect("test panicked inside spawned task");
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("must match parent")
+    );
+    pool.close().await;
 }
 
 async fn cidr_block_crud(store: &PostgresStore) {
