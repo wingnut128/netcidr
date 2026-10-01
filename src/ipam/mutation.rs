@@ -132,6 +132,13 @@ impl ReadSet {
         })
     }
 
+    /// All of `tenant_id`'s cidr blocks, oldest first.
+    pub fn cidr_blocks(&mut self, tenant_id: &str) -> Handle<Vec<CidrBlock>> {
+        self.push(Read::CidrBlocks {
+            tenant_id: tenant_id.to_string(),
+        })
+    }
+
     /// The allocation `id` in `tenant_id` (with tags), or `None`.
     pub fn allocation(&mut self, tenant_id: &str, id: &str) -> Handle<Option<Allocation>> {
         self.push(Read::Allocation {
@@ -165,6 +172,15 @@ impl FromRows for Option<CidrBlock> {
     fn from_rows(rows: &Rows) -> Option<&Self> {
         match rows {
             Rows::CidrBlock(block) => Some(block),
+            _ => None,
+        }
+    }
+}
+
+impl FromRows for Vec<CidrBlock> {
+    fn from_rows(rows: &Rows) -> Option<&Self> {
+        match rows {
+            Rows::CidrBlocks(blocks) => Some(blocks),
             _ => None,
         }
     }
@@ -486,7 +502,12 @@ mod tests {
         store.initialize().await.unwrap();
         store.migrate().await.unwrap();
         let store: Arc<dyn IpamStore> = Arc::new(store);
-        let block = store
+        let ops = IpamOps::with_clock_and_ids(
+            Arc::clone(&store),
+            Arc::new(FixedClock(noon())),
+            Arc::new(SeqIds::default()),
+        );
+        let block = ops
             .create_cidr_block(
                 TENANT,
                 &CreateCidrBlock {
@@ -497,11 +518,6 @@ mod tests {
             )
             .await
             .unwrap();
-        let ops = IpamOps::with_clock_and_ids(
-            Arc::clone(&store),
-            Arc::new(FixedClock(noon())),
-            Arc::new(SeqIds::default()),
-        );
         (ops, store, block.id)
     }
 

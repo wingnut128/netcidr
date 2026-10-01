@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use crate::error::{NetcidrError, Result};
 use crate::ipam::models::*;
+use crate::ipam::read_total_hosts;
 use crate::ipam::store::{DEFAULT_LOCK_TIMEOUT, IpamStore, Loaded, Read, Rows, TxUnit, Write};
-use crate::ipam::{parse_cidr_metadata, read_total_hosts};
 
 type ConnPool = Pool<SqliteConnectionManager>;
 
@@ -338,6 +338,78 @@ fn insert_idempotency(conn: &Connection, record: &IdempotencyRecord) -> Result<(
     Ok(())
 }
 
+fn read_cidr_blocks(
+    conn: &Connection,
+    tenant_id: &str,
+    limit: Option<u32>,
+    offset: Option<u32>,
+) -> Result<Vec<CidrBlock>> {
+    let sql = format!(
+        "SELECT id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM cidr_blocks WHERE tenant_id = ?1 ORDER BY created_at{}",
+        crate::ipam::store::limit_offset_clause(limit, offset)
+    );
+    let mut stmt = conn.prepare(&sql).map_err(db_err)?;
+    let rows = stmt
+        .query_map(params![tenant_id], |row| {
+            let total_hosts_text: String = row.get(6)?;
+            Ok(CidrBlock {
+                id: row.get(0)?,
+                tenant_id: row.get(1)?,
+                cidr: row.get(2)?,
+                network_address: row.get(3)?,
+                broadcast_address: row.get(4)?,
+                prefix_length: row.get(5)?,
+                total_hosts: read_total_hosts(Some(total_hosts_text), 0),
+                name: row.get(7)?,
+                description: row.get(8)?,
+                ip_version: row.get(9)?,
+                created_at: row.get(10)?,
+                updated_at: row.get(11)?,
+            })
+        })
+        .map_err(db_err)?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(db_err)?;
+    Ok(rows)
+}
+
+fn insert_cidr_block(conn: &Connection, b: &CidrBlock) -> Result<()> {
+    conn.execute(
+        "INSERT INTO cidr_blocks (id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        params![
+            b.id, b.tenant_id, b.cidr, b.network_address, b.broadcast_address, b.prefix_length,
+            b.total_hosts.to_string(), b.name, b.description, b.ip_version, b.created_at,
+            b.updated_at
+        ],
+    )
+    .map_err(db_err)?;
+    Ok(())
+}
+
+fn delete_cidr_block_rows(conn: &Connection, tenant_id: &str, id: &str) -> Result<()> {
+    conn.execute(
+        "DELETE FROM allocation_tags WHERE allocation_id IN (SELECT id FROM allocations WHERE cidr_block_id = ?1 AND tenant_id = ?2)",
+        params![id, tenant_id],
+    )
+    .map_err(db_err)?;
+    conn.execute(
+        "DELETE FROM allocations WHERE cidr_block_id = ?1 AND tenant_id = ?2",
+        params![id, tenant_id],
+    )
+    .map_err(db_err)?;
+    let deleted = conn
+        .execute(
+            "DELETE FROM cidr_blocks WHERE id = ?1 AND tenant_id = ?2",
+            params![id, tenant_id],
+        )
+        .map_err(db_err)?;
+    if deleted == 0 {
+        return Err(NetcidrError::CidrBlockNotFound(id.to_string()));
+    }
+    Ok(())
+}
+
 fn read_allocation(conn: &Connection, tenant_id: &str, id: &str) -> Result<Option<Allocation>> {
     let alloc = conn
         .query_row(
@@ -431,6 +503,9 @@ fn read_one(conn: &Connection, read: &Read) -> Result<Rows> {
         Read::CidrBlock { tenant_id, id } => {
             Ok(Rows::CidrBlock(read_cidr_block(conn, tenant_id, id)?))
         }
+        Read::CidrBlocks { tenant_id } => Ok(Rows::CidrBlocks(read_cidr_blocks(
+            conn, tenant_id, None, None,
+        )?)),
         Read::Allocation { tenant_id, id } => {
             Ok(Rows::Allocation(read_allocation(conn, tenant_id, id)?))
         }
@@ -449,6 +524,8 @@ fn read_one(conn: &Connection, read: &Read) -> Result<Rows> {
 
 fn apply_write(conn: &Connection, write: &Write) -> Result<()> {
     match write {
+        Write::InsertCidrBlock(b) => insert_cidr_block(conn, b),
+        Write::DeleteCidrBlock { tenant_id, id } => delete_cidr_block_rows(conn, tenant_id, id),
         Write::InsertAllocation(a) => insert_allocation(conn, a),
         Write::ReplaceAllocation(a) => replace_allocation(conn, a),
     }
@@ -541,40 +618,6 @@ impl IpamStore for SqliteStore {
             .map_err(|e| NetcidrError::DatabaseError(format!("transaction task failed: {e}")))?
     }
 
-    async fn create_cidr_block(
-        &self,
-        tenant_id: &str,
-        input: &CreateCidrBlock,
-    ) -> Result<CidrBlock> {
-        let conn = self.conn()?;
-        let id = uuid::Uuid::new_v4().to_string();
-        let now = Self::now();
-
-        // Parse CIDR to extract computed fields
-        let (network, broadcast, prefix, total, ip_version) = parse_cidr_metadata(&input.cidr)?;
-
-        conn.execute(
-            "INSERT INTO cidr_blocks (id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-            params![id, tenant_id, input.cidr, network, broadcast, prefix, total.to_string(), input.name, input.description, ip_version, now, now],
-        ).map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        Ok(CidrBlock {
-            id,
-            tenant_id: tenant_id.to_string(),
-            cidr: input.cidr.clone(),
-            network_address: network,
-            broadcast_address: broadcast,
-            prefix_length: prefix,
-            total_hosts: total,
-            name: input.name.clone(),
-            description: input.description.clone(),
-            ip_version,
-            created_at: now.clone(),
-            updated_at: now,
-        })
-    }
-
     async fn get_cidr_block(&self, tenant_id: &str, id: &str) -> Result<CidrBlock> {
         {
             let conn = self.conn()?;
@@ -594,175 +637,10 @@ impl IpamStore for SqliteStore {
         offset: Option<u32>,
     ) -> Result<Vec<CidrBlock>> {
         let conn = self.conn()?;
-        let sql = format!(
-            "SELECT id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM cidr_blocks WHERE tenant_id = ?1 ORDER BY created_at{}",
-            crate::ipam::store::limit_offset_clause(limit, offset)
-        );
-        let mut stmt = conn
-            .prepare(&sql)
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        let rows = stmt
-            .query_map(params![tenant_id], |row| {
-                let total_hosts_text: String = row.get(6)?;
-                Ok(CidrBlock {
-                    id: row.get(0)?,
-                    tenant_id: row.get(1)?,
-                    cidr: row.get(2)?,
-                    network_address: row.get(3)?,
-                    broadcast_address: row.get(4)?,
-                    prefix_length: row.get(5)?,
-                    total_hosts: read_total_hosts(Some(total_hosts_text), 0),
-                    name: row.get(7)?,
-                    description: row.get(8)?,
-                    ip_version: row.get(9)?,
-                    created_at: row.get(10)?,
-                    updated_at: row.get(11)?,
-                })
-            })
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        Ok(rows)
-    }
-
-    async fn delete_cidr_block(&self, tenant_id: &str, id: &str) -> Result<()> {
-        let conn = self.conn()?;
-
-        // Verify cidr_block exists in this tenant first; cross-tenant ⇒ NotFound.
-        let exists: bool = conn
-            .query_row(
-                "SELECT COUNT(*) > 0 FROM cidr_blocks WHERE id = ?1 AND tenant_id = ?2",
-                params![id, tenant_id],
-                |row| row.get(0),
-            )
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        if !exists {
-            return Err(NetcidrError::CidrBlockNotFound(id.to_string()));
-        }
-
-        // Check for active allocations
-        let active_count: u32 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM allocations WHERE cidr_block_id = ?1 AND tenant_id = ?2 AND status != 'released'",
-                params![id, tenant_id],
-                |row| row.get(0),
-            )
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        if active_count > 0 {
-            return Err(NetcidrError::CidrBlockHasActiveAllocations(id.to_string()));
-        }
-
-        // Delete released allocations' tags, then allocations, then cidr_block
-        conn.execute(
-            "DELETE FROM allocation_tags WHERE allocation_id IN (SELECT id FROM allocations WHERE cidr_block_id = ?1 AND tenant_id = ?2)",
-            params![id, tenant_id],
-        ).map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        conn.execute(
-            "DELETE FROM allocations WHERE cidr_block_id = ?1 AND tenant_id = ?2",
-            params![id, tenant_id],
-        )
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        let deleted = conn
-            .execute(
-                "DELETE FROM cidr_blocks WHERE id = ?1 AND tenant_id = ?2",
-                params![id, tenant_id],
-            )
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        if deleted == 0 {
-            return Err(NetcidrError::CidrBlockNotFound(id.to_string()));
-        }
-        Ok(())
+        read_cidr_blocks(&conn, tenant_id, limit, offset)
     }
 
     // --- allocations ---
-
-    async fn create_allocation(
-        &self,
-        tenant_id: &str,
-        input: &CreateAllocation,
-    ) -> Result<Allocation> {
-        let conn = self.conn()?;
-        let id = uuid::Uuid::new_v4().to_string();
-        let now = Self::now();
-        let status = input
-            .status
-            .as_ref()
-            .unwrap_or(&AllocationStatus::Active)
-            .to_string();
-
-        let (network, broadcast, prefix, total, _ip_version) = parse_cidr_metadata(&input.cidr)?;
-
-        let expires_at = input
-            .ttl_seconds
-            .map(|ttl| (Utc::now() + chrono::Duration::seconds(ttl as i64)).to_rfc3339());
-
-        // Application-level cross-tenant invariant: confirm the parent
-        // cidr_block belongs to this tenant. Returning NotFound (not Forbidden)
-        // disguises cross-tenant references as missing rows. The DB trigger
-        // is belt-and-suspenders.
-        let cidr_block_in_tenant: bool = conn
-            .query_row(
-                "SELECT COUNT(*) > 0 FROM cidr_blocks WHERE id = ?1 AND tenant_id = ?2",
-                params![input.cidr_block_id, tenant_id],
-                |row| row.get(0),
-            )
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        if !cidr_block_in_tenant {
-            return Err(NetcidrError::CidrBlockNotFound(input.cidr_block_id.clone()));
-        }
-
-        conn.execute(
-            "INSERT INTO allocations (id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, expires_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
-            params![
-                id, tenant_id, input.cidr_block_id, input.cidr, network, broadcast, prefix,
-                total.to_string(),
-                input.resource_id, input.resource_type, input.name, input.description,
-                input.environment, input.owner, status, input.parent_allocation_id, now, now,
-                expires_at
-            ],
-        ).map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        // Insert tags
-        if let Some(ref tags) = input.tags {
-            for tag in tags {
-                conn.execute(
-                    "INSERT INTO allocation_tags (allocation_id, tenant_id, key, value) VALUES (?1, ?2, ?3, ?4)",
-                    params![id, tenant_id, tag.key, tag.value],
-                )
-                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-            }
-        }
-
-        let tags = input.tags.clone().unwrap_or_default();
-        Ok(Allocation {
-            id,
-            tenant_id: tenant_id.to_string(),
-            cidr_block_id: input.cidr_block_id.clone(),
-            cidr: input.cidr.clone(),
-            network_address: network,
-            broadcast_address: broadcast,
-            prefix_length: prefix,
-            total_hosts: total,
-            status: input.status.clone().unwrap_or(AllocationStatus::Active),
-            resource_id: input.resource_id.clone(),
-            resource_type: input.resource_type.clone(),
-            name: input.name.clone(),
-            description: input.description.clone(),
-            environment: input.environment.clone(),
-            owner: input.owner.clone(),
-            parent_allocation_id: input.parent_allocation_id.clone(),
-            tags,
-            created_at: now.clone(),
-            updated_at: now,
-            released_at: None,
-            expires_at,
-        })
-    }
 
     async fn get_allocation(&self, tenant_id: &str, id: &str) -> Result<Allocation> {
         let conn = self.conn()?;
@@ -1667,6 +1545,85 @@ mod tests {
 
     const TEST_TENANT: &str = "test@example.com";
 
+    /// Seed rows straight through `transact`, without `IpamOps`'s rules —
+    /// what the store's old create/delete methods did.
+    trait Seed {
+        async fn create_cidr_block(
+            &self,
+            tenant_id: &str,
+            input: &CreateCidrBlock,
+        ) -> Result<CidrBlock>;
+        async fn create_allocation(
+            &self,
+            tenant_id: &str,
+            input: &CreateAllocation,
+        ) -> Result<Allocation>;
+        async fn delete_cidr_block(&self, tenant_id: &str, id: &str) -> Result<()>;
+    }
+
+    async fn commit(store: &SqliteStore, tenant_id: &str, write: Write) -> Result<()> {
+        store
+            .transact(TxUnit {
+                scope: crate::ipam::store::LockScope::Tenant {
+                    tenant_id: tenant_id.to_string(),
+                },
+                reads: vec![],
+                idempotency: None,
+                decide: Box::new(move |_| {
+                    Ok(crate::ipam::store::Plan {
+                        writes: vec![write],
+                        ..Default::default()
+                    })
+                }),
+            })
+            .await
+            .map(|_| ())
+    }
+
+    impl Seed for SqliteStore {
+        async fn create_cidr_block(
+            &self,
+            tenant_id: &str,
+            input: &CreateCidrBlock,
+        ) -> Result<CidrBlock> {
+            let block = CidrBlock::from_input(
+                tenant_id,
+                input,
+                uuid::Uuid::new_v4().to_string(),
+                Utc::now(),
+            )?;
+            commit(self, tenant_id, Write::InsertCidrBlock(block.clone())).await?;
+            Ok(block)
+        }
+
+        async fn create_allocation(
+            &self,
+            tenant_id: &str,
+            input: &CreateAllocation,
+        ) -> Result<Allocation> {
+            let alloc = Allocation::from_input(
+                tenant_id,
+                input,
+                uuid::Uuid::new_v4().to_string(),
+                Utc::now(),
+            )?;
+            commit(self, tenant_id, Write::InsertAllocation(alloc.clone())).await?;
+            Ok(alloc)
+        }
+
+        async fn delete_cidr_block(&self, tenant_id: &str, id: &str) -> Result<()> {
+            commit(
+                self,
+                tenant_id,
+                Write::DeleteCidrBlock {
+                    tenant_id: tenant_id.to_string(),
+                    id: id.to_string(),
+                },
+            )
+            .await
+        }
+    }
+
     async fn test_store() -> SqliteStore {
         let store = SqliteStore::in_memory().unwrap();
         store.initialize().await.unwrap();
@@ -1979,7 +1936,9 @@ mod tests {
             .await
             .unwrap();
 
-        let err = store
+        // The rule lives in the operations layer, which deletes atomically
+        // under the block's Lock Scope.
+        let err = crate::ipam::operations::IpamOps::new(std::sync::Arc::new(store))
             .delete_cidr_block(TEST_TENANT, &sn.id)
             .await
             .unwrap_err();

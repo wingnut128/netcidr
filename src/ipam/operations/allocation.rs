@@ -5,8 +5,6 @@
 //! derived network metadata, TTL expiry, and status transitions. The
 //! adapters only persist the rows these decisions produce.
 
-use chrono::Duration;
-
 use super::{
     IpRange, find_free_blocks, parse_range, range_contains, ranges_overlap,
     validate_same_ip_version,
@@ -19,7 +17,6 @@ use crate::ipam::models::{
 use crate::ipam::mutation::{
     AuditFact, Change, DecideCtx, Decision, Handle, Mutation, ReadSet, Snapshot,
 };
-use crate::ipam::parse_cidr_metadata;
 use crate::ipam::store::{LockScope, Write};
 
 /// Allocations that occupy address space.
@@ -65,37 +62,14 @@ fn ensure_no_overlap(live: &[Allocation], candidate: &IpRange, candidate_cidr: &
     Ok(())
 }
 
-/// A brand-new allocation row: the id, timestamps, derived network fields,
-/// and TTL expiry are all decided here.
-fn new_allocation(tenant_id: &str, input: &CreateAllocation, cx: &DecideCtx) -> Result<Allocation> {
-    let (network, broadcast, prefix, total, _ip_version) = parse_cidr_metadata(&input.cidr)?;
-    let now = cx.now();
-    let timestamp = now.to_rfc3339();
-    Ok(Allocation {
-        id: cx.new_id(),
-        tenant_id: tenant_id.to_string(),
-        cidr_block_id: input.cidr_block_id.clone(),
-        cidr: input.cidr.clone(),
-        network_address: network,
-        broadcast_address: broadcast,
-        prefix_length: prefix,
-        total_hosts: total,
-        status: input.status.clone().unwrap_or(AllocationStatus::Active),
-        resource_id: input.resource_id.clone(),
-        resource_type: input.resource_type.clone(),
-        name: input.name.clone(),
-        description: input.description.clone(),
-        environment: input.environment.clone(),
-        owner: input.owner.clone(),
-        parent_allocation_id: input.parent_allocation_id.clone(),
-        tags: input.tags.clone().unwrap_or_default(),
-        created_at: timestamp.clone(),
-        updated_at: timestamp,
-        released_at: None,
-        expires_at: input
-            .ttl_seconds
-            .map(|ttl| (now + Duration::seconds(ttl as i64)).to_rfc3339()),
-    })
+/// A brand-new allocation row, with its id and timestamps from the decision
+/// context.
+pub(super) fn new_allocation(
+    tenant_id: &str,
+    input: &CreateAllocation,
+    cx: &DecideCtx,
+) -> Result<Allocation> {
+    Allocation::from_input(tenant_id, input, cx.new_id(), cx.now())
 }
 
 fn insert(alloc: &Allocation) -> Change {
@@ -478,7 +452,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use chrono::{DateTime, TimeZone, Utc};
+    use chrono::{DateTime, Duration, TimeZone, Utc};
 
     use super::*;
     use crate::audit_context::AuditContext;

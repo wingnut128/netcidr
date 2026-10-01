@@ -11,6 +11,7 @@ use netcidr::error::NetcidrError;
 use netcidr::ipam::models::*;
 use netcidr::ipam::sqlite::SqliteStore;
 use netcidr::ipam::store::IpamStore;
+use store_support::Seed;
 use store_support::sqlite_memory_store as sqlite_store;
 
 const TEST_TENANT: &str = "test@example.com";
@@ -132,9 +133,8 @@ macro_rules! store_contract_tests {
         }
 
         #[tokio::test]
-        async fn contract_cidr_block_delete_with_active_allocations_fails() {
+        async fn contract_delete_cidr_block_removes_its_allocations_and_tags() {
             let store = $factory().await;
-
             let sn = store
                 .create_cidr_block(
                     TEST_TENANT,
@@ -146,14 +146,13 @@ macro_rules! store_contract_tests {
                 )
                 .await
                 .unwrap();
-
-            store
+            let alloc = store
                 .create_allocation(
                     TEST_TENANT,
                     &CreateAllocation {
                         cidr_block_id: sn.id.clone(),
                         cidr: "10.0.0.0/24".to_string(),
-                        status: None,
+                        status: Some(AllocationStatus::Released),
                         resource_id: None,
                         resource_type: None,
                         name: None,
@@ -161,22 +160,31 @@ macro_rules! store_contract_tests {
                         environment: None,
                         owner: None,
                         parent_allocation_id: None,
-                        tags: None,
+                        tags: Some(vec![Tag {
+                            key: "k".to_string(),
+                            value: "v".to_string(),
+                        }]),
                         ttl_seconds: None,
                     },
                 )
                 .await
                 .unwrap();
 
-            let err = store
-                .delete_cidr_block(TEST_TENANT, &sn.id)
-                .await
-                .unwrap_err();
-            assert!(
-                matches!(err, NetcidrError::CidrBlockHasActiveAllocations(_)),
-                "expected CidrBlockHasActiveAllocations, got: {:?}",
-                err
-            );
+            store.delete_cidr_block(TEST_TENANT, &sn.id).await.unwrap();
+
+            assert!(matches!(
+                store.get_cidr_block(TEST_TENANT, &sn.id).await,
+                Err(NetcidrError::CidrBlockNotFound(_))
+            ));
+            assert!(matches!(
+                store.get_allocation(TEST_TENANT, &alloc.id).await,
+                Err(NetcidrError::AllocationNotFound(_))
+            ));
+            // Deleting again finds nothing.
+            assert!(matches!(
+                store.delete_cidr_block(TEST_TENANT, &sn.id).await,
+                Err(NetcidrError::CidrBlockNotFound(_))
+            ));
         }
 
         #[tokio::test]
