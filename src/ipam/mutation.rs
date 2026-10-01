@@ -82,6 +82,16 @@ impl DecideCtx {
         &self.caller
     }
 
+    /// Who is making the change, for `*_by` columns and history rows: the
+    /// caller's email, else their subject, else `"cli"`.
+    pub fn actor(&self) -> String {
+        self.caller
+            .caller_email
+            .clone()
+            .or_else(|| self.caller.caller_sub.clone())
+            .unwrap_or_else(|| "cli".to_string())
+    }
+
     pub fn new_id(&self) -> String {
         self.ids.new_id()
     }
@@ -763,5 +773,20 @@ mod tests {
         .into_entry(TENANT, &cx);
         assert_eq!(entry.auth_method, "oidc");
         assert_eq!(entry.caller_sub, None);
+    }
+
+    #[test]
+    fn the_actor_is_the_callers_email_then_subject_then_cli() {
+        let cx = |email: Option<&str>, sub: Option<&str>| {
+            let caller = AuditContext {
+                caller_email: email.map(str::to_string),
+                caller_sub: sub.map(str::to_string),
+                ..AuditContext::default()
+            };
+            DecideCtx::new(noon(), caller, Arc::new(UuidIds))
+        };
+        assert_eq!(cx(Some("a@x"), Some("sub-1")).actor(), "a@x");
+        assert_eq!(cx(None, Some("sub-1")).actor(), "sub-1");
+        assert_eq!(cx(None, None).actor(), "cli");
     }
 }
