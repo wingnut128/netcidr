@@ -482,6 +482,10 @@ pub enum IpamCommands {
         cidr_block_id: String,
     },
 
+    /// Release allocations whose TTL has passed (`--ttl`). A running
+    /// `netcidr serve` also does this on its own every few minutes.
+    Reap,
+
     /// List free blocks in a CIDR block
     FreeBlocks {
         /// CIDR block ID

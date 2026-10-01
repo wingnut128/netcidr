@@ -507,6 +507,40 @@ async fn test_ipam_audit_log() {
 }
 
 #[tokio::test]
+async fn test_ipam_reap_releases_expired_reservations() {
+    let app = ipam_app().await;
+    let (_, block) = req(
+        app.clone(),
+        "POST",
+        "/ipam/cidr-blocks",
+        Some(r#"{"cidr":"10.0.0.0/8"}"#),
+    )
+    .await;
+    let block_id = block["id"].as_str().unwrap();
+    let (status, _) = req(
+        app.clone(),
+        "POST",
+        &format!("/ipam/cidr-blocks/{block_id}/allocate-specific"),
+        Some(r#"{"cidr":"10.0.1.0/24","status":"reserved","ttl_seconds":1}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    // Not due yet.
+    let (status, json) = req(app.clone(), "POST", "/ipam/reap", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["released"], 0);
+
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let (status, json) = req(app.clone(), "POST", "/ipam/reap", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["released"], 1);
+
+    let (_, audit) = req(app.clone(), "GET", "/ipam/audit?action=expire", None).await;
+    assert_eq!(audit["count"], 1);
+}
+
+#[tokio::test]
 async fn test_ipam_audit_caller_email_and_pat_filters() {
     let app = ipam_app().await;
 

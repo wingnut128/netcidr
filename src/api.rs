@@ -62,7 +62,8 @@ use crate::ipam::models::{
     Allocation, AllocationList, AllocationStatus, AuditEntry, AuditList, ChangeKind, CidrBlock,
     CidrBlockList, CreateCidrBlock, CreateHostnamePointer, FreeBlock, FreeBlocksReport,
     HostnamePointer, HostnamePointerHistoryEntry, HostnamePointerHistoryList, HostnamePointerList,
-    Tag, UpdateAllocation, UpsertUserRequest, UserList, UserRecord, UserStatus, UtilizationReport,
+    ReapResult, Tag, UpdateAllocation, UpsertUserRequest, UserList, UserRecord, UserStatus,
+    UtilizationReport,
 };
 #[cfg(feature = "swagger")]
 use crate::ipam_api::{AllocateSpecificRequest, AutoAllocateBody, IpamErrorResponse, TagsBody};
@@ -139,6 +140,7 @@ impl Modify for SecurityAddon {
         crate::ipam_api::ipam_find_ip,
         crate::ipam_api::ipam_find_resource,
         crate::ipam_api::ipam_query_audit,
+        crate::ipam_api::ipam_reap_expired,
         crate::ipam_api::ipam_set_tags,
         crate::ipam_api::ipam_set_hostname,
         crate::ipam_api::ipam_list_hostnames,
@@ -162,7 +164,7 @@ impl Modify for SecurityAddon {
             crate::ipam::models::PersonalAccessTokenSummary,
             CidrBlock, CidrBlockList, CreateCidrBlock, Allocation, AllocationList,
             AllocationStatus, Tag, UpdateAllocation, AllocateSpecificRequest,
-            AutoAllocateBody, TagsBody, AuditEntry, AuditList, UtilizationReport,
+            AutoAllocateBody, TagsBody, AuditEntry, AuditList, ReapResult, UtilizationReport,
             FreeBlock, FreeBlocksReport, IpamErrorResponse,
             HostnamePointer, CreateHostnamePointer, HostnamePointerList,
             HostnamePointerHistoryEntry, HostnamePointerHistoryList, ChangeKind,

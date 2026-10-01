@@ -334,6 +334,14 @@ pub struct StatusBreakdown {
     pub released_count: usize,
 }
 
+/// Result of expiring one tenant's due allocations (`POST /ipam/reap`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
+pub struct ReapResult {
+    /// Allocations released because their `expires_at` had passed.
+    pub released: usize,
+}
+
 /// What one expiry sweep did across every tenant.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SweepReport {

@@ -181,6 +181,12 @@ impl TextOutput for FreeBlocksReport {
     }
 }
 
+impl TextOutput for ReapResult {
+    fn to_text(&self) -> String {
+        format!("Released {} expired allocation(s)\n", self.released)
+    }
+}
+
 impl TextOutput for AuditList {
     fn to_text(&self) -> String {
         let mut out = String::new();
@@ -350,6 +356,16 @@ impl CsvOutput for FreeBlocksReport {
             wtr.write_record([&block.cidr, &block.size.to_string()])
                 .map_err(csv_err)?;
         }
+        finish_csv(wtr)
+    }
+}
+
+impl CsvOutput for ReapResult {
+    fn to_csv(&self) -> Result<String> {
+        let mut wtr = csv::Writer::from_writer(Vec::new());
+        wtr.write_record(["released"]).map_err(csv_err)?;
+        wtr.write_record([self.released.to_string()])
+            .map_err(csv_err)?;
         finish_csv(wtr)
     }
 }

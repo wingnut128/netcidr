@@ -604,6 +604,11 @@ impl HttpIpamClient {
         .await
     }
 
+    /// Release the caller's tenant's allocations whose TTL has passed.
+    pub async fn reap_expired(&self) -> Result<ReapResult> {
+        Self::send_json(self.client.post(self.seg_url(&["reap"])?)).await
+    }
+
     /// Query the audit log. The endpoint takes a `limit` but no offset, so
     /// this is always a single request.
     pub async fn query_audit(&self, filter: &AuditFilter) -> Result<Vec<AuditEntry>> {
@@ -1069,6 +1074,21 @@ pub(crate) mod tests {
         assert_eq!(
             req.body,
             serde_json::json!({"tags": [{"key": "team", "value": "platform"}]})
+        );
+    }
+
+    #[tokio::test]
+    async fn reap_expired_posts_and_returns_the_count() {
+        let (base, seen) = mock_any(200, serde_json::json!({"released": 3})).await;
+        let client = HttpIpamClient::new(&base, None).unwrap();
+        assert_eq!(
+            client.reap_expired().await.unwrap(),
+            ReapResult { released: 3 }
+        );
+        let req = only(&seen);
+        assert_eq!(
+            (req.method.as_str(), req.path.as_str()),
+            ("POST", "/ipam/reap")
         );
     }
 

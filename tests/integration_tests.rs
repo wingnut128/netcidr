@@ -1436,3 +1436,40 @@ fn test_completions_invalid_shell() {
     assert!(!success);
     assert!(stderr.contains("invalid value"));
 }
+
+#[test]
+fn test_ipam_reap_releases_expired_reservations() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("reap.db");
+    let db = db_path.to_str().unwrap();
+
+    let (stdout, _, _) = run_ipam(db, &["cidr-block", "create", "10.0.0.0/16"]);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let block_id = json["id"].as_str().unwrap().to_string();
+    let (_, stderr, success) = run_ipam(
+        db,
+        &[
+            "allocate",
+            &block_id,
+            "10.0.1.0/24",
+            "--status",
+            "reserved",
+            "--ttl",
+            "1",
+        ],
+    );
+    assert!(success, "allocate failed: {stderr}");
+
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let (stdout, stderr, success) = run_ipam(db, &["reap"]);
+    assert!(success, "reap failed: {stderr}");
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(json["released"], 1);
+
+    let (stdout, _, success) = run_ipam(db, &["reap", "--format", "text"]);
+    assert!(success);
+    assert!(
+        stdout.contains("Released 0 expired allocation(s)"),
+        "{stdout}"
+    );
+}
