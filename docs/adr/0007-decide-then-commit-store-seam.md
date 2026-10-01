@@ -74,6 +74,10 @@ adapters.
 6. **Background writes stay outside units.** `pat_touch_last_used` and the
    idempotency/PAT reapers remain plain, unaudited store methods.
    `reap_expired` changes allocation state, so it is a unit and is audited.
+   The expiry sweep (`IpamOps::sweep_expired`) runs both kinds on a
+   schedule: one audited unit per cidr block with expired allocations,
+   then the plain reapers. `netcidr serve` runs it on a timer; the Lambda
+   runs it when invoked by an EventBridge Scheduled Event.
 
 ## Considered and rejected: a transaction handle
 
