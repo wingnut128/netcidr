@@ -301,9 +301,7 @@ fn result_to_string<T: serde::Serialize>(result: crate::error::Result<T>) -> Str
         Ok(val) => serde_json::to_string_pretty(&val).unwrap_or_else(|e| format!("Error: {e}")),
         Err(e) => {
             let p = crate::error_presenter::present(&e);
-            if p.log_level == crate::error_presenter::LogLevel::Error {
-                tracing::error!(error = %e, "mcp tool failed");
-            }
+            p.log(&e, "mcp tool failed");
             format!("Error: {}", p.client_msg)
         }
     }

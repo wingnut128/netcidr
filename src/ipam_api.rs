@@ -14,7 +14,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::authorization::{RequireAdmin, RequireAllocator, RequirePlatformAdmin, RequireReader};
 use crate::error::NetcidrError;
-use crate::error_presenter::{LogLevel, present};
+use crate::error_presenter::present;
 use crate::ipam::idempotency;
 use crate::ipam::models::*;
 use crate::ipam::operations::{IdempotentOutcome, IpamOps};
@@ -26,9 +26,7 @@ use crate::ipam::operations::{IdempotentOutcome, IpamOps};
 
 pub(crate) fn error_to_status_value(err: NetcidrError) -> (StatusCode, serde_json::Value) {
     let p = present(&err);
-    if p.log_level == LogLevel::Error {
-        tracing::error!(error = %err, "ipam request failed");
-    }
+    p.log(&err, "ipam request failed");
     let status = StatusCode::from_u16(p.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     (status, serde_json::json!({ "error": p.client_msg }))
 }
