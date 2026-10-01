@@ -10,8 +10,8 @@ use sqlx::{PgExecutor, PgPool, Row};
 use crate::error::{NetcidrError, Result};
 use crate::ipam::config::PostgresConfig;
 use crate::ipam::models::*;
+use crate::ipam::read_total_hosts;
 use crate::ipam::store::{DEFAULT_LOCK_TIMEOUT, IpamStore, Loaded, Read, Rows, TxUnit, Write};
-use crate::ipam::{parse_cidr_metadata, read_total_hosts};
 
 pub struct PostgresStore {
     pool: PgPool,
@@ -290,6 +290,97 @@ async fn insert_idempotency<'e>(ex: impl PgExecutor<'e>, record: &IdempotencyRec
     Ok(())
 }
 
+async fn read_cidr_blocks<'e>(
+    ex: impl PgExecutor<'e>,
+    tenant_id: &str,
+    limit: Option<u32>,
+    offset: Option<u32>,
+) -> Result<Vec<CidrBlock>> {
+    let mut builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+        "SELECT id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM cidr_blocks WHERE tenant_id = ",
+    );
+    builder.push_bind(tenant_id);
+    builder.push(" ORDER BY created_at");
+    builder.push(crate::ipam::store::limit_offset_clause(limit, offset));
+    let rows = builder.build().fetch_all(ex).await.map_err(db_err)?;
+    Ok(rows
+        .iter()
+        .map(|row| {
+            let total_hosts_text: String = row.get("total_hosts");
+            let prefix_length: i16 = row.get("prefix_length");
+            let ip_version: i16 = row.get("ip_version");
+            CidrBlock {
+                id: row.get("id"),
+                tenant_id: row.get("tenant_id"),
+                cidr: row.get("cidr"),
+                network_address: row.get("network_address"),
+                broadcast_address: row.get("broadcast_address"),
+                prefix_length: prefix_length as u8,
+                total_hosts: read_total_hosts(Some(total_hosts_text), 0),
+                name: row.get("name"),
+                description: row.get("description"),
+                ip_version: ip_version as u8,
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+            }
+        })
+        .collect())
+}
+
+async fn insert_cidr_block(conn: &mut sqlx::PgConnection, b: &CidrBlock) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO cidr_blocks (id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+    )
+    .bind(&b.id)
+    .bind(&b.tenant_id)
+    .bind(&b.cidr)
+    .bind(&b.network_address)
+    .bind(&b.broadcast_address)
+    .bind(b.prefix_length as i16)
+    .bind(b.total_hosts.to_string())
+    .bind(&b.name)
+    .bind(&b.description)
+    .bind(b.ip_version as i16)
+    .bind(&b.created_at)
+    .bind(&b.updated_at)
+    .execute(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
+async fn delete_cidr_block_rows(
+    conn: &mut sqlx::PgConnection,
+    tenant_id: &str,
+    id: &str,
+) -> Result<()> {
+    sqlx::query(
+        "DELETE FROM allocation_tags WHERE allocation_id IN (SELECT id FROM allocations WHERE cidr_block_id = $1 AND tenant_id = $2)",
+    )
+    .bind(id)
+    .bind(tenant_id)
+    .execute(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    sqlx::query("DELETE FROM allocations WHERE cidr_block_id = $1 AND tenant_id = $2")
+        .bind(id)
+        .bind(tenant_id)
+        .execute(&mut *conn)
+        .await
+        .map_err(db_err)?;
+    let result = sqlx::query("DELETE FROM cidr_blocks WHERE id = $1 AND tenant_id = $2")
+        .bind(id)
+        .bind(tenant_id)
+        .execute(&mut *conn)
+        .await
+        .map_err(db_err)?;
+    if result.rows_affected() == 0 {
+        return Err(NetcidrError::CidrBlockNotFound(id.to_string()));
+    }
+    Ok(())
+}
+
 async fn read_tags(
     conn: &mut sqlx::PgConnection,
     tenant_id: &str,
@@ -442,6 +533,9 @@ async fn read_one(conn: &mut sqlx::PgConnection, read: &Read) -> Result<Rows> {
         Read::CidrBlock { tenant_id, id } => {
             Ok(Rows::CidrBlock(read_cidr_block(conn, tenant_id, id).await?))
         }
+        Read::CidrBlocks { tenant_id } => Ok(Rows::CidrBlocks(
+            read_cidr_blocks(conn, tenant_id, None, None).await?,
+        )),
         Read::Allocation { tenant_id, id } => Ok(Rows::Allocation(
             read_allocation(conn, tenant_id, id).await?,
         )),
@@ -457,6 +551,10 @@ async fn read_one(conn: &mut sqlx::PgConnection, read: &Read) -> Result<Rows> {
 
 async fn apply_write(conn: &mut sqlx::PgConnection, write: &Write) -> Result<()> {
     match write {
+        Write::InsertCidrBlock(b) => insert_cidr_block(conn, b).await,
+        Write::DeleteCidrBlock { tenant_id, id } => {
+            delete_cidr_block_rows(conn, tenant_id, id).await
+        }
         Write::InsertAllocation(a) => insert_allocation(conn, a).await,
         Write::ReplaceAllocation(a) => replace_allocation(conn, a).await,
     }
@@ -555,51 +653,6 @@ impl IpamStore for PostgresStore {
         Ok(plan.output_json)
     }
 
-    async fn create_cidr_block(
-        &self,
-        tenant_id: &str,
-        input: &CreateCidrBlock,
-    ) -> Result<CidrBlock> {
-        let id = uuid::Uuid::new_v4().to_string();
-        let now = Self::now();
-        let (network, broadcast, prefix, total, ip_version) = parse_cidr_metadata(&input.cidr)?;
-
-        sqlx::query(
-            "INSERT INTO cidr_blocks (id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
-        )
-        .bind(&id)
-        .bind(tenant_id)
-        .bind(&input.cidr)
-        .bind(&network)
-        .bind(&broadcast)
-        .bind(prefix as i16)
-        .bind(total.to_string())
-        .bind(&input.name)
-        .bind(&input.description)
-        .bind(ip_version as i16)
-        .bind(&now)
-        .bind(&now)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        Ok(CidrBlock {
-            id,
-            tenant_id: tenant_id.to_string(),
-            cidr: input.cidr.clone(),
-            network_address: network,
-            broadcast_address: broadcast,
-            prefix_length: prefix,
-            total_hosts: total,
-            name: input.name.clone(),
-            description: input.description.clone(),
-            ip_version,
-            created_at: now.clone(),
-            updated_at: now,
-        })
-    }
-
     async fn get_cidr_block(&self, tenant_id: &str, id: &str) -> Result<CidrBlock> {
         read_cidr_block(&self.pool, tenant_id, id)
             .await?
@@ -616,203 +669,10 @@ impl IpamStore for PostgresStore {
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Vec<CidrBlock>> {
-        let mut builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
-            "SELECT id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM cidr_blocks WHERE tenant_id = ",
-        );
-        builder.push_bind(tenant_id);
-        builder.push(" ORDER BY created_at");
-        builder.push(crate::ipam::store::limit_offset_clause(limit, offset));
-        let rows = builder
-            .build()
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        Ok(rows
-            .iter()
-            .map(|row| {
-                let total_hosts_text: String = row.get("total_hosts");
-                let prefix_length: i16 = row.get("prefix_length");
-                let ip_version: i16 = row.get("ip_version");
-                CidrBlock {
-                    id: row.get("id"),
-                    tenant_id: row.get("tenant_id"),
-                    cidr: row.get("cidr"),
-                    network_address: row.get("network_address"),
-                    broadcast_address: row.get("broadcast_address"),
-                    prefix_length: prefix_length as u8,
-                    total_hosts: read_total_hosts(Some(total_hosts_text), 0),
-                    name: row.get("name"),
-                    description: row.get("description"),
-                    ip_version: ip_version as u8,
-                    created_at: row.get("created_at"),
-                    updated_at: row.get("updated_at"),
-                }
-            })
-            .collect())
-    }
-
-    async fn delete_cidr_block(&self, tenant_id: &str, id: &str) -> Result<()> {
-        // Verify cidr_block exists in this tenant; cross-tenant ⇒ NotFound.
-        let exists_row =
-            sqlx::query("SELECT COUNT(*) as cnt FROM cidr_blocks WHERE id = $1 AND tenant_id = $2")
-                .bind(id)
-                .bind(tenant_id)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        let exists_cnt: i64 = exists_row.get("cnt");
-        if exists_cnt == 0 {
-            return Err(NetcidrError::CidrBlockNotFound(id.to_string()));
-        }
-
-        let row = sqlx::query(
-            "SELECT COUNT(*) as cnt FROM allocations WHERE cidr_block_id = $1 AND tenant_id = $2 AND status != 'released'",
-        )
-        .bind(id)
-        .bind(tenant_id)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        let active_count: i64 = row.get("cnt");
-
-        if active_count > 0 {
-            return Err(NetcidrError::CidrBlockHasActiveAllocations(id.to_string()));
-        }
-
-        // Delete released allocations' tags, then allocations, then cidr_block
-        sqlx::query(
-            "DELETE FROM allocation_tags WHERE allocation_id IN (SELECT id FROM allocations WHERE cidr_block_id = $1 AND tenant_id = $2)",
-        )
-        .bind(id)
-        .bind(tenant_id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        sqlx::query("DELETE FROM allocations WHERE cidr_block_id = $1 AND tenant_id = $2")
-            .bind(id)
-            .bind(tenant_id)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        let result = sqlx::query("DELETE FROM cidr_blocks WHERE id = $1 AND tenant_id = $2")
-            .bind(id)
-            .bind(tenant_id)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        if result.rows_affected() == 0 {
-            return Err(NetcidrError::CidrBlockNotFound(id.to_string()));
-        }
-        Ok(())
+        read_cidr_blocks(&self.pool, tenant_id, limit, offset).await
     }
 
     // --- allocations ---
-
-    async fn create_allocation(
-        &self,
-        tenant_id: &str,
-        input: &CreateAllocation,
-    ) -> Result<Allocation> {
-        let id = uuid::Uuid::new_v4().to_string();
-        let now = Self::now();
-        let status = input
-            .status
-            .as_ref()
-            .unwrap_or(&AllocationStatus::Active)
-            .to_string();
-        let (network, broadcast, prefix, total, _ip_version) = parse_cidr_metadata(&input.cidr)?;
-
-        let expires_at = input
-            .ttl_seconds
-            .map(|ttl| (Utc::now() + chrono::Duration::seconds(ttl as i64)).to_rfc3339());
-
-        // Application-level cross-tenant invariant: confirm the parent
-        // cidr_block belongs to this tenant. NotFound (not Forbidden) hides
-        // existence. The DB trigger is belt-and-suspenders.
-        let cidr_block_row =
-            sqlx::query("SELECT COUNT(*) as cnt FROM cidr_blocks WHERE id = $1 AND tenant_id = $2")
-                .bind(&input.cidr_block_id)
-                .bind(tenant_id)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        let cidr_block_cnt: i64 = cidr_block_row.get("cnt");
-        if cidr_block_cnt == 0 {
-            return Err(NetcidrError::CidrBlockNotFound(input.cidr_block_id.clone()));
-        }
-
-        sqlx::query(
-            "INSERT INTO allocations (id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, expires_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)",
-        )
-        .bind(&id)
-        .bind(tenant_id)
-        .bind(&input.cidr_block_id)
-        .bind(&input.cidr)
-        .bind(&network)
-        .bind(&broadcast)
-        .bind(prefix as i16)
-        .bind(total.to_string())
-        .bind(&input.resource_id)
-        .bind(&input.resource_type)
-        .bind(&input.name)
-        .bind(&input.description)
-        .bind(&input.environment)
-        .bind(&input.owner)
-        .bind(&status)
-        .bind(&input.parent_allocation_id)
-        .bind(&now)
-        .bind(&now)
-        .bind(&expires_at)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        // Insert tags
-        if let Some(ref tags) = input.tags {
-            for tag in tags {
-                sqlx::query(
-                    "INSERT INTO allocation_tags (allocation_id, tenant_id, key, value) VALUES ($1, $2, $3, $4)",
-                )
-                .bind(&id)
-                .bind(tenant_id)
-                .bind(&tag.key)
-                .bind(&tag.value)
-                .execute(&self.pool)
-                .await
-                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-            }
-        }
-
-        let tags = input.tags.clone().unwrap_or_default();
-        Ok(Allocation {
-            id,
-            tenant_id: tenant_id.to_string(),
-            cidr_block_id: input.cidr_block_id.clone(),
-            cidr: input.cidr.clone(),
-            network_address: network,
-            broadcast_address: broadcast,
-            prefix_length: prefix,
-            total_hosts: total,
-            status: input.status.clone().unwrap_or(AllocationStatus::Active),
-            resource_id: input.resource_id.clone(),
-            resource_type: input.resource_type.clone(),
-            name: input.name.clone(),
-            description: input.description.clone(),
-            environment: input.environment.clone(),
-            owner: input.owner.clone(),
-            parent_allocation_id: input.parent_allocation_id.clone(),
-            tags,
-            created_at: now.clone(),
-            updated_at: now,
-            released_at: None,
-            expires_at,
-        })
-    }
 
     async fn get_allocation(&self, tenant_id: &str, id: &str) -> Result<Allocation> {
         let mut conn = self.pool.acquire().await.map_err(db_err)?;

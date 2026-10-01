@@ -10,6 +10,8 @@
 
 mod store_support;
 
+use store_support::Seed;
+
 use std::sync::Arc;
 
 use netcidr::ipam::models::*;

@@ -11,6 +11,7 @@ use crate::ipam::store::IpamStore;
 use crate::validation;
 
 mod allocation;
+mod cidr_block;
 
 /// Outcome of an idempotency-aware operation. Carries the produced
 /// value and whether it was freshly computed or replayed from the
@@ -119,31 +120,11 @@ impl IpamOps {
         validation::validate_cidr(&input.cidr)?;
         validation::validate_optional_text(&input.name, 0)?;
         validation::validate_optional_text(&input.description, 0)?;
-
-        let candidate = parse_range(&input.cidr)?;
-
-        // Check for overlap with existing CIDR blocks
-        let existing = self.store.list_cidr_blocks(tenant_id).await?;
-        for sn in &existing {
-            let existing_range = parse_range(&sn.cidr)?;
-            if ranges_overlap(&candidate, &existing_range) {
-                return Err(NetcidrError::AllocationConflict {
-                    existing: sn.cidr.clone(),
-                    candidate: input.cidr.clone(),
-                });
-            }
-        }
-
-        let cidr_block = self.store.create_cidr_block(tenant_id, input).await?;
-        self.audit(
-            tenant_id,
-            "create_cidr_block",
-            "cidr_block",
-            &cidr_block.id,
-            Some(&cidr_block.cidr),
-        )
-        .await?;
-        Ok(cidr_block)
+        let mutation = cidr_block::CreateCidrBlockMutation {
+            tenant_id: tenant_id.to_string(),
+            input: input.clone(),
+        };
+        Ok(self.run(tenant_id, mutation, None).await?.into_inner())
     }
 
     pub async fn get_cidr_block(&self, tenant_id: &str, id: &str) -> Result<CidrBlock> {
@@ -170,16 +151,11 @@ impl IpamOps {
 
     pub async fn delete_cidr_block(&self, tenant_id: &str, id: &str) -> Result<()> {
         validation::validate_identifier(id)?;
-        let sn = self.store.get_cidr_block(tenant_id, id).await?;
-        self.store.delete_cidr_block(tenant_id, id).await?;
-        self.audit(
-            tenant_id,
-            "delete_cidr_block",
-            "cidr_block",
-            id,
-            Some(&sn.cidr),
-        )
-        .await?;
+        let mutation = cidr_block::DeleteCidrBlockMutation {
+            tenant_id: tenant_id.to_string(),
+            id: id.to_string(),
+        };
+        self.run(tenant_id, mutation, None).await?;
         Ok(())
     }
 
@@ -764,91 +740,14 @@ impl IpamOps {
         })
     }
 
-    /// Import IPAM data from a dump. Fails if any cidr_blocks already exist.
+    /// Import IPAM data from a dump into an empty tenant, all-or-nothing.
+    /// Fails if any cidr_blocks already exist.
     pub async fn load(&self, tenant_id: &str, dump: &IpamDump) -> Result<(usize, usize)> {
-        // Check for existing data
-        let existing = self.store.list_cidr_blocks(tenant_id).await?;
-        if !existing.is_empty() {
-            return Err(NetcidrError::InvalidInput(
-                "cannot import into a non-empty store — existing CIDR blocks found".to_string(),
-            ));
-        }
-
-        let mut sn_count = 0;
-        let mut alloc_count = 0;
-
-        // Import cidr_blocks first (allocations depend on them)
-        for sn in &dump.cidr_blocks {
-            self.store
-                .create_cidr_block(
-                    tenant_id,
-                    &CreateCidrBlock {
-                        cidr: sn.cidr.clone(),
-                        name: sn.name.clone(),
-                        description: sn.description.clone(),
-                    },
-                )
-                .await?;
-            sn_count += 1;
-        }
-
-        // Build a mapping from old cidr_block CIDR -> new CIDR block ID
-        let new_cidr_blocks = self.store.list_cidr_blocks(tenant_id).await?;
-        let cidr_to_id: std::collections::HashMap<&str, &str> = new_cidr_blocks
-            .iter()
-            .map(|sn| (sn.cidr.as_str(), sn.id.as_str()))
-            .collect();
-
-        // Import allocations (skip parent_allocation_id for simplicity)
-        for alloc in &dump.allocations {
-            let new_sn_id = cidr_to_id
-                .get(
-                    // Find the cidr_block CIDR for this allocation's original cidr_block_id
-                    dump.cidr_blocks
-                        .iter()
-                        .find(|sn| sn.id == alloc.cidr_block_id)
-                        .map(|sn| sn.cidr.as_str())
-                        .ok_or_else(|| {
-                            NetcidrError::InvalidInput(format!(
-                                "allocation {} references unknown cidr_block {}",
-                                alloc.cidr, alloc.cidr_block_id
-                            ))
-                        })?,
-                )
-                .ok_or_else(|| {
-                    NetcidrError::InvalidInput(format!(
-                        "failed to map cidr_block for allocation {}",
-                        alloc.cidr
-                    ))
-                })?;
-
-            self.store
-                .create_allocation(
-                    tenant_id,
-                    &CreateAllocation {
-                        cidr_block_id: new_sn_id.to_string(),
-                        cidr: alloc.cidr.clone(),
-                        status: Some(alloc.status.clone()),
-                        resource_id: alloc.resource_id.clone(),
-                        resource_type: alloc.resource_type.clone(),
-                        name: alloc.name.clone(),
-                        description: alloc.description.clone(),
-                        environment: alloc.environment.clone(),
-                        owner: alloc.owner.clone(),
-                        parent_allocation_id: None,
-                        tags: if alloc.tags.is_empty() {
-                            None
-                        } else {
-                            Some(alloc.tags.clone())
-                        },
-                        ttl_seconds: None,
-                    },
-                )
-                .await?;
-            alloc_count += 1;
-        }
-
-        Ok((sn_count, alloc_count))
+        let mutation = cidr_block::LoadDump {
+            tenant_id: tenant_id.to_string(),
+            dump: dump.clone(),
+        };
+        Ok(self.run(tenant_id, mutation, None).await?.into_inner())
     }
 
     // -----------------------------------------------------------------------

@@ -39,12 +39,13 @@ pub const DEFAULT_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 /// transaction-scoped advisory lock on [`LockScope::key`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum LockScope {
-    /// One cidr block's allocations (allocate, update, release, reap, tags).
+    /// One cidr block and its allocations (allocate, update, release, reap,
+    /// tags, delete).
     CidrBlock {
         tenant_id: String,
         cidr_block_id: String,
     },
-    /// A tenant's set of cidr blocks (create, delete, load).
+    /// A tenant's set of cidr blocks (create, load).
     Tenant { tenant_id: String },
     /// The global user directory (upsert, delete, seed).
     UserDirectory,
@@ -85,6 +86,10 @@ pub enum Read {
         tenant_id: String,
         id: String,
     },
+    /// All of a tenant's cidr blocks, oldest first.
+    CidrBlocks {
+        tenant_id: String,
+    },
     /// One allocation, with its tags.
     Allocation {
         tenant_id: String,
@@ -106,6 +111,7 @@ pub enum Read {
 #[derive(Debug, Clone)]
 pub enum Rows {
     CidrBlock(Option<CidrBlock>),
+    CidrBlocks(Vec<CidrBlock>),
     Allocation(Option<Allocation>),
     Allocations(Vec<Allocation>),
 }
@@ -117,6 +123,11 @@ pub enum Rows {
 /// (#482–#487).
 #[derive(Debug, Clone)]
 pub enum Write {
+    /// Insert a new cidr block row.
+    InsertCidrBlock(CidrBlock),
+    /// Delete a cidr block together with its allocations and their tags,
+    /// matched by tenant and id.
+    DeleteCidrBlock { tenant_id: String, id: String },
     /// Insert a new allocation row and its tags.
     InsertAllocation(Allocation),
     /// Overwrite an existing allocation's mutable fields (status, resource,
@@ -201,11 +212,6 @@ pub trait IpamStore: Send + Sync {
     async fn transact(&self, unit: TxUnit) -> Result<String>;
 
     // --- cidr_blocks ---
-    async fn create_cidr_block(
-        &self,
-        tenant_id: &str,
-        input: &CreateCidrBlock,
-    ) -> Result<CidrBlock>;
     async fn get_cidr_block(&self, tenant_id: &str, id: &str) -> Result<CidrBlock>;
     async fn list_cidr_blocks(&self, tenant_id: &str) -> Result<Vec<CidrBlock>>;
     /// Like [`list_cidr_blocks`](Self::list_cidr_blocks) but with pagination for
@@ -216,14 +222,8 @@ pub trait IpamStore: Send + Sync {
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Vec<CidrBlock>>;
-    async fn delete_cidr_block(&self, tenant_id: &str, id: &str) -> Result<()>;
 
     // --- allocations ---
-    async fn create_allocation(
-        &self,
-        tenant_id: &str,
-        input: &CreateAllocation,
-    ) -> Result<Allocation>;
     async fn get_allocation(&self, tenant_id: &str, id: &str) -> Result<Allocation>;
     async fn list_allocations(
         &self,

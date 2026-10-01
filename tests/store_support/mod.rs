@@ -113,6 +113,108 @@ pub async fn open_sqlite_file(path: &str) -> SqliteStore {
     store
 }
 
+/// Test-only seeding: commit rows straight through `IpamStore::transact`,
+/// with none of `IpamOps`'s rules (no overlap, ownership, or delete checks).
+/// That is what the store's old `create_*`/`delete_cidr_block` methods did,
+/// so test setup written against them keeps working by importing `Seed`.
+#[allow(async_fn_in_trait)]
+pub trait Seed {
+    async fn create_cidr_block(
+        &self,
+        tenant_id: &str,
+        input: &netcidr::ipam::models::CreateCidrBlock,
+    ) -> netcidr::error::Result<netcidr::ipam::models::CidrBlock>;
+
+    async fn create_allocation(
+        &self,
+        tenant_id: &str,
+        input: &netcidr::ipam::models::CreateAllocation,
+    ) -> netcidr::error::Result<netcidr::ipam::models::Allocation>;
+
+    /// Delete a block and everything in it, without the active-allocation
+    /// check.
+    async fn delete_cidr_block(&self, tenant_id: &str, id: &str) -> netcidr::error::Result<()>;
+}
+
+impl<S: IpamStore + ?Sized> Seed for S {
+    async fn create_cidr_block(
+        &self,
+        tenant_id: &str,
+        input: &netcidr::ipam::models::CreateCidrBlock,
+    ) -> netcidr::error::Result<netcidr::ipam::models::CidrBlock> {
+        let block = netcidr::ipam::models::CidrBlock::from_input(
+            tenant_id,
+            input,
+            uuid::Uuid::new_v4().to_string(),
+            chrono::Utc::now(),
+        )?;
+        commit_writes(
+            self,
+            tenant_id,
+            vec![netcidr::ipam::store::Write::InsertCidrBlock(block.clone())],
+        )
+        .await?;
+        Ok(block)
+    }
+
+    async fn create_allocation(
+        &self,
+        tenant_id: &str,
+        input: &netcidr::ipam::models::CreateAllocation,
+    ) -> netcidr::error::Result<netcidr::ipam::models::Allocation> {
+        let alloc = netcidr::ipam::models::Allocation::from_input(
+            tenant_id,
+            input,
+            uuid::Uuid::new_v4().to_string(),
+            chrono::Utc::now(),
+        )?;
+        commit_writes(
+            self,
+            tenant_id,
+            vec![netcidr::ipam::store::Write::InsertAllocation(alloc.clone())],
+        )
+        .await?;
+        Ok(alloc)
+    }
+
+    async fn delete_cidr_block(&self, tenant_id: &str, id: &str) -> netcidr::error::Result<()> {
+        commit_writes(
+            self,
+            tenant_id,
+            vec![netcidr::ipam::store::Write::DeleteCidrBlock {
+                tenant_id: tenant_id.to_string(),
+                id: id.to_string(),
+            }],
+        )
+        .await
+    }
+}
+
+/// Commit `writes` as one unit under the tenant's scope, with no reads,
+/// audit rows, or idempotency record.
+pub async fn commit_writes<S: IpamStore + ?Sized>(
+    store: &S,
+    tenant_id: &str,
+    writes: Vec<netcidr::ipam::store::Write>,
+) -> netcidr::error::Result<()> {
+    store
+        .transact(netcidr::ipam::store::TxUnit {
+            scope: netcidr::ipam::store::LockScope::Tenant {
+                tenant_id: tenant_id.to_string(),
+            },
+            reads: vec![],
+            idempotency: None,
+            decide: Box::new(move |_| {
+                Ok(netcidr::ipam::store::Plan {
+                    writes,
+                    ..Default::default()
+                })
+            }),
+        })
+        .await
+        .map(|_| ())
+}
+
 #[cfg(feature = "ipam-postgres")]
 #[allow(unused_imports)]
 pub use pg::{open_postgres, postgres_store, postgres_store_short_timeout};
