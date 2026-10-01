@@ -396,6 +396,70 @@ mod cross_process {
         }
     }
 
+    /// Per round, each process creates a different but overlapping cidr
+    /// block at the same time. Exactly one may succeed.
+    pub async fn overlapping_blocks_have_one_winner(pair: Pair) {
+        for round in 0..ROUNDS {
+            let (a, b) = (Arc::clone(&pair.ops[0]), Arc::clone(&pair.ops[1]));
+            let wide = format!("10.{round}.0.0/16");
+            let narrow = format!("10.{round}.1.0/24");
+            let ha = tokio::spawn(async move {
+                a.create_cidr_block(
+                    TEST_TENANT,
+                    &CreateCidrBlock {
+                        cidr: wide,
+                        name: None,
+                        description: None,
+                    },
+                )
+                .await
+            });
+            let hb = tokio::spawn(async move {
+                b.create_cidr_block(
+                    TEST_TENANT,
+                    &CreateCidrBlock {
+                        cidr: narrow,
+                        name: None,
+                        description: None,
+                    },
+                )
+                .await
+            });
+            let mut wins = 0;
+            for r in [ha.await.unwrap(), hb.await.unwrap()] {
+                match r {
+                    Ok(_) => wins += 1,
+                    Err(NetcidrError::AllocationConflict { .. }) => {}
+                    Err(e) => panic!("round {round}: unexpected error: {e:?}"),
+                }
+            }
+            assert_eq!(wins, 1, "round {round}: {wins} overlapping blocks created");
+        }
+    }
+
+    /// Per round, one process deletes an empty block while the other
+    /// allocates into it. Both must never succeed: either the delete wins
+    /// and the allocation finds no block, or the allocation wins and the
+    /// delete sees an active allocation.
+    pub async fn delete_and_allocate_never_both_succeed(pair: Pair) {
+        for round in 0..ROUNDS {
+            let block_id = block(&pair.ops[0], &format!("10.{round}.0.0/16")).await;
+            let (a, b) = (Arc::clone(&pair.ops[0]), Arc::clone(&pair.ops[1]));
+            let (del_id, req) = (
+                block_id.clone(),
+                alloc_request(&block_id, &format!("10.{round}.1.0/24")),
+            );
+            let hd = tokio::spawn(async move { a.delete_cidr_block(TEST_TENANT, &del_id).await });
+            let ha = tokio::spawn(async move { b.allocate_specific(TEST_TENANT, &req).await });
+            let (deleted, allocated) = (hd.await.unwrap(), ha.await.unwrap());
+            match (&deleted, &allocated) {
+                (Ok(()), Err(NetcidrError::CidrBlockNotFound(_)))
+                | (Err(NetcidrError::CidrBlockHasActiveAllocations(_)), Ok(_)) => {}
+                other => panic!("round {round}: inconsistent outcome {other:?}"),
+            }
+        }
+    }
+
     macro_rules! cross_process_tests {
         ($pair:expr) => {
             #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -406,6 +470,16 @@ mod cross_process {
             #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
             async fn allocate_auto_never_overlaps() {
                 super::allocate_auto_never_overlaps($pair.await).await;
+            }
+
+            #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+            async fn overlapping_blocks_have_one_winner() {
+                super::overlapping_blocks_have_one_winner($pair.await).await;
+            }
+
+            #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+            async fn delete_and_allocate_never_both_succeed() {
+                super::delete_and_allocate_never_both_succeed($pair.await).await;
             }
 
             #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
