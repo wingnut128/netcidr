@@ -128,13 +128,14 @@ netcidr 2001:db8::/48                   # IPv6 prefix info
 netcidr split 10.0.0.0/8 -p 16 -n 10   # Generate 10 /16 subnets
 netcidr split 10.0.0.0/8 -p 16 --max   # Generate all possible /16 subnets
 
-# IPAM commands
-netcidr ipam cidr_block create 10.0.0.0/8 --name "Corp"
+# IPAM commands (local SQLite store only; `netcidr ipam` never talks to a remote API.
+# Remote access uses `netcidr login` / `netcidr token` / `netcidr mcp-serve --api-url`.)
+netcidr ipam cidr-block create 10.0.0.0/8 --name "Corp"
 netcidr ipam allocate <cidr_block-id> 10.0.1.0/24 --name "Web"
 netcidr ipam auto-allocate <cidr_block-id> -p 24 -n 3
 netcidr ipam utilization <cidr_block-id> --format text
 netcidr ipam find-ip 10.0.1.50
-netcidr ipam --db /path/to/db cidr_block list   # Custom DB path
+netcidr ipam --db /path/to/db cidr-block list   # Custom DB path
 ```
 
 Global options: `--format json|text|csv|yaml`, `--output <file>`
