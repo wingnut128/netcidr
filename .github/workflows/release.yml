@@ -124,4 +124,3 @@ jobs:
     uses: ./.github/workflows/publish-image.yml
     with:
       tag: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-    secrets: inherit

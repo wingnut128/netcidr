@@ -102,21 +102,32 @@ impl Drop for OtelGuard {
     }
 }
 
+/// Looks up a configuration variable by name. Production reads the process
+/// environment ([`process_env`]); tests pass a closure so they never have to
+/// mutate process-wide env, which is `unsafe` and races parallel tests.
+type EnvLookup<'a> = &'a dyn Fn(&str) -> Option<String>;
+
+fn process_env(key: &str) -> Option<String> {
+    std::env::var(key).ok()
+}
+
 /// Parse the parent-based sampler ratio from `OTEL_TRACES_SAMPLER_ARG`,
 /// clamped to `[0.0, 1.0]`. Defaults to `1.0` (sample everything) when unset
 /// or unparseable.
 pub fn sampler_ratio_from_env() -> f64 {
-    std::env::var("OTEL_TRACES_SAMPLER_ARG")
-        .ok()
+    sampler_ratio(&process_env)
+}
+
+fn sampler_ratio(env: EnvLookup) -> f64 {
+    env("OTEL_TRACES_SAMPLER_ARG")
         .and_then(|s| s.trim().parse::<f64>().ok())
         .map(|r| r.clamp(0.0, 1.0))
         .unwrap_or(1.0)
 }
 
 /// Service name from `OTEL_SERVICE_NAME`, defaulting to `netcidr`.
-fn service_name_from_env() -> String {
-    std::env::var("OTEL_SERVICE_NAME")
-        .ok()
+fn service_name(env: EnvLookup) -> String {
+    env("OTEL_SERVICE_NAME")
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "netcidr".to_string())
 }
@@ -124,9 +135,11 @@ fn service_name_from_env() -> String {
 /// True when OTLP export is configured at runtime (the enable env var is set
 /// to a non-empty value). When false, [`otel_layer`] returns `None`.
 pub fn is_configured() -> bool {
-    std::env::var(ENABLE_ENV)
-        .map(|v| !v.trim().is_empty())
-        .unwrap_or(false)
+    configured(&process_env)
+}
+
+fn configured(env: EnvLookup) -> bool {
+    env(ENABLE_ENV).is_some_and(|v| !v.trim().is_empty())
 }
 
 /// Build the OTel tracing layer and a guard, or `None` when export is not
@@ -142,7 +155,19 @@ pub fn otel_layer<S>() -> Option<(
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
-    if !is_configured() {
+    otel_layer_with(&process_env)
+}
+
+fn otel_layer_with<S>(
+    env: EnvLookup,
+) -> Option<(
+    OpenTelemetryLayer<S, opentelemetry_sdk::trace::SdkTracer>,
+    OtelGuard,
+)>
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    if !configured(env) {
         return None;
     }
 
@@ -160,9 +185,9 @@ where
         }
     };
 
-    let ratio = sampler_ratio_from_env();
+    let ratio = sampler_ratio(env);
     let resource = Resource::builder()
-        .with_service_name(service_name_from_env())
+        .with_service_name(service_name(env))
         .build();
 
     let provider = SdkTracerProvider::builder()
@@ -173,7 +198,7 @@ where
         .with_resource(resource)
         .build();
 
-    let tracer = provider.tracer(service_name_from_env());
+    let tracer = provider.tracer(service_name(env));
     let layer = OpenTelemetryLayer::new(tracer);
 
     // Make the provider global so context propagation / nested spans work.
@@ -292,15 +317,50 @@ mod tests {
         assert!(!keys.contains(&"access_token"));
     }
 
+    /// An env lookup backed by fixed pairs, so tests never touch process env.
+    fn fake_env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let pairs: Vec<(String, String)> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        move |key| pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
+    }
+
     #[test]
     fn sampler_ratio_defaults_and_clamps() {
-        // Default when unset is exercised indirectly; here verify clamping logic
-        // by parsing representative values the same way the env reader does.
-        let parse = |s: &str| s.trim().parse::<f64>().ok().map(|r| r.clamp(0.0, 1.0));
-        assert_eq!(parse("0.25"), Some(0.25));
-        assert_eq!(parse("2.0"), Some(1.0));
-        assert_eq!(parse("-1"), Some(0.0));
-        assert_eq!(parse("nope"), None);
+        let ratio = |v: Option<&str>| match v {
+            Some(v) => sampler_ratio(&fake_env(&[("OTEL_TRACES_SAMPLER_ARG", v)])),
+            None => sampler_ratio(&fake_env(&[])),
+        };
+        assert_eq!(ratio(None), 1.0);
+        assert_eq!(ratio(Some("0.25")), 0.25);
+        assert_eq!(ratio(Some(" 0.5 ")), 0.5);
+        assert_eq!(ratio(Some("2.0")), 1.0);
+        assert_eq!(ratio(Some("-1")), 0.0);
+        assert_eq!(ratio(Some("nope")), 1.0);
+    }
+
+    #[test]
+    fn service_name_defaults_when_unset_or_blank() {
+        assert_eq!(service_name(&fake_env(&[])), "netcidr");
+        assert_eq!(
+            service_name(&fake_env(&[("OTEL_SERVICE_NAME", "  ")])),
+            "netcidr"
+        );
+        assert_eq!(
+            service_name(&fake_env(&[("OTEL_SERVICE_NAME", "netcidr-prod")])),
+            "netcidr-prod"
+        );
+    }
+
+    #[test]
+    fn configured_requires_a_non_blank_endpoint() {
+        assert!(!configured(&fake_env(&[])));
+        assert!(!configured(&fake_env(&[(ENABLE_ENV, "   ")])));
+        assert!(configured(&fake_env(&[(
+            ENABLE_ENV,
+            "http://127.0.0.1:4318"
+        )])));
     }
 
     /// Measures the one-time OTel pipeline init cost (a proxy for the Lambda
@@ -310,44 +370,24 @@ mod tests {
     #[test]
     #[ignore = "timing measurement; run manually with --ignored --nocapture"]
     fn otel_init_timing() {
-        // SAFETY: test-only env manipulation, saved/restored.
-        let saved = std::env::var(ENABLE_ENV).ok();
-        unsafe {
-            std::env::set_var(ENABLE_ENV, "http://127.0.0.1:4318");
-        }
+        let env = fake_env(&[(ENABLE_ENV, "http://127.0.0.1:4318")]);
         // The exporter (reqwest client) + batch processor need a tokio runtime
         // context, which `serve`/Lambda provide via `#[tokio::main]`.
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _enter = rt.enter();
         let start = std::time::Instant::now();
-        let layer = otel_layer::<tracing_subscriber::Registry>();
+        let layer = otel_layer_with::<tracing_subscriber::Registry>(&env);
         let elapsed = start.elapsed();
         assert!(layer.is_some(), "endpoint set → layer should be Some");
         // Drop the guard to shut the pipeline down promptly.
         drop(layer);
         println!("otel pipeline init took {elapsed:?}");
-        match saved {
-            Some(v) => unsafe { std::env::set_var(ENABLE_ENV, v) },
-            None => unsafe { std::env::remove_var(ENABLE_ENV) },
-        }
     }
 
     #[test]
     fn not_configured_yields_no_layer() {
         // Guards the acceptance criterion: env unset → no layer attached.
-        // SAFETY of test ordering: this test only reads/removes the enable var.
-        // Run serially-safe by saving/restoring.
-        let saved = std::env::var(ENABLE_ENV).ok();
-        unsafe {
-            std::env::remove_var(ENABLE_ENV);
-        }
-        assert!(!is_configured());
-        let layer = otel_layer::<tracing_subscriber::Registry>();
+        let layer = otel_layer_with::<tracing_subscriber::Registry>(&fake_env(&[]));
         assert!(layer.is_none());
-        if let Some(v) = saved {
-            unsafe {
-                std::env::set_var(ENABLE_ENV, v);
-            }
-        }
     }
 }
