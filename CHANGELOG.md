@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Per-IP rate limiting could be evaded by spoofing `X-Forwarded-For`.** The limiter keyed on the leftmost forwarding-header entry, which the client controls when the proxy appends rather than overwrites (CloudFront does). It now trusts exactly one configured source, `client_ip_source` / `NETCIDR_CLIENT_IP_SOURCE`: `peer`, `xff:N` (Nth entry from the right), or `header:<name>` such as `cloudfront-viewer-address`. IPv6 clients are keyed by /64. A new optional origin secret (`NETCIDR_ORIGIN_SECRET`; requests without a matching `X-Origin-Verify` header get 403) stops callers from going around the fronting proxy. ADR-0005 is amended.
+
 ### Added
 
 - **Allocation TTLs now expire.** `--ttl` / `ttl_seconds` set `expires_at` since v0.13.2, but nothing ever released expired allocations. An expiry sweep now does so in every tenant, one audited `expire` per allocation. `netcidr serve` runs it every `reap_interval_seconds` (default 300, `0` disables, CLI `--reap-interval`). The Lambda runs it when invoked by an EventBridge Scheduled Event. `POST /ipam/reap` (Admin) and `netcidr ipam reap` run it on demand for the caller's tenant ([#497](https://github.com/wingnut128/netcidr/issues/497)).
@@ -15,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`netcidr serve` no longer reads forwarding headers for rate limiting by default.** It keys on the TCP peer. Behind a reverse proxy, set `client_ip_source = "xff:1"` (or the header your proxy sets), or every client shares the proxy's bucket. The Lambda binary defaults to `xff:1`.
 - `PUT /ipam/allocations/{id}/tags` (and `netcidr ipam tags set`) now writes a `set_tags` audit row in the same transaction as the tags; setting the tags an allocation already has writes nothing. Duplicate tag keys are rejected with `400` instead of failing with a `500` ([#487](https://github.com/wingnut128/netcidr/issues/487)).
 - A batch allocate request whose `Idempotency-Key` matches one still in progress now returns `409` ("still in progress; retry later") ([#487](https://github.com/wingnut128/netcidr/issues/487)).
 - Setting and deleting a hostname pointer now write audit rows (`set_hostname_pointer`, `delete_hostname_pointer`) in the same transaction as the pointer and its history entry ([#486](https://github.com/wingnut128/netcidr/issues/486)).

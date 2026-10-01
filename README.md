@@ -533,6 +533,8 @@ timeout_seconds = 30          # Request timeout (default: 30s)
 enable_swagger = false        # Swagger UI at /swagger-ui (default: false)
 max_pats_per_tenant = 25      # Max active PATs per tenant (default: 25; POST /me/tokens returns 429 when reached)
 reap_interval_seconds = 300   # Expiry sweep interval: TTL'd allocations, idempotency keys, PATs (default: 300; 0 = disabled; else 10-86400)
+client_ip_source = "peer"     # Rate-limit client address: "peer" (TCP; default), "xff:N" (Nth X-Forwarded-For entry from the right, behind N trusted proxies), or "header:<name>"
+# origin_secret = "..."       # If set (>= 32 chars), require X-Origin-Verify: <secret> on every request; prefer NETCIDR_ORIGIN_SECRET
 ```
 
 **Security defaults**: All endpoints are protected by per-IP rate limiting, request body size limits, request timeouts, restrictive CORS (no origins allowed by default), and security headers (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Cache-Control: no-store`).
@@ -1153,12 +1155,14 @@ cargo lambda build --release --arm64 --bin lambda --features lambda,ipam-postgre
 | `NETCIDR_IPAM_ENABLED` | No | `true` | Disable IPAM endpoints |
 | `NETCIDR_RATE_LIMIT` | No | `20` | Sustained per-IP requests/sec (`0` disables) |
 | `NETCIDR_RATE_LIMIT_BURST` | No | `50` | Per-IP burst allowance |
+| `NETCIDR_CLIENT_IP_SOURCE` | No | `xff:1` | Where the rate-limit client address comes from: `xff:N`, `header:<name>` (e.g. `header:cloudfront-viewer-address` behind CloudFront), or `peer` |
+| `NETCIDR_ORIGIN_SECRET` | No | — | If set (≥ 32 chars), requests without `X-Origin-Verify: <secret>` get 403; have your proxy add the header |
 
 Point `NETCIDR_DATABASE_URL` at a serverless Postgres (e.g. [Neon](https://neon.tech)) or RDS. For RDS, consider RDS Proxy to manage connection pooling across Lambda invocations.
 
 **Scheduled expiry sweep.** Lambda has no long-running process, so `netcidr serve`'s background sweep doesn't run there. Instead, add an EventBridge schedule rule (e.g. `rate(5 minutes)`) that targets the function with the default event payload. The `lambda` binary recognises an EventBridge **Scheduled Event** (`"source": "aws.events"`, `"detail-type": "Scheduled Event"`) and runs one sweep across every tenant: it releases allocations past their TTL and deletes expired idempotency keys and PATs. It returns the counts and logs them. Every other payload is handled as an HTTP request. Clients can't fake a scheduled event over HTTP, because AWS builds the HTTP event itself (Function URL or API Gateway). Only an IAM principal allowed to invoke the function directly can send one. With SAM, a `Schedule` event on the function creates both the rule and the invoke permission.
 
-**Per-IP rate limiting under Lambda.** The router derives the client IP from the `X-Forwarded-For` header (via tower-governor's `SmartIpKeyExtractor`), so the limiter works behind API Gateway even though `lambda_http` provides no TCP peer address. This is only trustworthy because **API Gateway is a trusted proxy that overwrites `X-Forwarded-For`** with the real client IP — never expose the Lambda Function URL directly, or callers could spoof the header to evade throttling. For `netcidr serve` (direct TCP), clients that send no forwarding header fall back to the connection's peer IP. Tune the limit per environment with `NETCIDR_RATE_LIMIT` / `NETCIDR_RATE_LIMIT_BURST` without redeploying.
+**Per-IP rate limiting under Lambda.** `lambda_http` provides no TCP peer address, so the limiter keys on an address a trusted AWS proxy supplies. Only that address is believed. By default it's the rightmost `X-Forwarded-For` entry (`xff:1`); entries to its left are whatever the client sent. Behind CloudFront, set `NETCIDR_CLIENT_IP_SOURCE=header:cloudfront-viewer-address`, which the `AllViewerExceptHostHeader` origin request policy forwards. IPv6 clients are keyed by their /64. If the origin (Function URL or API Gateway) is reachable without the proxy, set `NETCIDR_ORIGIN_SECRET` and have the proxy add `X-Origin-Verify: <secret>` as a custom origin header; direct requests then get 403 before they touch the limiter. CloudFront origin access control doesn't work here, because it replaces the `Authorization: Bearer` header netcidr authenticates with. Tune the limit with `NETCIDR_RATE_LIMIT` / `NETCIDR_RATE_LIMIT_BURST` without redeploying.
 
 ## License
 
