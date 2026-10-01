@@ -2,30 +2,44 @@ mod migrations;
 
 use async_trait::async_trait;
 use chrono::Utc;
+use std::time::Duration;
+
 use sqlx::postgres::PgPoolOptions;
-use sqlx::{PgPool, Row};
+use sqlx::{PgExecutor, PgPool, Row};
 
 use crate::error::{NetcidrError, Result};
 use crate::ipam::config::PostgresConfig;
 use crate::ipam::models::*;
-use crate::ipam::store::IpamStore;
+use crate::ipam::store::{DEFAULT_LOCK_TIMEOUT, IpamStore, Loaded, Read, Rows, TxUnit, Write};
 use crate::ipam::{parse_cidr_metadata, read_total_hosts};
 
 pub struct PostgresStore {
     pool: PgPool,
+    lock_timeout: Duration,
 }
 
 impl PostgresStore {
     pub async fn new(url: &str, config: &PostgresConfig) -> Result<Self> {
+        Self::new_with_lock_timeout(url, config, DEFAULT_LOCK_TIMEOUT).await
+    }
+
+    /// Like [`new`](Self::new), with a custom wait for Lock Scopes and pooled
+    /// connections before `NetcidrError::StoreBusy`.
+    pub async fn new_with_lock_timeout(
+        url: &str,
+        config: &PostgresConfig,
+        lock_timeout: Duration,
+    ) -> Result<Self> {
         let pool = PgPoolOptions::new()
             .max_connections(config.max_connections)
             .min_connections(config.min_connections)
+            .acquire_timeout(lock_timeout)
             .connect(url)
             .await
             .map_err(|e| {
                 NetcidrError::DatabaseError(format!("PostgreSQL connection failed: {e}"))
             })?;
-        Ok(Self { pool })
+        Ok(Self { pool, lock_timeout })
     }
 
     fn now() -> String {
@@ -155,6 +169,139 @@ fn pg_row_to_hostname_history(row: &sqlx::postgres::PgRow) -> HostnamePointerHis
     }
 }
 
+/// Map a sqlx error, classifying lock and pool waits as `StoreBusy`.
+/// `55P03` is `lock_not_available` (raised when `lock_timeout` expires);
+/// `40P01` is `deadlock_detected`, which is equally safe to retry.
+fn db_err(e: sqlx::Error) -> NetcidrError {
+    match &e {
+        sqlx::Error::PoolTimedOut => NetcidrError::StoreBusy,
+        sqlx::Error::Database(d) if matches!(d.code().as_deref(), Some("55P03" | "40P01")) => {
+            NetcidrError::StoreBusy
+        }
+        _ => NetcidrError::DatabaseError(e.to_string()),
+    }
+}
+
+async fn read_cidr_block<'e>(
+    ex: impl PgExecutor<'e>,
+    tenant_id: &str,
+    id: &str,
+) -> Result<Option<CidrBlock>> {
+    let row = sqlx::query(
+        "SELECT id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM cidr_blocks WHERE id = $1 AND tenant_id = $2",
+    )
+    .bind(id)
+    .bind(tenant_id)
+    .fetch_optional(ex)
+    .await
+    .map_err(db_err)?;
+    Ok(row.map(|row| {
+        let total_hosts_text: String = row.get("total_hosts");
+        let prefix_length: i16 = row.get("prefix_length");
+        let ip_version: i16 = row.get("ip_version");
+        CidrBlock {
+            id: row.get("id"),
+            tenant_id: row.get("tenant_id"),
+            cidr: row.get("cidr"),
+            network_address: row.get("network_address"),
+            broadcast_address: row.get("broadcast_address"),
+            prefix_length: prefix_length as u8,
+            total_hosts: read_total_hosts(Some(total_hosts_text), 0),
+            name: row.get("name"),
+            description: row.get("description"),
+            ip_version: ip_version as u8,
+            created_at: row.get("created_at"),
+            updated_at: row.get("updated_at"),
+        }
+    }))
+}
+
+async fn read_idempotency<'e>(
+    ex: impl PgExecutor<'e>,
+    tenant_id: &str,
+    key: &str,
+    scope: &str,
+) -> Result<Option<IdempotencyRecord>> {
+    let row = sqlx::query(
+        "SELECT tenant_id, key, scope, request_hash, status_code, response_body, created_at, expires_at \
+         FROM idempotency_keys WHERE tenant_id = $1 AND key = $2 AND scope = $3",
+    )
+    .bind(tenant_id)
+    .bind(key)
+    .bind(scope)
+    .fetch_optional(ex)
+    .await
+    .map_err(db_err)?;
+    Ok(row.map(|row| {
+        let status_code: i32 = row.get("status_code");
+        IdempotencyRecord {
+            tenant_id: row.get("tenant_id"),
+            key: row.get("key"),
+            scope: row.get("scope"),
+            request_hash: row.get("request_hash"),
+            status_code: status_code as u16,
+            response_body: row.get("response_body"),
+            created_at: row.get("created_at"),
+            expires_at: row.get("expires_at"),
+        }
+    }))
+}
+
+async fn insert_audit<'e>(ex: impl PgExecutor<'e>, entry: &AuditEntry) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO audit_log (tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id, auth_method, pat_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+    )
+    .bind(&entry.tenant_id)
+    .bind(&entry.timestamp)
+    .bind(&entry.action)
+    .bind(&entry.entity_type)
+    .bind(&entry.entity_id)
+    .bind(&entry.details)
+    .bind(&entry.caller_sub)
+    .bind(&entry.caller_email)
+    .bind(&entry.source_ip)
+    .bind(&entry.request_id)
+    .bind(if entry.auth_method.is_empty() { "oidc".to_string() } else { entry.auth_method.clone() })
+    .bind(&entry.pat_id)
+    .execute(ex)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
+async fn insert_idempotency<'e>(ex: impl PgExecutor<'e>, record: &IdempotencyRecord) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO idempotency_keys \
+            (tenant_id, key, scope, request_hash, status_code, response_body, created_at, expires_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+         ON CONFLICT (tenant_id, key, scope) DO NOTHING",
+    )
+    .bind(&record.tenant_id)
+    .bind(&record.key)
+    .bind(&record.scope)
+    .bind(&record.request_hash)
+    .bind(record.status_code as i32)
+    .bind(&record.response_body)
+    .bind(&record.created_at)
+    .bind(&record.expires_at)
+    .execute(ex)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
+async fn read_one(conn: &mut sqlx::PgConnection, read: &Read) -> Result<Rows> {
+    match read {
+        Read::CidrBlock { tenant_id, id } => {
+            Ok(Rows::CidrBlock(read_cidr_block(conn, tenant_id, id).await?))
+        }
+    }
+}
+
+async fn apply_write(_conn: &mut sqlx::PgConnection, write: &Write) -> Result<()> {
+    match *write {}
+}
+
 #[async_trait]
 impl IpamStore for PostgresStore {
     async fn initialize(&self) -> Result<()> {
@@ -202,6 +349,52 @@ impl IpamStore for PostgresStore {
 
     // --- cidr_blocks ---
 
+    async fn transact(&self, unit: TxUnit) -> Result<String> {
+        let mut tx = self.pool.begin().await.map_err(db_err)?;
+        // Bound the advisory-lock wait; `true` scopes the setting to this
+        // transaction.
+        sqlx::query("SELECT set_config('lock_timeout', $1, true)")
+            .bind(format!("{}ms", self.lock_timeout.as_millis()))
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        // Every Lock Scope, including ones with no row to lock, maps to a
+        // transaction-scoped advisory lock (ADR-0007). A hash collision only
+        // over-serializes two unrelated scopes.
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(unit.scope.key())
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+
+        let mut rows = Vec::with_capacity(unit.reads.len());
+        for read in &unit.reads {
+            rows.push(read_one(&mut tx, read).await?);
+        }
+        let idempotency = match &unit.idempotency {
+            Some(l) => read_idempotency(&mut *tx, &l.tenant_id, &l.key, &l.scope).await?,
+            None => None,
+        };
+        // `decide` is synchronous and cannot touch the store. It runs on the
+        // blocking pool so a slow decision never stalls an async worker. An
+        // `Err` drops `tx`, which rolls back.
+        let decide = unit.decide;
+        let plan = tokio::task::spawn_blocking(move || decide(Loaded { rows, idempotency }))
+            .await
+            .map_err(|e| NetcidrError::DatabaseError(format!("decide task failed: {e}")))??;
+        for write in &plan.writes {
+            apply_write(&mut tx, write).await?;
+        }
+        for entry in &plan.audits {
+            insert_audit(&mut *tx, entry).await?;
+        }
+        if let Some(record) = &plan.idempotency {
+            insert_idempotency(&mut *tx, record).await?;
+        }
+        tx.commit().await.map_err(db_err)?;
+        Ok(plan.output_json)
+    }
+
     async fn create_cidr_block(
         &self,
         tenant_id: &str,
@@ -248,33 +441,9 @@ impl IpamStore for PostgresStore {
     }
 
     async fn get_cidr_block(&self, tenant_id: &str, id: &str) -> Result<CidrBlock> {
-        let row = sqlx::query(
-            "SELECT id, tenant_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, name, description, ip_version, created_at, updated_at FROM cidr_blocks WHERE id = $1 AND tenant_id = $2",
-        )
-        .bind(id)
-        .bind(tenant_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
-        .ok_or_else(|| NetcidrError::CidrBlockNotFound(id.to_string()))?;
-
-        let total_hosts_text: String = row.get("total_hosts");
-        let prefix_length: i16 = row.get("prefix_length");
-        let ip_version: i16 = row.get("ip_version");
-        Ok(CidrBlock {
-            id: row.get("id"),
-            tenant_id: row.get("tenant_id"),
-            cidr: row.get("cidr"),
-            network_address: row.get("network_address"),
-            broadcast_address: row.get("broadcast_address"),
-            prefix_length: prefix_length as u8,
-            total_hosts: read_total_hosts(Some(total_hosts_text), 0),
-            name: row.get("name"),
-            description: row.get("description"),
-            ip_version: ip_version as u8,
-            created_at: row.get("created_at"),
-            updated_at: row.get("updated_at"),
-        })
+        read_cidr_block(&self.pool, tenant_id, id)
+            .await?
+            .ok_or_else(|| NetcidrError::CidrBlockNotFound(id.to_string()))
     }
 
     async fn list_cidr_blocks(&self, tenant_id: &str) -> Result<Vec<CidrBlock>> {
@@ -1101,25 +1270,7 @@ impl IpamStore for PostgresStore {
     // --- audit ---
 
     async fn append_audit(&self, entry: &AuditEntry) -> Result<()> {
-        sqlx::query(
-            "INSERT INTO audit_log (tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id, auth_method, pat_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
-        )
-        .bind(&entry.tenant_id)
-        .bind(&entry.timestamp)
-        .bind(&entry.action)
-        .bind(&entry.entity_type)
-        .bind(&entry.entity_id)
-        .bind(&entry.details)
-        .bind(&entry.caller_sub)
-        .bind(&entry.caller_email)
-        .bind(&entry.source_ip)
-        .bind(&entry.request_id)
-        .bind(if entry.auth_method.is_empty() { "oidc".to_string() } else { entry.auth_method.clone() })
-        .bind(&entry.pat_id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        Ok(())
+        insert_audit(&self.pool, entry).await
     }
 
     async fn query_audit(&self, tenant_id: &str, filter: &AuditFilter) -> Result<Vec<AuditEntry>> {
@@ -1195,50 +1346,11 @@ impl IpamStore for PostgresStore {
         key: &str,
         scope: &str,
     ) -> Result<Option<IdempotencyRecord>> {
-        let row = sqlx::query(
-            "SELECT tenant_id, key, scope, request_hash, status_code, response_body, created_at, expires_at \
-             FROM idempotency_keys WHERE tenant_id = $1 AND key = $2 AND scope = $3",
-        )
-        .bind(tenant_id)
-        .bind(key)
-        .bind(scope)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        Ok(row.map(|row| {
-            let status_code: i32 = row.get("status_code");
-            IdempotencyRecord {
-                tenant_id: row.get("tenant_id"),
-                key: row.get("key"),
-                scope: row.get("scope"),
-                request_hash: row.get("request_hash"),
-                status_code: status_code as u16,
-                response_body: row.get("response_body"),
-                created_at: row.get("created_at"),
-                expires_at: row.get("expires_at"),
-            }
-        }))
+        read_idempotency(&self.pool, tenant_id, key, scope).await
     }
 
     async fn idempotency_put(&self, record: &IdempotencyRecord) -> Result<()> {
-        sqlx::query(
-            "INSERT INTO idempotency_keys \
-                (tenant_id, key, scope, request_hash, status_code, response_body, created_at, expires_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
-             ON CONFLICT (tenant_id, key, scope) DO NOTHING",
-        )
-        .bind(&record.tenant_id)
-        .bind(&record.key)
-        .bind(&record.scope)
-        .bind(&record.request_hash)
-        .bind(record.status_code as i32)
-        .bind(&record.response_body)
-        .bind(&record.created_at)
-        .bind(&record.expires_at)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        Ok(())
+        insert_idempotency(&self.pool, record).await
     }
 
     async fn idempotency_reap_expired(&self, now_rfc3339: &str) -> Result<u64> {

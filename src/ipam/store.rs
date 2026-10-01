@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use async_trait::async_trait;
 
 use crate::error::Result;
@@ -20,6 +22,132 @@ pub(crate) fn limit_offset_clause(limit: Option<u32>, offset: Option<u32>) -> St
     }
 }
 
+/// How long a transaction unit waits for its Lock Scope (or a pooled
+/// connection) before failing with [`NetcidrError::StoreBusy`].
+///
+/// [`NetcidrError::StoreBusy`]: crate::error::NetcidrError::StoreBusy
+pub const DEFAULT_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+
+// ---------------------------------------------------------------------------
+// Decide-then-commit transaction units (ADR-0007)
+// ---------------------------------------------------------------------------
+
+/// The one thing a transaction unit holds exclusively while it decides and
+/// commits. Two units with the same scope never interleave.
+///
+/// SQLite serializes every writer regardless of scope; Postgres takes a
+/// transaction-scoped advisory lock on [`LockScope::key`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum LockScope {
+    /// One cidr block's allocations (allocate, update, release, reap, tags).
+    CidrBlock {
+        tenant_id: String,
+        cidr_block_id: String,
+    },
+    /// A tenant's set of cidr blocks (create, delete, load).
+    Tenant { tenant_id: String },
+    /// The global user directory (upsert, delete, seed).
+    UserDirectory,
+    /// One PAT Owner's tokens (mint, revoke).
+    PatOwner {
+        tenant_id: String,
+        owner_sub: String,
+    },
+}
+
+impl LockScope {
+    /// Stable, namespaced identity of the scope. Fields are joined with the
+    /// ASCII unit separator, which validated identifiers never contain, so
+    /// distinct scopes never share a key.
+    pub fn key(&self) -> String {
+        const SEP: char = '\u{1f}';
+        match self {
+            Self::CidrBlock {
+                tenant_id,
+                cidr_block_id,
+            } => format!("cidr_block{SEP}{tenant_id}{SEP}{cidr_block_id}"),
+            Self::Tenant { tenant_id } => format!("tenant{SEP}{tenant_id}"),
+            Self::UserDirectory => "user_directory".to_string(),
+            Self::PatOwner {
+                tenant_id,
+                owner_sub,
+            } => format!("pat_owner{SEP}{tenant_id}{SEP}{owner_sub}"),
+        }
+    }
+}
+
+/// A read a unit declares up front. Reads run after the lock is taken,
+/// inside the transaction, in declaration order. Every tenant-scoped read
+/// carries its tenant (ADR-0001); a row in another tenant reads as absent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Read {
+    CidrBlock { tenant_id: String, id: String },
+}
+
+/// The result of one [`Read`], in the same position as its read.
+#[derive(Debug, Clone)]
+pub enum Rows {
+    CidrBlock(Option<CidrBlock>),
+}
+
+/// A rule-free row write. The adapter applies it verbatim: ids, timestamps,
+/// derived fields, and preconditions are all decided before it gets here.
+///
+/// Variants are added as operations move onto [`IpamStore::transact`]
+/// (#482–#487).
+#[derive(Debug, Clone)]
+pub enum Write {}
+
+/// Looks up an existing idempotency record inside the unit, under its lock.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdempotencyLookup {
+    pub tenant_id: String,
+    pub key: String,
+    pub scope: String,
+}
+
+/// Everything a unit's `decide` sees: its reads' rows, in order, and the
+/// idempotency record found by its lookup (if it declared one).
+#[derive(Debug, Clone, Default)]
+pub struct Loaded {
+    pub rows: Vec<Rows>,
+    pub idempotency: Option<IdempotencyRecord>,
+}
+
+/// What a unit commits: its writes, then its audit rows, then its
+/// idempotency record, all in one transaction. `output_json` is returned
+/// to the caller of [`IpamStore::transact`].
+#[derive(Debug, Clone, Default)]
+pub struct Plan {
+    pub writes: Vec<Write>,
+    pub audits: Vec<AuditEntry>,
+    pub idempotency: Option<IdempotencyRecord>,
+    pub output_json: String,
+}
+
+/// The pure, synchronous decision step of a unit. It cannot touch the
+/// store, so a unit can never open a second transaction while holding the
+/// first. An `Err` rolls the transaction back and is returned unchanged.
+pub type DecideFn = Box<dyn FnOnce(Loaded) -> Result<Plan> + Send + 'static>;
+
+/// One decide-then-commit transaction (ADR-0007).
+pub struct TxUnit {
+    pub scope: LockScope,
+    pub reads: Vec<Read>,
+    pub idempotency: Option<IdempotencyLookup>,
+    pub decide: DecideFn,
+}
+
+impl std::fmt::Debug for TxUnit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TxUnit")
+            .field("scope", &self.scope)
+            .field("reads", &self.reads)
+            .field("idempotency", &self.idempotency)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Core storage abstraction for the IPAM persistence layer.
 ///
 /// All tenant-scoped methods take an explicit `tenant_id: &str` parameter so
@@ -32,6 +160,18 @@ pub trait IpamStore: Send + Sync {
     // --- lifecycle ---
     async fn initialize(&self) -> Result<()>;
     async fn migrate(&self) -> Result<()>;
+
+    // --- transaction units (ADR-0007) ---
+    /// Run one decide-then-commit unit: begin → take `unit.scope` → run
+    /// `unit.reads` and the idempotency lookup → `decide` → apply the plan's
+    /// writes, audit rows, and idempotency record → commit. Returns the
+    /// plan's `output_json`.
+    ///
+    /// If `decide` fails, nothing persists and its error is returned as-is.
+    /// Waiting longer than the store's lock timeout for the scope or a
+    /// connection fails with `NetcidrError::StoreBusy`. The unit runs to
+    /// completion even if the returned future is dropped.
+    async fn transact(&self, unit: TxUnit) -> Result<String>;
 
     // --- cidr_blocks ---
     async fn create_cidr_block(
