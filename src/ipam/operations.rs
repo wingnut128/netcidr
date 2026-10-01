@@ -226,44 +226,9 @@ impl IpamOps {
         )
         .await?;
 
-        // If a released allocation exists with the exact same CIDR, reactivate
-        // it instead of creating a duplicate record.
-        let released = self
-            .store
-            .find_allocations_in_cidr_block(
-                tenant_id,
-                &input.cidr_block_id,
-                &[AllocationStatus::Released],
-            )
-            .await?;
-        if let Some(existing) = released.iter().find(|a| a.cidr == input.cidr) {
-            let update = UpdateAllocation {
-                name: input.name.clone().or(existing.name.clone()),
-                description: input.description.clone().or(existing.description.clone()),
-                resource_id: input.resource_id.clone().or(existing.resource_id.clone()),
-                resource_type: input
-                    .resource_type
-                    .clone()
-                    .or(existing.resource_type.clone()),
-                environment: input.environment.clone().or(existing.environment.clone()),
-                owner: input.owner.clone().or(existing.owner.clone()),
-                status: Some(input.status.clone().unwrap_or(AllocationStatus::Active)),
-            };
-            let alloc = self
-                .store
-                .update_allocation(tenant_id, &existing.id, &update)
-                .await?;
-            self.audit(
-                tenant_id,
-                "reactivate",
-                "allocation",
-                &alloc.id,
-                Some(&alloc.cidr),
-            )
-            .await?;
-            return Ok(alloc);
-        }
-
+        // A released allocation with the same CIDR is history, not a slot to
+        // reuse: always create a fresh record so the request's fields apply
+        // as given and the released row stays intact.
         let alloc = self.store.create_allocation(tenant_id, input).await?;
         self.audit(
             tenant_id,
@@ -3911,6 +3876,152 @@ mod tests {
             .await
             .unwrap();
         assert!(entries.is_empty());
+    }
+
+    // ── Re-allocating a released CIDR ──────────────────────────────────
+
+    /// Allocate `10.0.1.0/24` with full metadata, then release it.
+    async fn released_allocation(ops: &IpamOps) -> (CidrBlock, Allocation) {
+        let sn = idempotent_test_cidr_block(ops).await;
+        let original = ops
+            .allocate_specific(
+                TEST_TENANT,
+                &CreateAllocation {
+                    name: Some("Web".to_string()),
+                    description: Some("old description".to_string()),
+                    owner: Some("alice".to_string()),
+                    environment: Some("prod".to_string()),
+                    resource_id: Some("vpc-old".to_string()),
+                    resource_type: Some("vpc".to_string()),
+                    ..allocate_specific_input(&sn.id, "10.0.1.0/24")
+                },
+            )
+            .await
+            .unwrap();
+        ops.release_allocation(TEST_TENANT, &original.id)
+            .await
+            .unwrap();
+        (sn, original)
+    }
+
+    #[tokio::test]
+    async fn reallocating_released_cidr_creates_a_new_allocation() {
+        let ops = test_ops().await;
+        let (sn, original) = released_allocation(&ops).await;
+
+        let fresh = ops
+            .allocate_specific(
+                TEST_TENANT,
+                &CreateAllocation {
+                    name: Some("Web-v2".to_string()),
+                    tags: Some(vec![Tag {
+                        key: "team".to_string(),
+                        value: "platform".to_string(),
+                    }]),
+                    ttl_seconds: Some(3600),
+                    ..allocate_specific_input(&sn.id, "10.0.1.0/24")
+                },
+            )
+            .await
+            .unwrap();
+
+        // A new record, not the released one brought back.
+        assert_ne!(fresh.id, original.id);
+        assert_ne!(fresh.created_at, original.created_at);
+        assert_eq!(fresh.status, AllocationStatus::Active);
+        assert!(fresh.released_at.is_none());
+
+        // Only what the caller passed: nothing inherited from the old record.
+        assert_eq!(fresh.name.as_deref(), Some("Web-v2"));
+        assert_eq!(fresh.description, None);
+        assert_eq!(fresh.owner, None);
+        assert_eq!(fresh.environment, None);
+        assert_eq!(fresh.resource_id, None);
+        assert_eq!(fresh.resource_type, None);
+
+        // Request fields the reactivate path used to drop are honored.
+        assert_eq!(fresh.tags.len(), 1);
+        assert_eq!(fresh.tags[0].key, "team");
+        assert!(
+            fresh.expires_at.is_some(),
+            "ttl_seconds must set expires_at"
+        );
+
+        // The released record is kept, untouched, as history.
+        let old = ops
+            .store
+            .get_allocation(TEST_TENANT, &original.id)
+            .await
+            .unwrap();
+        assert_eq!(old.status, AllocationStatus::Released);
+        assert!(old.released_at.is_some());
+        assert_eq!(old.name.as_deref(), Some("Web"));
+        assert_eq!(old.owner.as_deref(), Some("alice"));
+
+        // Audit shows a plain allocate for the new record.
+        let actions: Vec<String> = ops
+            .query_audit(
+                TEST_TENANT,
+                &AuditFilter {
+                    entity_id: Some(fresh.id.clone()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|e| e.action)
+            .collect();
+        assert_eq!(actions, vec!["allocate".to_string()]);
+        let old_actions: Vec<String> = ops
+            .query_audit(
+                TEST_TENANT,
+                &AuditFilter {
+                    entity_id: Some(original.id.clone()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|e| e.action)
+            .collect();
+        assert!(
+            !old_actions.iter().any(|a| a == "reactivate"),
+            "old record must not be reactivated: {old_actions:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn released_record_cannot_be_reactivated_once_its_cidr_is_reused() {
+        let ops = test_ops().await;
+        let (sn, original) = released_allocation(&ops).await;
+        ops.allocate_specific(TEST_TENANT, &allocate_specific_input(&sn.id, "10.0.1.0/24"))
+            .await
+            .unwrap();
+
+        // Explicit reactivation (dashboard button / PATCH status) of the old
+        // record would double-book the CIDR, so it must conflict.
+        let err = ops
+            .update_allocation(
+                TEST_TENANT,
+                &original.id,
+                &UpdateAllocation {
+                    name: None,
+                    description: None,
+                    resource_id: None,
+                    resource_type: None,
+                    environment: None,
+                    owner: None,
+                    status: Some(AllocationStatus::Active),
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, NetcidrError::AllocationConflict { .. }),
+            "expected AllocationConflict, got {err:?}"
+        );
     }
 
     // ── Idempotency-aware variants ─────────────────────────────────────

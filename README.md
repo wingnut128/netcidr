@@ -939,6 +939,7 @@ The IPAM module provides library-level IP address allocation tracking with a plu
 
 - **CidrBlock management** — define top-level address spaces (e.g. `10.0.0.0/8`) with overlap detection
 - **Allocation lifecycle** — allocate specific CIDRs or auto-allocate next-available blocks, update metadata, release
+  - Released allocations are kept as history. Allocating the same CIDR again creates a new allocation with only the fields you pass; nothing is inherited from the released record. To rename or retag an allocation, update it in place instead of releasing it.
 - **Conflict detection** — prevents overlapping allocations within a CIDR block
 - **Free space discovery** — find available blocks by prefix length, with utilization reporting
 - **Reverse lookup** — find allocations by IP address or resource ID
