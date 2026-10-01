@@ -512,8 +512,8 @@ netcidr serve --enable-swagger --max-batch-size 500 --timeout 60
 # Run as a background daemon
 netcidr serve --daemonize --pid-file /var/run/netcidr.pid --log-file /var/log/netcidr.log
 
-# Daemonize with IPAM enabled
-netcidr serve --daemonize --ipam-enabled --ipam-db /path/to/ipam.db
+# Daemonize with IPAM enabled (IPAM needs auth: bearer or oidc in the config)
+netcidr serve --daemonize --config netcidr.toml --ipam-enabled --ipam-db /path/to/ipam.db
 ```
 
 #### Server Configuration
@@ -1037,18 +1037,18 @@ netcidr ipam --api-url http://localhost:8080 --api-token devtoken cidr-block lis
 netcidr ipam --db ./test.db cidr-block list
 ```
 
-> A `netcidr serve` with authentication off (the default) rejects IPAM requests with `401 tenant not set`, because the tenant comes from the authenticated caller. Use bearer-token mode for local testing, as above.
+> `netcidr serve --ipam-enabled` refuses to start without authentication (`IPAM API requires auth_mode='bearer' or auth_mode='oidc'`), because IPAM data is scoped to the authenticated caller. Use bearer-token mode for local testing, as above.
 
 **REST API:**
 
-Enable IPAM endpoints on the HTTP server with `--ipam-enabled`:
+Enable IPAM endpoints on the HTTP server with `--ipam-enabled`. IPAM requires authentication (`auth_mode = "bearer"` with `auth_token`, or `"oidc"`); the server refuses to start without it.
 
 ```bash
-# Start server with IPAM enabled
-netcidr serve --ipam-enabled
+# Start server with IPAM enabled (netcidr.toml sets auth_mode and its settings)
+netcidr serve --config netcidr.toml --ipam-enabled
 
 # Use a specific database file
-netcidr serve --ipam-enabled --ipam-db /path/to/ipam.db
+netcidr serve --config netcidr.toml --ipam-enabled --ipam-db /path/to/ipam.db
 ```
 
 | Endpoint | Method | Description |
