@@ -75,6 +75,9 @@ impl CredentialStore {
             return Ok(Self::default());
         }
         check_permissions(path)?;
+        // Not caller-controlled: production paths come only from
+        // `credentials_path()` (platform config dir + fixed file name).
+        // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
         let raw = std::fs::read_to_string(path)?;
         if raw.trim().is_empty() {
             return Ok(Self::default());
