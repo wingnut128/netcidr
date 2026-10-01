@@ -172,3 +172,17 @@ This is a Rust CLI/API/MCP server for IPv4 and IPv6 subnet calculations with IPA
 - Logging: `tracing` with `#[instrument]` on API handlers
 - CLI: clap derive with subcommands (`split`, `contains`, `from-range`, `summarize`, `completions`, `ipam`, `serve`, `mcp-serve`)
 - Tests: Unit tests in modules, integration tests in `tests/` call binary via subprocess
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on `wingnut128/netcidr` via `gh`, mirrored internally in Linear (never linked from GitHub). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.

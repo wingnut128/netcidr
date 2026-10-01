@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - Digestabot is removed; Dependabot alone keeps the Dockerfile's base-image digests fresh. Digestabot's commits could never satisfy `main`'s required signed commits (gitsign signatures don't verify on GitHub), so its PRs were unmergeable, and it duplicated Dependabot's digest bumps ([#462](https://github.com/wingnut128/netcidr/issues/462), [#469](https://github.com/wingnut128/netcidr/issues/469)).
+- Agent skills are configured for this repo: `docs/agents/` records the issue tracker (GitHub, with Linear as the internal mirror), the triage label names, and the domain-docs layout, and `CLAUDE.md` gains an `Agent skills` section pointing at them. `CONTEXT.md` is renamed to `GLOSSARY.md` so the skills find the existing domain terms ([#471](https://github.com/wingnut128/netcidr/issues/471)).
 
 ## [0.31.0](https://github.com/wingnut128/netcidr/compare/v0.30.0...v0.31.0) - 2026-10-01
 
