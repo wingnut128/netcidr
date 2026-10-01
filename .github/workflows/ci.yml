@@ -48,6 +48,20 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    services:
+      # Postgres for the store contract and cross-process tests
+      # (tests/store_support). Each test creates its own database.
+      postgres:
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Free runner disk space
@@ -97,7 +111,9 @@ jobs:
           exit "$fail"
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
-      - run: cargo nextest run --features mcp,tui
+      - run: cargo nextest run --features mcp,tui,ipam-postgres
+        env:
+          NETCIDR_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
 
   audit:
     name: Security Audit
