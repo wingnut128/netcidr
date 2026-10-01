@@ -1,9 +1,47 @@
 # Lambda rate limiting via X-Forwarded-For; auth-specific throttling deferred
 
-**Status:** Accepted
+**Status:** Accepted — decisions 1 and 3 amended 2026-10-01 (see below)
 **Date:** 2026-06-18
 **Issue:** [#259](https://github.com/wingnut128/netcidr/issues/259) (ENG-103)
 **Related:** [[ADR-0002 — RBAC role config and per-handler extractors]](./0002-rbac-role-config-and-per-handler-extractors.md)
+
+## Amendment (2026-10-01): trust exactly one address source
+
+Decision 1 keyed the limiter on `SmartIpKeyExtractor`, which takes the
+**leftmost** parseable `X-Forwarded-For` entry. That is only safe behind a
+proxy that *overwrites* the header. The production deployment is CloudFront
+in front of a public Lambda Function URL, not API Gateway: CloudFront
+*appends* the viewer address to whatever `X-Forwarded-For` the client sent,
+and the Function URL can be called directly. Either way the client chose
+its own bucket on every request, so decision 3's trust boundary did not
+hold.
+
+Replacement:
+
+1. **`client_ip_source`** (`NETCIDR_CLIENT_IP_SOURCE`, TOML, or
+   `--client-ip-source`) names the single place a client address is
+   believed: `peer` (TCP connection; the default for `serve`), `xff:N` (the
+   Nth entry from the *right* of `X-Forwarded-For`, i.e. what the outermost
+   of N trusted proxies saw; the Lambda default is `xff:1`), or
+   `header:<name>` (a header a trusted proxy sets, e.g.
+   `cloudfront-viewer-address`). Nothing else is consulted, and a request
+   with no usable address falls into one shared bucket instead of erroring
+   or choosing its own.
+2. **IPv6 clients are keyed by /64.** A subscriber usually controls a whole
+   /64, and CloudFront's unbracketed `IPv6:port` is ambiguous; both readings
+   fall in the same /64.
+3. **Origin secret.** With `NETCIDR_ORIGIN_SECRET` set (≥ 32 characters),
+   every request must carry `X-Origin-Verify` with that value or gets 403.
+   The fronting proxy adds it, so the origin URL is useless on its own. The
+   check runs before the limiter, so rejected requests spend no budget.
+   CloudFront origin access control (OAC) was rejected for Lambda origins:
+   it replaces the viewer's `Authorization` header with a SigV4 signature
+   (netcidr authenticates with `Authorization: Bearer`), and it requires
+   every POST/PUT client to send `x-amz-content-sha256`.
+
+Changing the `serve` default from "leftmost forwarding header, else peer"
+to "peer" means a `serve` behind a reverse proxy must now set
+`client_ip_source` explicitly, or all clients share the proxy's bucket.
 
 ## Context
 

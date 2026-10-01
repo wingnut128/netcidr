@@ -21,6 +21,11 @@ const ADMIN_EMAILS_ENV: &str = "NETCIDR_ADMIN_EMAILS";
 const ALLOCATOR_EMAILS_ENV: &str = "NETCIDR_ALLOCATOR_EMAILS";
 const READER_EMAILS_ENV: &str = "NETCIDR_READER_EMAILS";
 const ALLOWLIST_MODE_ENV: &str = "NETCIDR_ALLOWLIST_MODE";
+const CLIENT_IP_SOURCE_ENV: &str = "NETCIDR_CLIENT_IP_SOURCE";
+const ORIGIN_SECRET_ENV: &str = "NETCIDR_ORIGIN_SECRET";
+/// Shortest accepted origin secret; it is the only thing standing between
+/// a public origin URL and the app, so it must not be guessable.
+const MIN_ORIGIN_SECRET_LEN: usize = 32;
 
 /// Whether sign-in is restricted to the users directory (ADR-0006).
 ///
@@ -149,6 +154,16 @@ pub struct ServerConfig {
     /// deletes expired idempotency keys and PATs, in seconds. `0` disables
     /// the sweep (e.g. when an external scheduler calls `POST /ipam/reap`).
     pub reap_interval_seconds: u64,
+    /// Where the client address for per-IP rate limiting comes from:
+    /// `peer` (default), `xff:N`, or `header:<name>`. See
+    /// [`ClientIpSource`](crate::client_ip::ClientIpSource). Prefer
+    /// NETCIDR_CLIENT_IP_SOURCE in production.
+    pub client_ip_source: Option<crate::client_ip::ClientIpSource>,
+    /// When set, every request must carry `X-Origin-Verify` with this
+    /// value, or gets 403. A fronting proxy (e.g. CloudFront) adds the
+    /// header, so the origin can't be called around it. Prefer
+    /// NETCIDR_ORIGIN_SECRET in production.
+    pub origin_secret: Option<String>,
 }
 
 impl Default for ServerConfig {
@@ -180,6 +195,8 @@ impl Default for ServerConfig {
             require_auth_for_public_bind: true,
             max_pats_per_tenant: 25,
             reap_interval_seconds: 300,
+            client_ip_source: None,
+            origin_secret: None,
         }
     }
 }
@@ -199,6 +216,7 @@ pub struct CliOverrides {
     pub ipam_db: Option<String>,
     pub ipam_db_url: Option<String>,
     pub reap_interval: Option<u64>,
+    pub client_ip_source: Option<crate::client_ip::ClientIpSource>,
 }
 
 impl ServerConfig {
@@ -250,6 +268,10 @@ impl ServerConfig {
         }
         if let Some(v) = overrides.reap_interval {
             self.reap_interval_seconds = v;
+        }
+        if overrides.client_ip_source.is_some() {
+            self.client_ip_source
+                .clone_from(&overrides.client_ip_source);
         }
     }
 
@@ -380,6 +402,22 @@ impl ServerConfig {
         )
     }
 
+    /// The effective client address source: env var > config file > `peer`.
+    pub fn client_ip_source(&self) -> Result<crate::client_ip::ClientIpSource> {
+        match std::env::var(CLIENT_IP_SOURCE_ENV) {
+            Ok(raw) if !raw.trim().is_empty() => raw.parse(),
+            _ => Ok(self
+                .client_ip_source
+                .clone()
+                .unwrap_or(crate::client_ip::ClientIpSource::Peer)),
+        }
+    }
+
+    /// The origin secret, env var first. `None` disables the check.
+    pub fn origin_secret(&self) -> Option<String> {
+        resolve_optional(ORIGIN_SECRET_ENV, self.origin_secret.as_deref())
+    }
+
     pub fn auth_configured(&self) -> bool {
         match self.auth_mode {
             AuthMode::None => false,
@@ -461,6 +499,16 @@ impl ServerConfig {
                 "IPAM API requires auth_mode='bearer' or auth_mode='oidc' with required settings"
                     .to_string(),
             ));
+        }
+
+        self.client_ip_source()?;
+        if self
+            .origin_secret()
+            .is_some_and(|secret| secret.len() < MIN_ORIGIN_SECRET_LEN)
+        {
+            return Err(NetcidrError::InvalidInput(format!(
+                "origin_secret must be at least {MIN_ORIGIN_SECRET_LEN} characters"
+            )));
         }
 
         Ok(())
@@ -836,6 +884,40 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(config.reap_interval_seconds, 0);
+    }
+
+    #[test]
+    fn client_ip_source_and_origin_secret_load_and_validate() {
+        use crate::client_ip::ClientIpSource;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("edge.toml");
+        std::fs::write(
+            &path,
+            "client_ip_source = \"header:cloudfront-viewer-address\"\n\
+             origin_secret = \"0123456789abcdef0123456789abcdef\"\n",
+        )
+        .unwrap();
+        let config = ServerConfig::load(path.to_str().unwrap()).unwrap();
+        assert!(matches!(
+            config.client_ip_source,
+            Some(ClientIpSource::Header(_))
+        ));
+        assert!(config.validate_deployment("127.0.0.1").is_ok());
+
+        std::fs::write(&path, "client_ip_source = \"smart\"\n").unwrap();
+        assert!(ServerConfig::load(path.to_str().unwrap()).is_err());
+
+        let short = ServerConfig {
+            origin_secret: Some("too-short".to_string()),
+            ..ServerConfig::default()
+        };
+        let err = short.validate_deployment("127.0.0.1").unwrap_err();
+        assert!(err.to_string().contains("origin_secret"), "{err}");
+        // Unset means no check, and the peer is the default source.
+        assert_eq!(
+            ServerConfig::default().client_ip_source().unwrap(),
+            ClientIpSource::Peer
+        );
     }
 
     #[test]

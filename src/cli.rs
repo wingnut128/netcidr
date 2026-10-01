@@ -300,6 +300,13 @@ pub enum Commands {
         /// (default 300; overrides config file)
         #[arg(long)]
         reap_interval: Option<u64>,
+
+        /// Where the client address for rate limiting comes from: peer
+        /// (default; the TCP connection), xff:N (Nth X-Forwarded-For entry
+        /// from the right, behind N trusted proxies), or header:NAME.
+        /// Overrides the config file; NETCIDR_CLIENT_IP_SOURCE wins over both
+        #[arg(long)]
+        client_ip_source: Option<crate::client_ip::ClientIpSource>,
     },
 }
 

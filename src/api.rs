@@ -12,7 +12,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tower_governor::GovernorLayer;
 use tower_governor::governor::GovernorConfigBuilder;
-use tower_governor::key_extractor::SmartIpKeyExtractor;
 use tower_http::cors::CorsLayer;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
@@ -602,20 +601,25 @@ pub fn create_router(config: RouterConfig) -> Router {
         ));
 
     // Per-IP rate limiting via tower-governor (disabled when rate_limit_per_second == 0).
-    // SmartIpKeyExtractor derives the client IP from the X-Forwarded-For,
-    // X-Real-IP, or Forwarded headers (set by a trusted proxy such as API
-    // Gateway), falling back to ConnectInfo<SocketAddr> for direct TCP
-    // clients. This lets the limiter run under Lambda, where lambda_http
-    // provides no ConnectInfo but API Gateway always sets X-Forwarded-For.
-    // For `netcidr serve`, the server must use
-    // `into_make_service_with_connect_info::<SocketAddr>()` so the fallback
-    // works for clients that send no forwarding header.
+    // The client address comes only from the configured source
+    // (`client_ip_source`): the TCP peer by default, which needs
+    // `into_make_service_with_connect_info::<SocketAddr>()` (as `serve`
+    // uses), or a forwarding header a trusted proxy sets. Never the
+    // leftmost X-Forwarded-For entry, which the client chooses.
+    let client_ip_source = config.server.client_ip_source().unwrap_or_else(|e| {
+        // validate_deployment rejects this at startup; only routers built
+        // without it (tests) can get here.
+        warn!(error = %e, "invalid client_ip_source; rate limiting by TCP peer");
+        crate::client_ip::ClientIpSource::Peer
+    });
     let router =
         if let Some(replenish_ms) = 1000u64.checked_div(config.server.rate_limit_per_second) {
             match GovernorConfigBuilder::default()
                 .per_millisecond(replenish_ms)
                 .burst_size(config.server.rate_limit_burst)
-                .key_extractor(SmartIpKeyExtractor)
+                .key_extractor(crate::client_ip::ClientIpKeyExtractor::new(
+                    client_ip_source,
+                ))
                 .finish()
             {
                 Some(governor_config) => router.layer(GovernorLayer::new(governor_config)),
@@ -633,6 +637,33 @@ pub fn create_router(config: RouterConfig) -> Router {
             router
         };
 
+    // Origin secret: reject anything that didn't come through the fronting
+    // proxy, before it can spend rate-limit budget or reach a handler.
+    let router = match config.server.origin_secret() {
+        Some(secret) => router.layer(axum::middleware::from_fn(
+            move |request: axum::extract::Request, next: axum::middleware::Next| {
+                let verified = request
+                    .headers()
+                    .get(ORIGIN_VERIFY_HEADER)
+                    .is_some_and(|v| {
+                        crate::auth::constant_time_eq(v.as_bytes(), secret.as_bytes())
+                    });
+                async move {
+                    if verified {
+                        next.run(request).await
+                    } else {
+                        (
+                            StatusCode::FORBIDDEN,
+                            Json(serde_json::json!({ "error": "Forbidden" })),
+                        )
+                            .into_response()
+                    }
+                }
+            },
+        )),
+        None => router,
+    };
+
     router
         .layer(cors)
         .layer(SetResponseHeaderLayer::overriding(
@@ -648,6 +679,9 @@ pub fn create_router(config: RouterConfig) -> Router {
             HeaderValue::from_static("no-store"),
         ))
 }
+
+/// Header a fronting proxy adds with the shared origin secret.
+pub const ORIGIN_VERIFY_HEADER: &str = "x-origin-verify";
 
 #[cfg_attr(feature = "swagger", utoipa::path(
     get,

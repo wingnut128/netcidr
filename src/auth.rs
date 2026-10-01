@@ -768,7 +768,7 @@ fn forbidden() -> Response {
     (StatusCode::FORBIDDEN, "Forbidden").into_response()
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     let max_len = a.len().max(b.len());
     let mut diff = a.len() ^ b.len();
 
