@@ -73,6 +73,14 @@ test-tui:
 test-mcp:
     cargo test --features mcp mcp::
 
+# Run store tests against Postgres (local Docker, or NETCIDR_TEST_DATABASE_URL)
+test-postgres:
+    cargo test --features ipam-postgres --test ipam_store_contract --test postgres_integration --test ipam_concurrency
+
+# Run the cross-process race tests that are ignored until #479 lands
+test-races:
+    cargo test --features ipam-postgres --test ipam_concurrency -- --ignored
+
 # Run tests with captured output visible
 test-verbose:
     cargo test -- --nocapture

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other
 
+- The IPAM store contract suite now runs against file-backed SQLite and Postgres as well as in-memory SQLite, and CI runs the Postgres store tests against a Postgres service container, each test on its own database. New two-instance tests show that allocation overlap, the last-platform-admin guard, and the per-owner PAT limit can be violated by two processes sharing one database; they are `#[ignore]`d until the fix lands (`just test-races`) ([#480](https://github.com/wingnut128/netcidr/issues/480)).
 - ADR-0007 records the decide-then-commit store seam for atomic IPAM invariants, and the glossary defines Mutation, Decision, Change, and Lock Scope ([#479](https://github.com/wingnut128/netcidr/issues/479)).
 - ADR-0002 and ADR-0003 carry an "amended by ADR-0006" note: bearer-mode principals resolve to `PlatformAdmin`, roles live in the unified `users` table, and the admin guards protect the last platform admin ([#476](https://github.com/wingnut128/netcidr/issues/476)).
 - The `[0.32.0]` CHANGELOG section is deduplicated and SECURITY.md lists 0.32.x as the current release ([#474](https://github.com/wingnut128/netcidr/issues/474)).
