@@ -1,9 +1,7 @@
-use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
-use std::sync::{Arc, Mutex as SyncMutex};
+use std::sync::Arc;
 
 use chrono::Utc;
-use tokio::sync::Mutex as AsyncMutex;
 
 use crate::error::{NetcidrError, Result};
 use crate::ipam::idempotency;
@@ -11,6 +9,8 @@ use crate::ipam::models::*;
 use crate::ipam::mutation::{Clock, IdSource, IdempotencySpec, Mutation, SystemClock, UuidIds};
 use crate::ipam::store::IpamStore;
 use crate::validation;
+
+mod allocation;
 
 /// Outcome of an idempotency-aware operation. Carries the produced
 /// value and whether it was freshly computed or replayed from the
@@ -52,12 +52,6 @@ impl<T> IdempotentOutcome<T> {
 /// the store as a thin persistence boundary.
 pub struct IpamOps {
     store: Arc<dyn IpamStore>,
-    /// Per-cidr_block async mutexes. Allocation, auto-allocation, release,
-    /// and update operations on the *same* cidr_block are serialized so the
-    /// "check overlap → insert" sequence is atomic within this process.
-    /// Cross-process callers (multiple netcidr instances against a shared
-    /// database) need DB-level locking — tracked separately.
-    cidr_block_locks: SyncMutex<HashMap<String, Arc<AsyncMutex<()>>>>,
     clock: Arc<dyn Clock>,
     ids: Arc<dyn IdSource>,
 }
@@ -80,12 +74,7 @@ impl IpamOps {
         clock: Arc<dyn Clock>,
         ids: Arc<dyn IdSource>,
     ) -> Self {
-        Self {
-            store,
-            cidr_block_locks: SyncMutex::new(HashMap::new()),
-            clock,
-            ids,
-        }
+        Self { store, clock, ids }
     }
 
     /// Run a [`Mutation`] for `tenant_id` as one decide-then-commit unit
@@ -118,19 +107,6 @@ impl IpamOps {
     pub fn store_arc(&self) -> Arc<dyn IpamStore> {
         Arc::clone(&self.store)
     }
-    /// Acquire (or create) the per-cidr_block allocation mutex. Held for the
-    /// duration of allocate / release / update so the read-then-insert
-    /// sequence cannot be interleaved with another mutation.
-    fn cidr_block_lock(&self, cidr_block_id: &str) -> Arc<AsyncMutex<()>> {
-        let mut map = self
-            .cidr_block_locks
-            .lock()
-            .expect("cidr_block_locks poisoned");
-        map.entry(cidr_block_id.to_string())
-            .or_insert_with(|| Arc::new(AsyncMutex::new(())))
-            .clone()
-    }
-
     // -----------------------------------------------------------------------
     // CidrBlock operations
     // -----------------------------------------------------------------------
@@ -218,166 +194,26 @@ impl IpamOps {
         input: &CreateAllocation,
     ) -> Result<Allocation> {
         Self::validate_create_allocation(input)?;
-
-        let lock = self.cidr_block_lock(&input.cidr_block_id);
-        let _guard = lock.lock().await;
-
-        let cidr_block = self
-            .store
-            .get_cidr_block(tenant_id, &input.cidr_block_id)
-            .await?;
-        let cidr_block_range = parse_range(&cidr_block.cidr)?;
-        let candidate_range = parse_range(&input.cidr)?;
-
-        // Reject cross-family allocations (e.g., IPv4 CIDR in IPv6 cidr_block)
-        validate_same_ip_version(&cidr_block_range, &candidate_range, &input.cidr)?;
-
-        // Verify the candidate falls within the cidr_block
-        if !range_contains(&cidr_block_range, &candidate_range) {
-            return Err(NetcidrError::AllocationConflict {
-                existing: cidr_block.cidr.clone(),
-                candidate: format!("{} is outside cidr_block", input.cidr),
-            });
-        }
-
-        // Check for parent containment if specified
-        if let Some(ref parent_id) = input.parent_allocation_id {
-            let parent = self.store.get_allocation(tenant_id, parent_id).await?;
-            let parent_range = parse_range(&parent.cidr)?;
-            if !range_contains(&parent_range, &candidate_range) {
-                return Err(NetcidrError::AllocationConflict {
-                    existing: parent.cidr.clone(),
-                    candidate: format!("{} does not fit within parent allocation", input.cidr),
-                });
-            }
-        }
-
-        // Check overlap with existing active/reserved allocations
-        self.check_overlap(
-            tenant_id,
-            &input.cidr_block_id,
-            &candidate_range,
-            &input.cidr,
-        )
-        .await?;
-
-        // A released allocation with the same CIDR is history, not a slot to
-        // reuse: always create a fresh record so the request's fields apply
-        // as given and the released row stays intact.
-        let alloc = self.store.create_allocation(tenant_id, input).await?;
-        self.audit(
-            tenant_id,
-            "allocate",
-            "allocation",
-            &alloc.id,
-            Some(&alloc.cidr),
-        )
-        .await?;
-        Ok(alloc)
+        let mutation = allocation::AllocateSpecific {
+            tenant_id: tenant_id.to_string(),
+            input: input.clone(),
+        };
+        Ok(self.run(tenant_id, mutation, None).await?.into_inner())
     }
 
     /// Auto-allocate the next available block(s) of a given prefix length.
+    /// A request for several blocks creates all of them or none.
     pub async fn allocate_auto(
         &self,
         tenant_id: &str,
         request: &AutoAllocateRequest,
     ) -> Result<Vec<Allocation>> {
-        validation::validate_identifier(&request.cidr_block_id)?;
-        validation::validate_optional_text(&request.name, 0)?;
-        validation::validate_optional_text(&request.description, 0)?;
-        validation::validate_optional_text(&request.owner, 0)?;
-        validation::validate_optional_text(&request.environment, 0)?;
-        validation::validate_optional_identifier(&request.resource_id)?;
-        validation::validate_optional_identifier(&request.parent_allocation_id)?;
-
-        let lock = self.cidr_block_lock(&request.cidr_block_id);
-        let _guard = lock.lock().await;
-
-        let cidr_block = self
-            .store
-            .get_cidr_block(tenant_id, &request.cidr_block_id)
-            .await?;
-        let cidr_block_range = parse_range(&cidr_block.cidr)?;
-        let count = request.count.unwrap_or(1);
-
-        // Bound the number of allocations a single auto-allocate can create.
-        // Each one is a DB write; an unbounded count would let a caller drive
-        // large CPU/memory/IO work. Enforced here so both the CLI and API go
-        // through the same limit.
-        const MAX_AUTO_ALLOCATE_COUNT: u32 = 1000;
-        if count > MAX_AUTO_ALLOCATE_COUNT {
-            return Err(NetcidrError::InvalidInput(format!(
-                "requested count {count} exceeds maximum of {MAX_AUTO_ALLOCATE_COUNT}"
-            )));
-        }
-
-        // Validate prefix length is within range for the IP version
-        let max_prefix: u8 = if cidr_block_range.is_v4 { 32 } else { 128 };
-        if request.prefix_length > max_prefix {
-            return Err(NetcidrError::InvalidInput(format!(
-                "prefix length {} exceeds maximum {} for IPv{}",
-                request.prefix_length,
-                max_prefix,
-                if cidr_block_range.is_v4 { 4 } else { 6 }
-            )));
-        }
-
-        let existing = self
-            .store
-            .find_allocations_in_cidr_block(
-                tenant_id,
-                &request.cidr_block_id,
-                &[AllocationStatus::Active, AllocationStatus::Reserved],
-            )
-            .await?;
-
-        let existing_ranges: Vec<IpRange> = existing
-            .iter()
-            .filter_map(|a| parse_range(&a.cidr).ok())
-            .collect();
-
-        let blocks = find_free_blocks(
-            &cidr_block_range,
-            &existing_ranges,
-            request.prefix_length,
-            count,
-        )?;
-
-        if blocks.is_empty() {
-            return Err(NetcidrError::NoFreeSpace {
-                cidr_block: cidr_block.cidr.clone(),
-                prefix: request.prefix_length,
-            });
-        }
-
-        let mut allocations = Vec::with_capacity(blocks.len());
-        for cidr in blocks {
-            let input = CreateAllocation {
-                cidr_block_id: request.cidr_block_id.clone(),
-                cidr,
-                status: request.status.clone(),
-                resource_id: request.resource_id.clone(),
-                resource_type: request.resource_type.clone(),
-                name: request.name.clone(),
-                description: request.description.clone(),
-                environment: request.environment.clone(),
-                owner: request.owner.clone(),
-                parent_allocation_id: request.parent_allocation_id.clone(),
-                tags: request.tags.clone(),
-                ttl_seconds: request.ttl_seconds,
-            };
-            let alloc = self.store.create_allocation(tenant_id, &input).await?;
-            self.audit(
-                tenant_id,
-                "allocate",
-                "allocation",
-                &alloc.id,
-                Some(&alloc.cidr),
-            )
-            .await?;
-            allocations.push(alloc);
-        }
-        Ok(allocations)
+        Self::validate_auto_allocate(request)?;
+        let mutation = allocation::AllocateAuto {
+            tenant_id: tenant_id.to_string(),
+            request: request.clone(),
+        };
+        Ok(self.run(tenant_id, mutation, None).await?.into_inner())
     }
 
     pub async fn get_allocation(&self, tenant_id: &str, id: &str) -> Result<Allocation> {
@@ -408,47 +244,28 @@ impl IpamOps {
         validation::validate_optional_text(&input.environment, 0)?;
         validation::validate_optional_identifier(&input.resource_id)?;
 
-        // Resolve the parent cidr_block so we can serialize against concurrent
-        // allocations into it.
+        // Learn which block to lock; the unit re-reads the allocation under it.
         let existing = self.store.get_allocation(tenant_id, id).await?;
-        let lock = self.cidr_block_lock(&existing.cidr_block_id);
-        let _guard = lock.lock().await;
-
-        // When reactivating a released allocation, check for overlap
-        if let Some(ref new_status) = input.status
-            && (*new_status == AllocationStatus::Active
-                || *new_status == AllocationStatus::Reserved)
-            && existing.status == AllocationStatus::Released
-        {
-            let candidate_range = parse_range(&existing.cidr)?;
-            self.check_overlap(
-                tenant_id,
-                &existing.cidr_block_id,
-                &candidate_range,
-                &existing.cidr,
-            )
-            .await?;
-        }
-
-        let alloc = self.store.update_allocation(tenant_id, id, input).await?;
-        self.audit(tenant_id, "update", "allocation", id, None)
-            .await?;
-        Ok(alloc)
+        let mutation = allocation::UpdateAllocationMutation {
+            tenant_id: tenant_id.to_string(),
+            id: id.to_string(),
+            cidr_block_id: existing.cidr_block_id,
+            input: input.clone(),
+        };
+        Ok(self.run(tenant_id, mutation, None).await?.into_inner())
     }
 
     pub async fn release_allocation(&self, tenant_id: &str, id: &str) -> Result<Allocation> {
         validation::validate_identifier(id)?;
 
-        // Lock the parent cidr_block so a concurrent allocate_specific that
-        // races a release sees a consistent snapshot.
+        // Learn which block to lock; the unit re-reads the allocation under it.
         let existing = self.store.get_allocation(tenant_id, id).await?;
-        let lock = self.cidr_block_lock(&existing.cidr_block_id);
-        let _guard = lock.lock().await;
-
-        let alloc = self.store.release_allocation(tenant_id, id).await?;
-        self.audit(tenant_id, "release", "allocation", id, Some(&alloc.cidr))
-            .await?;
-        Ok(alloc)
+        let mutation = allocation::ReleaseAllocationMutation {
+            tenant_id: tenant_id.to_string(),
+            id: id.to_string(),
+            cidr_block_id: existing.cidr_block_id,
+        };
+        Ok(self.run(tenant_id, mutation, None).await?.into_inner())
     }
 
     // -----------------------------------------------------------------------
@@ -680,36 +497,15 @@ impl IpamOps {
     /// Release all allocations whose `expires_at` has passed.
     /// Returns the number of expired allocations released.
     pub async fn reap_expired(&self, tenant_id: &str) -> Result<usize> {
-        let now = Utc::now().to_rfc3339();
         let cidr_blocks = self.store.list_cidr_blocks(tenant_id).await?;
         let mut reaped = 0;
-
-        for sn in &cidr_blocks {
-            let active = self
-                .store
-                .find_allocations_in_cidr_block(
-                    tenant_id,
-                    &sn.id,
-                    &[AllocationStatus::Active, AllocationStatus::Reserved],
-                )
-                .await?;
-
-            for alloc in &active {
-                if let Some(ref expires) = alloc.expires_at
-                    && expires.as_str() <= now.as_str()
-                {
-                    self.store.release_allocation(tenant_id, &alloc.id).await?;
-                    self.audit(
-                        tenant_id,
-                        "expire",
-                        "allocation",
-                        &alloc.id,
-                        Some(&alloc.cidr),
-                    )
-                    .await?;
-                    reaped += 1;
-                }
-            }
+        // One unit per block: each block's expiry commits on its own.
+        for block in &cidr_blocks {
+            let mutation = allocation::ExpireInBlock {
+                tenant_id: tenant_id.to_string(),
+                cidr_block_id: block.id.clone(),
+            };
+            reaped += self.run(tenant_id, mutation, None).await?.into_inner();
         }
         Ok(reaped)
     }
@@ -1089,38 +885,20 @@ impl IpamOps {
         Ok(())
     }
 
+    fn validate_auto_allocate(request: &AutoAllocateRequest) -> Result<()> {
+        validation::validate_identifier(&request.cidr_block_id)?;
+        validation::validate_optional_text(&request.name, 0)?;
+        validation::validate_optional_text(&request.description, 0)?;
+        validation::validate_optional_text(&request.owner, 0)?;
+        validation::validate_optional_text(&request.environment, 0)?;
+        validation::validate_optional_identifier(&request.resource_id)?;
+        validation::validate_optional_identifier(&request.parent_allocation_id)?;
+        Ok(())
+    }
+
     // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
-
-    async fn check_overlap(
-        &self,
-        tenant_id: &str,
-        cidr_block_id: &str,
-        candidate: &IpRange,
-        candidate_cidr: &str,
-    ) -> Result<()> {
-        let existing = self
-            .store
-            .find_allocations_in_cidr_block(
-                tenant_id,
-                cidr_block_id,
-                &[AllocationStatus::Active, AllocationStatus::Reserved],
-            )
-            .await?;
-
-        for alloc in &existing {
-            if let Ok(range) = parse_range(&alloc.cidr)
-                && ranges_overlap(candidate, &range)
-            {
-                return Err(NetcidrError::AllocationConflict {
-                    existing: alloc.cidr.clone(),
-                    candidate: candidate_cidr.to_string(),
-                });
-            }
-        }
-        Ok(())
-    }
 
     // --- hostname pointers ---
 
@@ -1621,35 +1399,17 @@ impl IpamOps {
         input: &CreateAllocation,
         idempotency_key: &str,
     ) -> Result<IdempotentOutcome<Allocation>> {
-        let scope = format!("allocate-specific:{}", input.cidr_block_id);
-        let hash = idempotency::input_hash(input)?;
-
-        if let Some(replay) = idempotency::try_replay::<Allocation>(
-            self.store(),
-            tenant_id,
-            idempotency_key,
-            &scope,
-            &hash,
-        )
-        .await?
-        {
-            return Ok(IdempotentOutcome::Replayed(replay));
-        }
-
-        let allocation = self.allocate_specific(tenant_id, input).await?;
-        if let Err(e) = idempotency::record_output(
-            self.store(),
-            tenant_id,
-            idempotency_key,
-            &scope,
-            &hash,
-            &allocation,
-        )
-        .await
-        {
-            tracing::warn!(error = %e, "failed to record idempotency key");
-        }
-        Ok(IdempotentOutcome::Fresh(allocation))
+        Self::validate_create_allocation(input)?;
+        let spec = IdempotencySpec {
+            key: idempotency_key.to_string(),
+            scope: format!("allocate-specific:{}", input.cidr_block_id),
+            request_hash: idempotency::input_hash(input)?,
+        };
+        let mutation = allocation::AllocateSpecific {
+            tenant_id: tenant_id.to_string(),
+            input: input.clone(),
+        };
+        self.run(tenant_id, mutation, Some(spec)).await
     }
 
     /// Idempotency-aware variant of [`Self::allocate_auto`].
@@ -1660,35 +1420,17 @@ impl IpamOps {
         request: &AutoAllocateRequest,
         idempotency_key: &str,
     ) -> Result<IdempotentOutcome<Vec<Allocation>>> {
-        let scope = format!("auto-allocate:{}", request.cidr_block_id);
-        let hash = idempotency::input_hash(request)?;
-
-        if let Some(replay) = idempotency::try_replay::<Vec<Allocation>>(
-            self.store(),
-            tenant_id,
-            idempotency_key,
-            &scope,
-            &hash,
-        )
-        .await?
-        {
-            return Ok(IdempotentOutcome::Replayed(replay));
-        }
-
-        let allocations = self.allocate_auto(tenant_id, request).await?;
-        if let Err(e) = idempotency::record_output(
-            self.store(),
-            tenant_id,
-            idempotency_key,
-            &scope,
-            &hash,
-            &allocations,
-        )
-        .await
-        {
-            tracing::warn!(error = %e, "failed to record idempotency key");
-        }
-        Ok(IdempotentOutcome::Fresh(allocations))
+        Self::validate_auto_allocate(request)?;
+        let spec = IdempotencySpec {
+            key: idempotency_key.to_string(),
+            scope: format!("auto-allocate:{}", request.cidr_block_id),
+            request_hash: idempotency::input_hash(request)?,
+        };
+        let mutation = allocation::AllocateAuto {
+            tenant_id: tenant_id.to_string(),
+            request: request.clone(),
+        };
+        self.run(tenant_id, mutation, Some(spec)).await
     }
 
     /// Idempotency-aware variant of [`Self::batch_allocate`].

@@ -19,6 +19,29 @@ const TEST_TENANT: &str = "test@example.com";
 // Test harness: macro generates identical tests for each backend
 // ---------------------------------------------------------------------------
 
+/// Commit `writes` in one transaction unit with no reads, no audit rows,
+/// and no idempotency record.
+async fn write_rows(
+    store: &dyn IpamStore,
+    writes: Vec<netcidr::ipam::store::Write>,
+) -> netcidr::error::Result<String> {
+    store
+        .transact(netcidr::ipam::store::TxUnit {
+            scope: netcidr::ipam::store::LockScope::Tenant {
+                tenant_id: TEST_TENANT.to_string(),
+            },
+            reads: vec![],
+            idempotency: None,
+            decide: Box::new(move |_| {
+                Ok(netcidr::ipam::store::Plan {
+                    writes,
+                    ..Default::default()
+                })
+            }),
+        })
+        .await
+}
+
 /// Macro that generates a full contract test suite for a given store factory.
 macro_rules! store_contract_tests {
     ($factory:ident) => {
@@ -318,9 +341,8 @@ macro_rules! store_contract_tests {
         }
 
         #[tokio::test]
-        async fn contract_allocation_update_partial() {
+        async fn contract_insert_allocation_round_trips_the_full_row() {
             let store = $factory().await;
-
             let sn = store
                 .create_cidr_block(
                     TEST_TENANT,
@@ -332,8 +354,64 @@ macro_rules! store_contract_tests {
                 )
                 .await
                 .unwrap();
+            let row = Allocation {
+                id: "alloc-fixed".to_string(),
+                tenant_id: TEST_TENANT.to_string(),
+                cidr_block_id: sn.id.clone(),
+                cidr: "10.0.1.0/24".to_string(),
+                network_address: "10.0.1.0".to_string(),
+                broadcast_address: "10.0.1.255".to_string(),
+                prefix_length: 24,
+                total_hosts: 256,
+                status: AllocationStatus::Reserved,
+                resource_id: Some("vpc-1".to_string()),
+                resource_type: Some("vpc".to_string()),
+                name: Some("web".to_string()),
+                description: Some("d".to_string()),
+                environment: Some("prod".to_string()),
+                owner: Some("team".to_string()),
+                parent_allocation_id: None,
+                tags: vec![Tag {
+                    key: "env".to_string(),
+                    value: "prod".to_string(),
+                }],
+                created_at: "2026-10-01T00:00:00+00:00".to_string(),
+                updated_at: "2026-10-01T00:00:00+00:00".to_string(),
+                released_at: None,
+                expires_at: Some("2026-10-02T00:00:00+00:00".to_string()),
+            };
+            write_rows(
+                &*store,
+                vec![netcidr::ipam::store::Write::InsertAllocation(row.clone())],
+            )
+            .await
+            .unwrap();
 
-            let alloc = store
+            let got = store
+                .get_allocation(TEST_TENANT, "alloc-fixed")
+                .await
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(&got).unwrap(),
+                serde_json::to_value(&row).unwrap()
+            );
+        }
+
+        #[tokio::test]
+        async fn contract_replace_allocation_overwrites_mutable_fields_only() {
+            let store = $factory().await;
+            let sn = store
+                .create_cidr_block(
+                    TEST_TENANT,
+                    &CreateCidrBlock {
+                        cidr: "10.0.0.0/8".to_string(),
+                        name: None,
+                        description: None,
+                    },
+                )
+                .await
+                .unwrap();
+            let original = store
                 .create_allocation(
                     TEST_TENANT,
                     &CreateAllocation {
@@ -347,79 +425,88 @@ macro_rules! store_contract_tests {
                         environment: None,
                         owner: None,
                         parent_allocation_id: None,
-                        tags: None,
+                        tags: Some(vec![Tag {
+                            key: "k".to_string(),
+                            value: "v".to_string(),
+                        }]),
                         ttl_seconds: None,
                     },
                 )
                 .await
                 .unwrap();
 
-            // Update only description — name and resource_id should be preserved
-            let updated = store
-                .update_allocation(
-                    TEST_TENANT,
-                    &alloc.id,
-                    &UpdateAllocation {
-                        name: None,
-                        description: Some("new desc".to_string()),
-                        resource_id: None,
-                        resource_type: None,
-                        environment: None,
-                        owner: None,
-                        status: None,
-                    },
-                )
+            let mut changed = original.clone();
+            changed.status = AllocationStatus::Released;
+            changed.name = None;
+            changed.description = Some("new desc".to_string());
+            changed.updated_at = "2026-10-01T01:00:00+00:00".to_string();
+            changed.released_at = Some("2026-10-01T01:00:00+00:00".to_string());
+            // Not mutable: the replace must leave these as stored.
+            changed.cidr = "10.9.9.0/24".to_string();
+            changed.tags = vec![];
+            write_rows(
+                &*store,
+                vec![netcidr::ipam::store::Write::ReplaceAllocation(
+                    changed.clone(),
+                )],
+            )
+            .await
+            .unwrap();
+
+            let got = store
+                .get_allocation(TEST_TENANT, &original.id)
                 .await
                 .unwrap();
-
-            assert_eq!(updated.description, Some("new desc".to_string()));
-            assert_eq!(updated.name, Some("original".to_string()));
-            assert_eq!(updated.resource_id, Some("vpc-123".to_string()));
+            assert_eq!(got.status, AllocationStatus::Released);
+            assert_eq!(got.name, None);
+            assert_eq!(got.description, Some("new desc".to_string()));
+            assert_eq!(got.resource_id, Some("vpc-123".to_string()));
+            assert_eq!(got.updated_at, changed.updated_at);
+            assert_eq!(got.released_at, changed.released_at);
+            assert_eq!(got.cidr, original.cidr);
+            assert_eq!(
+                serde_json::to_value(&got.tags).unwrap(),
+                serde_json::to_value(&original.tags).unwrap()
+            );
         }
 
         #[tokio::test]
-        async fn contract_allocation_release() {
+        async fn contract_replace_of_a_missing_allocation_is_not_found() {
             let store = $factory().await;
-
-            let sn = store
-                .create_cidr_block(
-                    TEST_TENANT,
-                    &CreateCidrBlock {
-                        cidr: "10.0.0.0/8".to_string(),
-                        name: None,
-                        description: None,
-                    },
-                )
-                .await
-                .unwrap();
-
-            let alloc = store
-                .create_allocation(
-                    TEST_TENANT,
-                    &CreateAllocation {
-                        cidr_block_id: sn.id.clone(),
-                        cidr: "10.0.0.0/24".to_string(),
-                        status: None,
-                        resource_id: None,
-                        resource_type: None,
-                        name: None,
-                        description: None,
-                        environment: None,
-                        owner: None,
-                        parent_allocation_id: None,
-                        tags: None,
-                        ttl_seconds: None,
-                    },
-                )
-                .await
-                .unwrap();
-
-            let released = store
-                .release_allocation(TEST_TENANT, &alloc.id)
-                .await
-                .unwrap();
-            assert_eq!(released.status, AllocationStatus::Released);
-            assert!(released.released_at.is_some());
+            let mut ghost = Allocation {
+                id: "ghost".to_string(),
+                tenant_id: TEST_TENANT.to_string(),
+                cidr_block_id: "nope".to_string(),
+                cidr: "10.0.0.0/24".to_string(),
+                network_address: "10.0.0.0".to_string(),
+                broadcast_address: "10.0.0.255".to_string(),
+                prefix_length: 24,
+                total_hosts: 256,
+                status: AllocationStatus::Active,
+                resource_id: None,
+                resource_type: None,
+                name: None,
+                description: None,
+                environment: None,
+                owner: None,
+                parent_allocation_id: None,
+                tags: vec![],
+                created_at: String::new(),
+                updated_at: String::new(),
+                released_at: None,
+                expires_at: None,
+            };
+            ghost.name = Some("x".to_string());
+            let err = write_rows(
+                &*store,
+                vec![netcidr::ipam::store::Write::ReplaceAllocation(ghost)],
+            )
+            .await
+            .unwrap_err();
+            assert!(
+                matches!(err, NetcidrError::AllocationNotFound(_)),
+                "got {err:?}"
+            );
         }
 
         #[tokio::test]
@@ -622,7 +709,15 @@ macro_rules! store_contract_tests {
                 .await
                 .unwrap();
 
-            store.release_allocation(TEST_TENANT, &a1.id).await.unwrap();
+            let mut gone = a1.clone();
+            gone.status = AllocationStatus::Released;
+            gone.released_at = Some("2026-10-01T00:00:00+00:00".to_string());
+            write_rows(
+                &*store,
+                vec![netcidr::ipam::store::Write::ReplaceAllocation(gone)],
+            )
+            .await
+            .unwrap();
 
             // Only reserved should remain in active+reserved query
             let active = store
@@ -2051,7 +2146,15 @@ mod migration_upgrade {
             .unwrap();
 
         // Release one
-        store.release_allocation(TEST_TENANT, &a1.id).await.unwrap();
+        let mut gone = a1.clone();
+        gone.status = AllocationStatus::Released;
+        gone.released_at = Some("2026-10-01T00:00:00+00:00".to_string());
+        write_rows(
+            &*store,
+            vec![netcidr::ipam::store::Write::ReplaceAllocation(gone)],
+        )
+        .await
+        .unwrap();
 
         // Set tags
         store

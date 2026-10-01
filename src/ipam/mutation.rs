@@ -17,7 +17,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use crate::audit_context::AuditContext;
 use crate::error::{NetcidrError, Result};
 use crate::ipam::idempotency::TTL;
-use crate::ipam::models::{AuditEntry, CidrBlock, IdempotencyRecord};
+use crate::ipam::models::{Allocation, AllocationStatus, AuditEntry, CidrBlock, IdempotencyRecord};
 use crate::ipam::operations::IdempotentOutcome;
 use crate::ipam::store::{
     IdempotencyLookup, IpamStore, Loaded, LockScope, Plan, Read, Rows, TxUnit, Write,
@@ -131,6 +131,29 @@ impl ReadSet {
             id: id.to_string(),
         })
     }
+
+    /// The allocation `id` in `tenant_id` (with tags), or `None`.
+    pub fn allocation(&mut self, tenant_id: &str, id: &str) -> Handle<Option<Allocation>> {
+        self.push(Read::Allocation {
+            tenant_id: tenant_id.to_string(),
+            id: id.to_string(),
+        })
+    }
+
+    /// A cidr block's allocations in `statuses` (with tags), ordered by
+    /// network address.
+    pub fn allocations_in_block(
+        &mut self,
+        tenant_id: &str,
+        cidr_block_id: &str,
+        statuses: &[AllocationStatus],
+    ) -> Handle<Vec<Allocation>> {
+        self.push(Read::AllocationsInBlock {
+            tenant_id: tenant_id.to_string(),
+            cidr_block_id: cidr_block_id.to_string(),
+            statuses: statuses.to_vec(),
+        })
+    }
 }
 
 /// A row type a [`Handle`] can resolve to.
@@ -142,6 +165,25 @@ impl FromRows for Option<CidrBlock> {
     fn from_rows(rows: &Rows) -> Option<&Self> {
         match rows {
             Rows::CidrBlock(block) => Some(block),
+            _ => None,
+        }
+    }
+}
+
+impl FromRows for Option<Allocation> {
+    fn from_rows(rows: &Rows) -> Option<&Self> {
+        match rows {
+            Rows::Allocation(alloc) => Some(alloc),
+            _ => None,
+        }
+    }
+}
+
+impl FromRows for Vec<Allocation> {
+    fn from_rows(rows: &Rows) -> Option<&Self> {
+        match rows {
+            Rows::Allocations(allocs) => Some(allocs),
+            _ => None,
         }
     }
 }

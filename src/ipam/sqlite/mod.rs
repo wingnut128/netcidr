@@ -338,16 +338,120 @@ fn insert_idempotency(conn: &Connection, record: &IdempotencyRecord) -> Result<(
     Ok(())
 }
 
+fn read_allocation(conn: &Connection, tenant_id: &str, id: &str) -> Result<Option<Allocation>> {
+    let alloc = conn
+        .query_row(
+            "SELECT id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = ?1 AND tenant_id = ?2",
+            params![id, tenant_id],
+            SqliteStore::row_to_allocation,
+        )
+        .optional()
+        .map_err(db_err)?;
+    match alloc {
+        Some(mut a) => {
+            a.tags = SqliteStore::load_tags_for_allocation(conn, tenant_id, id)?;
+            Ok(Some(a))
+        }
+        None => Ok(None),
+    }
+}
+
+fn read_allocations_in_block(
+    conn: &Connection,
+    tenant_id: &str,
+    cidr_block_id: &str,
+    statuses: &[AllocationStatus],
+) -> Result<Vec<Allocation>> {
+    if statuses.is_empty() {
+        return Ok(Vec::new());
+    }
+    // ?1 = cidr_block_id, ?2 = tenant_id, statuses start at ?3.
+    let placeholders: Vec<String> = (0..statuses.len()).map(|i| format!("?{}", i + 3)).collect();
+    let sql = format!(
+        "SELECT id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE cidr_block_id = ?1 AND tenant_id = ?2 AND status IN ({}) ORDER BY network_address",
+        placeholders.join(", ")
+    );
+    let mut values: Vec<String> = vec![cidr_block_id.to_string(), tenant_id.to_string()];
+    values.extend(statuses.iter().map(|s| s.to_string()));
+    let mut stmt = conn.prepare(&sql).map_err(db_err)?;
+    let mut allocations = stmt
+        .query_map(
+            rusqlite::params_from_iter(values.iter()),
+            SqliteStore::row_to_allocation,
+        )
+        .map_err(db_err)?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(db_err)?;
+    for alloc in &mut allocations {
+        alloc.tags = SqliteStore::load_tags_for_allocation(conn, tenant_id, &alloc.id)?;
+    }
+    Ok(allocations)
+}
+
+fn insert_allocation(conn: &Connection, a: &Allocation) -> Result<()> {
+    conn.execute(
+        "INSERT INTO allocations (id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+        params![
+            a.id, a.tenant_id, a.cidr_block_id, a.cidr, a.network_address, a.broadcast_address,
+            a.prefix_length, a.total_hosts.to_string(), a.resource_id, a.resource_type, a.name,
+            a.description, a.environment, a.owner, a.status.to_string(), a.parent_allocation_id,
+            a.created_at, a.updated_at, a.released_at, a.expires_at
+        ],
+    )
+    .map_err(db_err)?;
+    for tag in &a.tags {
+        conn.execute(
+            "INSERT INTO allocation_tags (allocation_id, tenant_id, key, value) VALUES (?1, ?2, ?3, ?4)",
+            params![a.id, a.tenant_id, tag.key, tag.value],
+        )
+        .map_err(db_err)?;
+    }
+    Ok(())
+}
+
+fn replace_allocation(conn: &Connection, a: &Allocation) -> Result<()> {
+    let updated = conn
+        .execute(
+            "UPDATE allocations SET status = ?1, resource_id = ?2, resource_type = ?3, name = ?4, description = ?5, environment = ?6, owner = ?7, updated_at = ?8, released_at = ?9, expires_at = ?10 WHERE id = ?11 AND tenant_id = ?12",
+            params![
+                a.status.to_string(), a.resource_id, a.resource_type, a.name, a.description,
+                a.environment, a.owner, a.updated_at, a.released_at, a.expires_at, a.id, a.tenant_id
+            ],
+        )
+        .map_err(db_err)?;
+    if updated == 0 {
+        return Err(NetcidrError::AllocationNotFound(a.id.clone()));
+    }
+    Ok(())
+}
+
 fn read_one(conn: &Connection, read: &Read) -> Result<Rows> {
     match read {
         Read::CidrBlock { tenant_id, id } => {
             Ok(Rows::CidrBlock(read_cidr_block(conn, tenant_id, id)?))
         }
+        Read::Allocation { tenant_id, id } => {
+            Ok(Rows::Allocation(read_allocation(conn, tenant_id, id)?))
+        }
+        Read::AllocationsInBlock {
+            tenant_id,
+            cidr_block_id,
+            statuses,
+        } => Ok(Rows::Allocations(read_allocations_in_block(
+            conn,
+            tenant_id,
+            cidr_block_id,
+            statuses,
+        )?)),
     }
 }
 
-fn apply_write(_conn: &Connection, write: &Write) -> Result<()> {
-    match *write {}
+fn apply_write(conn: &Connection, write: &Write) -> Result<()> {
+    match write {
+        Write::InsertAllocation(a) => insert_allocation(conn, a),
+        Write::ReplaceAllocation(a) => replace_allocation(conn, a),
+    }
 }
 
 /// Run a transaction unit to completion on the calling (blocking) thread.
@@ -662,18 +766,8 @@ impl IpamStore for SqliteStore {
 
     async fn get_allocation(&self, tenant_id: &str, id: &str) -> Result<Allocation> {
         let conn = self.conn()?;
-        let mut alloc = conn
-            .query_row(
-                "SELECT id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = ?1 AND tenant_id = ?2",
-                params![id, tenant_id],
-                Self::row_to_allocation,
-            )
-            .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => NetcidrError::AllocationNotFound(id.to_string()),
-                _ => NetcidrError::DatabaseError(e.to_string()),
-            })?;
-        alloc.tags = Self::load_tags_for_allocation(&conn, tenant_id, id)?;
-        Ok(alloc)
+        read_allocation(&conn, tenant_id, id)?
+            .ok_or_else(|| NetcidrError::AllocationNotFound(id.to_string()))
     }
 
     async fn list_allocations(
@@ -749,157 +843,15 @@ impl IpamStore for SqliteStore {
         Ok(allocations)
     }
 
-    async fn update_allocation(
-        &self,
-        tenant_id: &str,
-        id: &str,
-        input: &UpdateAllocation,
-    ) -> Result<Allocation> {
-        let conn = self.conn()?;
-        let now = Self::now();
-
-        // Verify allocation exists in this tenant
-        Self::assert_allocation_in_tenant(&conn, tenant_id, id)?;
-
-        let mut sets = vec!["updated_at = ?1".to_string()];
-        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(now)];
-        let mut idx = 2;
-
-        macro_rules! set_field {
-            ($field:ident, $col:expr) => {
-                if let Some(ref val) = input.$field {
-                    sets.push(format!("{} = ?{}", $col, idx));
-                    param_values.push(Box::new(val.to_string()));
-                    idx += 1;
-                }
-            };
-        }
-        set_field!(name, "name");
-        set_field!(description, "description");
-        set_field!(resource_id, "resource_id");
-        set_field!(resource_type, "resource_type");
-        set_field!(environment, "environment");
-        set_field!(owner, "owner");
-        set_field!(status, "status");
-
-        // Clear released_at when reactivating (status changes to active/reserved)
-        if let Some(ref status) = input.status {
-            let s = status.to_string();
-            if s == "active" || s == "reserved" {
-                sets.push("released_at = NULL".to_string());
-            }
-        }
-
-        let id_idx = idx;
-        let tenant_idx = idx + 1;
-        let sql = format!(
-            "UPDATE allocations SET {} WHERE id = ?{} AND tenant_id = ?{}",
-            sets.join(", "),
-            id_idx,
-            tenant_idx,
-        );
-        param_values.push(Box::new(id.to_string()));
-        param_values.push(Box::new(tenant_id.to_string()));
-
-        let params_refs: Vec<&dyn rusqlite::types::ToSql> =
-            param_values.iter().map(|p| p.as_ref()).collect();
-
-        conn.execute(&sql, params_refs.as_slice())
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        // Fetch updated allocation using same connection
-        let mut alloc = conn
-            .query_row(
-                "SELECT id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = ?1 AND tenant_id = ?2",
-                params![id, tenant_id],
-                Self::row_to_allocation,
-            )
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        alloc.tags = Self::load_tags_for_allocation(&conn, tenant_id, id)?;
-        Ok(alloc)
-    }
-
-    async fn release_allocation(&self, tenant_id: &str, id: &str) -> Result<Allocation> {
-        let conn = self.conn()?;
-        let now = Self::now();
-
-        let updated = conn
-            .execute(
-                "UPDATE allocations SET status = 'released', released_at = ?1, updated_at = ?1 WHERE id = ?2 AND tenant_id = ?3 AND status != 'released'",
-                params![now, id, tenant_id],
-            )
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        if updated == 0 {
-            // Either it doesn't exist (in this tenant) or it's already released.
-            let exists: bool = conn
-                .query_row(
-                    "SELECT COUNT(*) > 0 FROM allocations WHERE id = ?1 AND tenant_id = ?2",
-                    params![id, tenant_id],
-                    |row| row.get(0),
-                )
-                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-            if !exists {
-                return Err(NetcidrError::AllocationNotFound(id.to_string()));
-            }
-        }
-
-        // Fetch using same connection to avoid pool exhaustion
-        let mut alloc = conn
-            .query_row(
-                "SELECT id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = ?1 AND tenant_id = ?2",
-                params![id, tenant_id],
-                Self::row_to_allocation,
-            )
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        alloc.tags = Self::load_tags_for_allocation(&conn, tenant_id, id)?;
-        Ok(alloc)
-    }
-
     async fn find_allocations_in_cidr_block(
         &self,
         tenant_id: &str,
         cidr_block_id: &str,
         statuses: &[AllocationStatus],
     ) -> Result<Vec<Allocation>> {
-        if statuses.is_empty() {
-            return Ok(Vec::new());
-        }
         let conn = self.conn()?;
-        // ?1 = cidr_block_id, ?2 = tenant_id, statuses start at ?3.
-        let placeholders: Vec<String> =
-            (0..statuses.len()).map(|i| format!("?{}", i + 3)).collect();
-        let sql = format!(
-            "SELECT id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE cidr_block_id = ?1 AND tenant_id = ?2 AND status IN ({}) ORDER BY network_address",
-            placeholders.join(", ")
-        );
-
-        let mut params_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-        params_values.push(Box::new(cidr_block_id.to_string()));
-        params_values.push(Box::new(tenant_id.to_string()));
-        for s in statuses {
-            params_values.push(Box::new(s.to_string()));
-        }
-        let params_refs: Vec<&dyn rusqlite::types::ToSql> =
-            params_values.iter().map(|p| p.as_ref()).collect();
-
-        let mut stmt = conn
-            .prepare(&sql)
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        let rows = stmt
-            .query_map(params_refs.as_slice(), Self::row_to_allocation)
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        let mut allocations = rows;
-        for alloc in &mut allocations {
-            alloc.tags = Self::load_tags_for_allocation(&conn, tenant_id, &alloc.id)?;
-        }
-        Ok(allocations)
+        read_allocations_in_block(&conn, tenant_id, cidr_block_id, statuses)
     }
-
-    // --- tags ---
 
     async fn set_tags(&self, tenant_id: &str, allocation_id: &str, tags: &[Tag]) -> Result<()> {
         let conn = self.conn()?;
@@ -1961,8 +1913,9 @@ mod tests {
         assert_eq!(fetched.resource_id, Some("vpc-123".to_string()));
         assert_eq!(fetched.tags.len(), 1);
 
-        // Update
-        let updated = store
+        // Update and release go through the operations layer.
+        let ops = crate::ipam::operations::IpamOps::new(std::sync::Arc::new(store));
+        let updated = ops
             .update_allocation(
                 TEST_TENANT,
                 &alloc.id,
@@ -1981,7 +1934,7 @@ mod tests {
         assert_eq!(updated.description, Some("updated desc".to_string()));
 
         // Release
-        let released = store
+        let released = ops
             .release_allocation(TEST_TENANT, &alloc.id)
             .await
             .unwrap();
@@ -2094,7 +2047,11 @@ mod tests {
             .await
             .unwrap();
 
-        store.release_allocation(TEST_TENANT, &a1.id).await.unwrap();
+        let store = std::sync::Arc::new(store);
+        crate::ipam::operations::IpamOps::new(store.clone())
+            .release_allocation(TEST_TENANT, &a1.id)
+            .await
+            .unwrap();
 
         let active = store
             .find_allocations_in_cidr_block(
