@@ -1078,6 +1078,26 @@ impl IpamStore for PostgresStore {
         read_allocations_in_block(&mut conn, tenant_id, cidr_block_id, statuses).await
     }
 
+    async fn due_expiry_blocks(&self, now_rfc3339: &str) -> Result<Vec<ExpiryDue>> {
+        let rows = sqlx::query(
+            "SELECT DISTINCT tenant_id, cidr_block_id FROM allocations \
+             WHERE status IN ('active', 'reserved') \
+               AND expires_at IS NOT NULL AND expires_at <= $1 \
+             ORDER BY tenant_id, cidr_block_id",
+        )
+        .bind(now_rfc3339)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(rows
+            .iter()
+            .map(|row| ExpiryDue {
+                tenant_id: row.get("tenant_id"),
+                cidr_block_id: row.get("cidr_block_id"),
+            })
+            .collect())
+    }
+
     async fn get_tags(&self, tenant_id: &str, allocation_id: &str) -> Result<Vec<Tag>> {
         self.assert_allocation_in_tenant(tenant_id, allocation_id)
             .await?;

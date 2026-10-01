@@ -616,6 +616,14 @@ impl From<PersonalAccessToken> for PersonalAccessTokenSummary {
 /// A cached response keyed by client-supplied `Idempotency-Key` plus a scope
 /// (endpoint + resource ID) so retries on the same logical operation return
 /// the same result without re-executing.
+/// A cidr block with at least one allocation past its `expires_at`; see
+/// `IpamStore::due_expiry_blocks`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ExpiryDue {
+    pub tenant_id: String,
+    pub cidr_block_id: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdempotencyRecord {
     pub tenant_id: String,
