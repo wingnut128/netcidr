@@ -238,8 +238,11 @@ pub async fn fetch_auth_features(api_url: &str) -> Result<AuthFeatures> {
 
     let auth = body.auth.ok_or_else(|| {
         NetcidrError::Auth(format!(
-            "server at {api_url} has no CLI OAuth client configured \
-             (set NETCIDR_OIDC_CLI_CLIENT_ID)"
+            "server at {api_url} has no CLI OAuth client configured; the \
+             server needs NETCIDR_AUTH_MODE=oidc plus both \
+             NETCIDR_OIDC_CLI_CLIENT_ID and NETCIDR_OIDC_CLI_CLIENT_SECRET \
+             (a Desktop-app OAuth client). Meanwhile, set NETCIDR_API_TOKEN \
+             to a personal access token instead"
         ))
     })?;
 
