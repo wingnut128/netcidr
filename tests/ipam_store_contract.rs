@@ -886,11 +886,12 @@ macro_rules! store_contract_tests {
                 .unwrap();
 
             // Set initial tags
-            store
-                .set_tags(
-                    TEST_TENANT,
-                    &alloc.id,
-                    &[
+            write_rows(
+                &*store,
+                vec![netcidr::ipam::store::Write::ReplaceTags {
+                    tenant_id: TEST_TENANT.to_string(),
+                    allocation_id: alloc.id.clone(),
+                    tags: vec![
                         Tag {
                             key: "env".to_string(),
                             value: "prod".to_string(),
@@ -900,25 +901,28 @@ macro_rules! store_contract_tests {
                             value: "platform".to_string(),
                         },
                     ],
-                )
-                .await
-                .unwrap();
+                }],
+            )
+            .await
+            .unwrap();
 
             let tags = store.get_tags(TEST_TENANT, &alloc.id).await.unwrap();
             assert_eq!(tags.len(), 2);
 
             // Replace with different tags
-            store
-                .set_tags(
-                    TEST_TENANT,
-                    &alloc.id,
-                    &[Tag {
+            write_rows(
+                &*store,
+                vec![netcidr::ipam::store::Write::ReplaceTags {
+                    tenant_id: TEST_TENANT.to_string(),
+                    allocation_id: alloc.id.clone(),
+                    tags: vec![Tag {
                         key: "env".to_string(),
                         value: "staging".to_string(),
                     }],
-                )
-                .await
-                .unwrap();
+                }],
+            )
+            .await
+            .unwrap();
 
             let tags = store.get_tags(TEST_TENANT, &alloc.id).await.unwrap();
             assert_eq!(tags.len(), 1);

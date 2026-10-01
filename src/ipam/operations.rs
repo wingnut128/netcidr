@@ -756,13 +756,32 @@ impl IpamOps {
     // Tags
     // -----------------------------------------------------------------------
 
+    /// Replace every tag on an allocation, under its cidr block's Lock
+    /// Scope. Keys must be unique.
     pub async fn set_tags(&self, tenant_id: &str, allocation_id: &str, tags: &[Tag]) -> Result<()> {
         validation::validate_identifier(allocation_id)?;
+        let mut keys = std::collections::HashSet::new();
         for tag in tags {
             validation::validate_text_field(&tag.key, 0)?;
             validation::validate_text_field(&tag.value, 0)?;
+            if !keys.insert(tag.key.as_str()) {
+                return Err(NetcidrError::InvalidInput(
+                    "tag keys must be unique".to_string(),
+                ));
+            }
         }
-        self.store.set_tags(tenant_id, allocation_id, tags).await
+
+        // Learn which block to lock; the unit re-reads the allocation under it.
+        let existing = self.store.get_allocation(tenant_id, allocation_id).await?;
+        let mutation = allocation::SetTags {
+            tenant_id: tenant_id.to_string(),
+            id: allocation_id.to_string(),
+            cidr_block_id: existing.cidr_block_id,
+            tags: tags.to_vec(),
+        };
+        self.run(tenant_id, mutation, None)
+            .await
+            .map(IdempotentOutcome::into_inner)
     }
 
     pub async fn get_tags(&self, tenant_id: &str, allocation_id: &str) -> Result<Vec<Tag>> {
@@ -2678,6 +2697,102 @@ mod tests {
     // -----------------------------------------------------------------------
     // Property-based tests
     // -----------------------------------------------------------------------
+
+    async fn ops_with_allocation() -> (IpamOps, String) {
+        let ops = test_ops().await;
+        let block = ops
+            .create_cidr_block(
+                TEST_TENANT,
+                &CreateCidrBlock {
+                    cidr: "10.0.0.0/8".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
+            .await
+            .unwrap();
+        let alloc = ops
+            .allocate_auto(
+                TEST_TENANT,
+                &AutoAllocateRequest {
+                    cidr_block_id: block.id,
+                    prefix_length: 24,
+                    count: None,
+                    status: None,
+                    resource_id: None,
+                    resource_type: None,
+                    name: None,
+                    description: None,
+                    environment: None,
+                    owner: None,
+                    parent_allocation_id: None,
+                    tags: None,
+                    ttl_seconds: None,
+                },
+            )
+            .await
+            .unwrap()
+            .remove(0);
+        (ops, alloc.id)
+    }
+
+    fn tag(k: &str, v: &str) -> Tag {
+        Tag {
+            key: k.to_string(),
+            value: v.to_string(),
+        }
+    }
+
+    async fn set_tags_audit_rows(ops: &IpamOps) -> usize {
+        ops.query_audit(
+            TEST_TENANT,
+            &AuditFilter {
+                action: Some("set_tags".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap()
+        .len()
+    }
+
+    #[tokio::test]
+    async fn set_tags_replaces_tags_and_audits_only_real_changes() {
+        let (ops, id) = ops_with_allocation().await;
+        ops.set_tags(TEST_TENANT, &id, &[tag("env", "prod"), tag("team", "net")])
+            .await
+            .unwrap();
+        ops.set_tags(TEST_TENANT, &id, &[tag("env", "staging")])
+            .await
+            .unwrap();
+        let tags = ops.get_tags(TEST_TENANT, &id).await.unwrap();
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].value, "staging");
+        assert_eq!(set_tags_audit_rows(&ops).await, 2);
+
+        // The same set again changes nothing.
+        ops.set_tags(TEST_TENANT, &id, &[tag("env", "staging")])
+            .await
+            .unwrap();
+        assert_eq!(set_tags_audit_rows(&ops).await, 2);
+    }
+
+    #[tokio::test]
+    async fn set_tags_rejects_duplicate_keys_and_unknown_allocations() {
+        let (ops, id) = ops_with_allocation().await;
+        let dup = ops
+            .set_tags(TEST_TENANT, &id, &[tag("env", "a"), tag("env", "b")])
+            .await;
+        assert!(matches!(dup, Err(NetcidrError::InvalidInput(_))));
+
+        let missing = ops.set_tags(TEST_TENANT, "nope", &[]).await;
+        assert!(matches!(missing, Err(NetcidrError::AllocationNotFound(_))));
+        let other_tenant = ops.set_tags("someone-else", &id, &[]).await;
+        assert!(matches!(
+            other_tenant,
+            Err(NetcidrError::AllocationNotFound(_))
+        ));
+    }
 
     mod prop {
         use super::*;

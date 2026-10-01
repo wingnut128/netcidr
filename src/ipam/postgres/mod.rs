@@ -484,12 +484,21 @@ async fn insert_allocation(conn: &mut sqlx::PgConnection, a: &Allocation) -> Res
     .execute(&mut *conn)
     .await
     .map_err(db_err)?;
-    for tag in &a.tags {
+    insert_tags(conn, &a.tenant_id, &a.id, &a.tags).await
+}
+
+async fn insert_tags(
+    conn: &mut sqlx::PgConnection,
+    tenant_id: &str,
+    allocation_id: &str,
+    tags: &[Tag],
+) -> Result<()> {
+    for tag in tags {
         sqlx::query(
             "INSERT INTO allocation_tags (allocation_id, tenant_id, key, value) VALUES ($1, $2, $3, $4)",
         )
-        .bind(&a.id)
-        .bind(&a.tenant_id)
+        .bind(allocation_id)
+        .bind(tenant_id)
         .bind(&tag.key)
         .bind(&tag.value)
         .execute(&mut *conn)
@@ -497,6 +506,21 @@ async fn insert_allocation(conn: &mut sqlx::PgConnection, a: &Allocation) -> Res
         .map_err(db_err)?;
     }
     Ok(())
+}
+
+async fn replace_tags(
+    conn: &mut sqlx::PgConnection,
+    tenant_id: &str,
+    allocation_id: &str,
+    tags: &[Tag],
+) -> Result<()> {
+    sqlx::query("DELETE FROM allocation_tags WHERE allocation_id = $1 AND tenant_id = $2")
+        .bind(allocation_id)
+        .bind(tenant_id)
+        .execute(&mut *conn)
+        .await
+        .map_err(db_err)?;
+    insert_tags(conn, tenant_id, allocation_id, tags).await
 }
 
 async fn replace_allocation(conn: &mut sqlx::PgConnection, a: &Allocation) -> Result<()> {
@@ -843,6 +867,11 @@ async fn apply_write(conn: &mut sqlx::PgConnection, write: &Write) -> Result<()>
         }
         Write::InsertAllocation(a) => insert_allocation(conn, a).await,
         Write::ReplaceAllocation(a) => replace_allocation(conn, a).await,
+        Write::ReplaceTags {
+            tenant_id,
+            allocation_id,
+            tags,
+        } => replace_tags(conn, tenant_id, allocation_id, tags).await,
         Write::PutUser(u) => put_user(&mut *conn, u).await,
         Write::DeleteUser { email } => delete_user_row(&mut *conn, email).await,
         Write::SetBootstrapMarker { key, applied_at } => {
@@ -1046,32 +1075,6 @@ impl IpamStore for PostgresStore {
     ) -> Result<Vec<Allocation>> {
         let mut conn = self.pool.acquire().await.map_err(db_err)?;
         read_allocations_in_block(&mut conn, tenant_id, cidr_block_id, statuses).await
-    }
-
-    async fn set_tags(&self, tenant_id: &str, allocation_id: &str, tags: &[Tag]) -> Result<()> {
-        self.assert_allocation_in_tenant(tenant_id, allocation_id)
-            .await?;
-
-        sqlx::query("DELETE FROM allocation_tags WHERE allocation_id = $1 AND tenant_id = $2")
-            .bind(allocation_id)
-            .bind(tenant_id)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        for tag in tags {
-            sqlx::query(
-                "INSERT INTO allocation_tags (allocation_id, tenant_id, key, value) VALUES ($1, $2, $3, $4)",
-            )
-            .bind(allocation_id)
-            .bind(tenant_id)
-            .bind(&tag.key)
-            .bind(&tag.value)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        }
-        Ok(())
     }
 
     async fn get_tags(&self, tenant_id: &str, allocation_id: &str) -> Result<Vec<Tag>> {

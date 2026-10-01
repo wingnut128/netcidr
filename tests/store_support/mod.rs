@@ -138,6 +138,14 @@ pub trait Seed {
     /// Delete a user row, without the platform-admin guards.
     async fn delete_user(&self, email: &str) -> netcidr::error::Result<()>;
 
+    /// Replace an allocation's tags, without checking that it exists.
+    async fn set_tags(
+        &self,
+        tenant_id: &str,
+        allocation_id: &str,
+        tags: &[netcidr::ipam::models::Tag],
+    ) -> netcidr::error::Result<()>;
+
     /// Insert a PAT row (fresh id, `created_at` now), without the per-owner
     /// limit.
     async fn pat_create(
@@ -215,6 +223,24 @@ impl<S: IpamStore + ?Sized> Seed for S {
             "local",
             vec![netcidr::ipam::store::Write::DeleteUser {
                 email: email.to_ascii_lowercase(),
+            }],
+        )
+        .await
+    }
+
+    async fn set_tags(
+        &self,
+        tenant_id: &str,
+        allocation_id: &str,
+        tags: &[netcidr::ipam::models::Tag],
+    ) -> netcidr::error::Result<()> {
+        commit_writes(
+            self,
+            tenant_id,
+            vec![netcidr::ipam::store::Write::ReplaceTags {
+                tenant_id: tenant_id.to_string(),
+                allocation_id: allocation_id.to_string(),
+                tags: tags.to_vec(),
             }],
         )
         .await

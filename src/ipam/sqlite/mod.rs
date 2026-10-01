@@ -467,14 +467,37 @@ fn insert_allocation(conn: &Connection, a: &Allocation) -> Result<()> {
         ],
     )
     .map_err(db_err)?;
-    for tag in &a.tags {
+    insert_tags(conn, &a.tenant_id, &a.id, &a.tags)
+}
+
+fn insert_tags(
+    conn: &Connection,
+    tenant_id: &str,
+    allocation_id: &str,
+    tags: &[Tag],
+) -> Result<()> {
+    for tag in tags {
         conn.execute(
             "INSERT INTO allocation_tags (allocation_id, tenant_id, key, value) VALUES (?1, ?2, ?3, ?4)",
-            params![a.id, a.tenant_id, tag.key, tag.value],
+            params![allocation_id, tenant_id, tag.key, tag.value],
         )
         .map_err(db_err)?;
     }
     Ok(())
+}
+
+fn replace_tags(
+    conn: &Connection,
+    tenant_id: &str,
+    allocation_id: &str,
+    tags: &[Tag],
+) -> Result<()> {
+    conn.execute(
+        "DELETE FROM allocation_tags WHERE allocation_id = ?1 AND tenant_id = ?2",
+        params![allocation_id, tenant_id],
+    )
+    .map_err(db_err)?;
+    insert_tags(conn, tenant_id, allocation_id, tags)
 }
 
 fn replace_allocation(conn: &Connection, a: &Allocation) -> Result<()> {
@@ -824,6 +847,11 @@ fn apply_write(conn: &Connection, write: &Write) -> Result<()> {
         Write::DeleteCidrBlock { tenant_id, id } => delete_cidr_block_rows(conn, tenant_id, id),
         Write::InsertAllocation(a) => insert_allocation(conn, a),
         Write::ReplaceAllocation(a) => replace_allocation(conn, a),
+        Write::ReplaceTags {
+            tenant_id,
+            allocation_id,
+            tags,
+        } => replace_tags(conn, tenant_id, allocation_id, tags),
         Write::PutUser(u) => put_user(conn, u),
         Write::DeleteUser { email } => delete_user_row(conn, email),
         Write::SetBootstrapMarker { key, applied_at } => {
@@ -1042,26 +1070,6 @@ impl IpamStore for SqliteStore {
     ) -> Result<Vec<Allocation>> {
         let conn = self.conn()?;
         read_allocations_in_block(&conn, tenant_id, cidr_block_id, statuses)
-    }
-
-    async fn set_tags(&self, tenant_id: &str, allocation_id: &str, tags: &[Tag]) -> Result<()> {
-        let conn = self.conn()?;
-        Self::assert_allocation_in_tenant(&conn, tenant_id, allocation_id)?;
-
-        conn.execute(
-            "DELETE FROM allocation_tags WHERE allocation_id = ?1 AND tenant_id = ?2",
-            params![allocation_id, tenant_id],
-        )
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        for tag in tags {
-            conn.execute(
-                "INSERT INTO allocation_tags (allocation_id, tenant_id, key, value) VALUES (?1, ?2, ?3, ?4)",
-                params![allocation_id, tenant_id, tag.key, tag.value],
-            )
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        }
-        Ok(())
     }
 
     async fn get_tags(&self, tenant_id: &str, allocation_id: &str) -> Result<Vec<Tag>> {
@@ -2009,11 +2017,13 @@ mod tests {
             .await
             .unwrap();
 
-        store
-            .set_tags(
-                TEST_TENANT,
-                &alloc.id,
-                &[
+        commit(
+            &store,
+            TEST_TENANT,
+            Write::ReplaceTags {
+                tenant_id: TEST_TENANT.to_string(),
+                allocation_id: alloc.id.clone(),
+                tags: vec![
                     Tag {
                         key: "env".to_string(),
                         value: "prod".to_string(),
@@ -2023,25 +2033,29 @@ mod tests {
                         value: "platform".to_string(),
                     },
                 ],
-            )
-            .await
-            .unwrap();
+            },
+        )
+        .await
+        .unwrap();
 
         let tags = store.get_tags(TEST_TENANT, &alloc.id).await.unwrap();
         assert_eq!(tags.len(), 2);
 
         // Replace tags
-        store
-            .set_tags(
-                TEST_TENANT,
-                &alloc.id,
-                &[Tag {
+        commit(
+            &store,
+            TEST_TENANT,
+            Write::ReplaceTags {
+                tenant_id: TEST_TENANT.to_string(),
+                allocation_id: alloc.id.clone(),
+                tags: vec![Tag {
                     key: "env".to_string(),
                     value: "staging".to_string(),
                 }],
-            )
-            .await
-            .unwrap();
+            },
+        )
+        .await
+        .unwrap();
         let tags = store.get_tags(TEST_TENANT, &alloc.id).await.unwrap();
         assert_eq!(tags.len(), 1);
         assert_eq!(tags[0].value, "staging");

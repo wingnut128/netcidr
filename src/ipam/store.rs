@@ -171,6 +171,12 @@ pub enum Write {
     /// descriptive fields, `updated_at`, `released_at`, `expires_at`),
     /// matched by tenant and id. Tags are left as they are.
     ReplaceAllocation(Allocation),
+    /// Replace every tag on an allocation, matched by tenant and id.
+    ReplaceTags {
+        tenant_id: String,
+        allocation_id: String,
+        tags: Vec<Tag>,
+    },
     /// Insert a user, or overwrite every column of the existing row with the
     /// same email.
     PutUser(UserRecord),
@@ -299,7 +305,6 @@ pub trait IpamStore: Send + Sync {
     ) -> Result<Vec<Allocation>>;
 
     // --- tags ---
-    async fn set_tags(&self, tenant_id: &str, allocation_id: &str, tags: &[Tag]) -> Result<()>;
     async fn get_tags(&self, tenant_id: &str, allocation_id: &str) -> Result<Vec<Tag>>;
 
     // --- hostname pointers ---
