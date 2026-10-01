@@ -377,12 +377,34 @@ impl AuditFact {
 #[derive(Debug, Clone)]
 pub struct Change {
     write: Write,
+    also: Vec<Write>,
     audit: AuditFact,
 }
 
 impl Change {
     pub fn new(write: Write, audit: AuditFact) -> Self {
-        Self { write, audit }
+        Self {
+            write,
+            also: Vec::new(),
+            audit,
+        }
+    }
+
+    /// Another row written as part of the same change, applied after the
+    /// primary write and recorded by the same audit fact — e.g. the history
+    /// entry that accompanies a hostname pointer write.
+    pub fn also(mut self, write: Write) -> Self {
+        self.also.push(write);
+        self
+    }
+
+    /// Every write in this change, primary first.
+    pub fn writes(&self) -> impl Iterator<Item = &Write> {
+        std::iter::once(&self.write).chain(&self.also)
+    }
+
+    pub fn audit(&self) -> &AuditFact {
+        &self.audit
     }
 }
 
@@ -499,11 +521,13 @@ pub async fn execute<M: Mutation>(
 
         let decision = mutation.decide(handles, &Snapshot::new(loaded.rows), &cx)?;
         let output_json = serde_json::to_string(&decision.output)?;
-        let (writes, audits) = decision
-            .changes
-            .into_iter()
-            .map(|c| (c.write, c.audit.into_entry(&tenant, &cx)))
-            .unzip();
+        let mut writes = Vec::new();
+        let mut audits = Vec::new();
+        for change in decision.changes {
+            writes.push(change.write);
+            writes.extend(change.also);
+            audits.push(change.audit.into_entry(&tenant, &cx));
+        }
         let record = idempotency.map(|spec| IdempotencyRecord {
             tenant_id: tenant.clone(),
             key: spec.key,
@@ -688,6 +712,69 @@ mod tests {
                 .unwrap(),
             None
         );
+    }
+
+    /// Inserts two cidr blocks as one Change: the second rides along via
+    /// `also`.
+    struct PairOfBlocks;
+
+    impl Mutation for PairOfBlocks {
+        type Output = ();
+        type Reads = ();
+
+        fn scope(&self) -> LockScope {
+            LockScope::Tenant {
+                tenant_id: TENANT.to_string(),
+            }
+        }
+
+        fn reads(&self, _set: &mut ReadSet) -> Self::Reads {}
+
+        fn decide(self, _: (), _: &Snapshot, cx: &DecideCtx) -> Result<Decision<()>> {
+            let block = |cidr: &str| {
+                CidrBlock::from_input(
+                    TENANT,
+                    &CreateCidrBlock {
+                        cidr: cidr.to_string(),
+                        name: None,
+                        description: None,
+                    },
+                    cx.new_id(),
+                    cx.now(),
+                )
+            };
+            let change = Change::new(
+                Write::InsertCidrBlock(block("10.0.0.0/8")?),
+                AuditFact {
+                    action: "pair",
+                    entity_type: "cidr_block",
+                    entity_id: "pair".to_string(),
+                    details: None,
+                },
+            )
+            .also(Write::InsertCidrBlock(block("172.16.0.0/12")?));
+            assert_eq!(change.writes().count(), 2);
+            Ok(Decision::new((), change))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_change_commits_its_extra_writes_under_one_audit_row() {
+        let store = SqliteStore::in_memory().unwrap();
+        store.initialize().await.unwrap();
+        store.migrate().await.unwrap();
+        let store: Arc<dyn IpamStore> = Arc::new(store);
+        let ops = IpamOps::new(Arc::clone(&store));
+
+        ops.run(TENANT, PairOfBlocks, None).await.unwrap();
+
+        assert_eq!(store.list_cidr_blocks(TENANT).await.unwrap().len(), 2);
+        let audit = store
+            .query_audit(TENANT, &crate::ipam::models::AuditFilter::default())
+            .await
+            .unwrap();
+        assert_eq!(audit.len(), 1);
+        assert_eq!(audit[0].action, "pair");
     }
 
     #[test]
