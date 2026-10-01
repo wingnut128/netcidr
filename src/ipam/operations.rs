@@ -8,6 +8,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use crate::error::{NetcidrError, Result};
 use crate::ipam::idempotency;
 use crate::ipam::models::*;
+use crate::ipam::mutation::{Clock, IdSource, IdempotencySpec, Mutation, SystemClock, UuidIds};
 use crate::ipam::store::IpamStore;
 use crate::validation;
 
@@ -57,6 +58,8 @@ pub struct IpamOps {
     /// Cross-process callers (multiple netcidr instances against a shared
     /// database) need DB-level locking — tracked separately.
     cidr_block_locks: SyncMutex<HashMap<String, Arc<AsyncMutex<()>>>>,
+    clock: Arc<dyn Clock>,
+    ids: Arc<dyn IdSource>,
 }
 
 impl std::fmt::Debug for IpamOps {
@@ -67,10 +70,42 @@ impl std::fmt::Debug for IpamOps {
 
 impl IpamOps {
     pub fn new(store: Arc<dyn IpamStore>) -> Self {
+        Self::with_clock_and_ids(store, Arc::new(SystemClock), Arc::new(UuidIds))
+    }
+
+    /// Like [`new`](Self::new), with an injected clock and id source so
+    /// tests can assert exact timestamps and ids.
+    pub fn with_clock_and_ids(
+        store: Arc<dyn IpamStore>,
+        clock: Arc<dyn Clock>,
+        ids: Arc<dyn IdSource>,
+    ) -> Self {
         Self {
             store,
             cidr_block_locks: SyncMutex::new(HashMap::new()),
+            clock,
+            ids,
         }
+    }
+
+    /// Run a [`Mutation`] for `tenant_id` as one decide-then-commit unit
+    /// (ADR-0007): its Changes, their audit rows, and its idempotency
+    /// record commit together or not at all.
+    pub async fn run<M: Mutation>(
+        &self,
+        tenant_id: &str,
+        mutation: M,
+        idempotency: Option<IdempotencySpec>,
+    ) -> Result<IdempotentOutcome<M::Output>> {
+        crate::ipam::mutation::execute(
+            self.store.as_ref(),
+            self.clock.as_ref(),
+            Arc::clone(&self.ids),
+            tenant_id,
+            mutation,
+            idempotency,
+        )
+        .await
     }
 
     pub fn store(&self) -> &dyn IpamStore {
