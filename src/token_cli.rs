@@ -9,7 +9,7 @@
 //! the `--api-url` flag.
 //!
 //! The HTTP client is intentionally local to this module rather than
-//! reusing `mcp_client::HttpIpamClient`. That client does carry an
+//! reusing `ipam::http_client::HttpIpamClient`. That client does carry an
 //! `Authorization` header when given a token — but it targets `/ipam/*`
 //! and models a long-lived proxy session rather than a handful of
 //! one-shot admin calls, so duplicating a small client here is simpler

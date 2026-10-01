@@ -274,9 +274,21 @@ async fn async_main(cli: Cli) {
         Some(Commands::Completions { shell }) => {
             clap_complete::generate(shell, &mut Cli::command(), "netcidr", &mut io::stdout());
         }
-        Some(Commands::Ipam { db, command }) => {
-            if let Err(e) =
-                ipam_cli::handle_ipam_command(&writer, &cli.output, db.as_deref(), command).await
+        Some(Commands::Ipam {
+            db,
+            api_url,
+            api_token,
+            command,
+        }) => {
+            if let Err(e) = ipam_cli::handle_ipam_command(
+                &writer,
+                &cli.output,
+                db.as_deref(),
+                api_url.as_deref(),
+                api_token.as_deref(),
+                command,
+            )
+            .await
             {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);

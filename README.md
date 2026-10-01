@@ -512,8 +512,8 @@ netcidr serve --enable-swagger --max-batch-size 500 --timeout 60
 # Run as a background daemon
 netcidr serve --daemonize --pid-file /var/run/netcidr.pid --log-file /var/log/netcidr.log
 
-# Daemonize with IPAM enabled
-netcidr serve --daemonize --ipam-enabled --ipam-db /path/to/ipam.db
+# Daemonize with IPAM enabled (IPAM needs auth: bearer or oidc in the config)
+netcidr serve --daemonize --config netcidr.toml --ipam-enabled --ipam-db /path/to/ipam.db
 ```
 
 #### Server Configuration
@@ -1012,16 +1012,43 @@ netcidr ipam --db /path/to/my.db cidr-block list
 
 **Database location** (precedence order): `--db` flag > `NETCIDR_DB` env var > `db_path` in config file > `~/.local/share/netcidr/netcidr.db`
 
-**REST API:**
+**Talking to a netcidr server.** `netcidr ipam` can run against a `netcidr serve` instance (local or published) instead of a local database. It decides where to run like this, first match wins:
 
-Enable IPAM endpoints on the HTTP server with `--ipam-enabled`:
+| Setting | Runs against |
+|---|---|
+| `--db PATH` | that local SQLite file (always wins) |
+| `--api-url URL` | the server at URL |
+| `NETCIDR_API_URL` | the server at that URL |
+| none of the above | the local database (see precedence above) |
+
+For a server, the credential comes from `--api-token`, then `NETCIDR_API_TOKEN` (a personal access token or static bearer token), then the session saved by `netcidr login --api-url URL`. Every invocation prints the backend in use to stderr (`ipam: remote https://…` or `ipam: local /path/to/netcidr.db`). `dump` and `load` only work on a local database.
 
 ```bash
-# Start server with IPAM enabled
-netcidr serve --ipam-enabled
+# Published endpoint, using your `netcidr login` session
+export NETCIDR_API_URL=https://netcidr.example.com
+netcidr ipam cidr-block list
+
+# A local test server in bearer-token mode
+printf 'auth_mode = "bearer"\nauth_token = "devtoken"\n' > dev.toml
+netcidr serve --config dev.toml --ipam-enabled --ipam-db ./serve.db &
+netcidr ipam --api-url http://localhost:8080 --api-token devtoken cidr-block list
+
+# Force the local database even with NETCIDR_API_URL exported
+netcidr ipam --db ./test.db cidr-block list
+```
+
+> `netcidr serve --ipam-enabled` refuses to start without authentication (`IPAM API requires auth_mode='bearer' or auth_mode='oidc'`), because IPAM data is scoped to the authenticated caller. Use bearer-token mode for local testing, as above.
+
+**REST API:**
+
+Enable IPAM endpoints on the HTTP server with `--ipam-enabled`. IPAM requires authentication (`auth_mode = "bearer"` with `auth_token`, or `"oidc"`); the server refuses to start without it.
+
+```bash
+# Start server with IPAM enabled (netcidr.toml sets auth_mode and its settings)
+netcidr serve --config netcidr.toml --ipam-enabled
 
 # Use a specific database file
-netcidr serve --ipam-enabled --ipam-db /path/to/ipam.db
+netcidr serve --config netcidr.toml --ipam-enabled --ipam-db /path/to/ipam.db
 ```
 
 | Endpoint | Method | Description |

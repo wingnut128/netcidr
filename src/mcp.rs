@@ -8,209 +8,17 @@ use serde::Deserialize;
 
 use crate::contains::{check_ipv4_contains, check_ipv6_contains};
 use crate::from_range::{from_range_ipv4, from_range_ipv6};
+use crate::ipam::backend::IpamBackend;
+use crate::ipam::http_client::HttpIpamClient;
 use crate::ipam::models::*;
 use crate::ipam::operations::IpamOps;
 use crate::ipv4::Ipv4Subnet;
 use crate::ipv6::Ipv6Subnet;
-use crate::mcp_client::HttpIpamClient;
 use crate::subnet_generator::{
     MAX_GENERATED_SUBNETS, count_subnets, generate_ipv4_subnets, generate_ipv6_subnets,
     hierarchical_split_ipv4, hierarchical_split_ipv6, vlsm_split_ipv4, vlsm_split_ipv6,
 };
 use crate::summarize::{summarize_ipv4, summarize_ipv6};
-use crate::tenant::Tenant;
-
-// ---------------------------------------------------------------------------
-// IPAM backend abstraction — local IpamOps or remote HTTP client
-// ---------------------------------------------------------------------------
-
-// Local backend passes `Tenant::LOCAL`. The remote backend authenticates via
-// OIDC, so the API server derives the tenant from the principal there.
-
-#[derive(Debug, Clone)]
-pub enum McpIpamBackend {
-    Local(Arc<IpamOps>),
-    Remote(HttpIpamClient),
-}
-
-impl McpIpamBackend {
-    pub async fn create_cidr_block(
-        &self,
-        input: &CreateCidrBlock,
-    ) -> crate::error::Result<CidrBlock> {
-        match self {
-            Self::Local(ops) => ops.create_cidr_block(Tenant::LOCAL, input).await,
-            Self::Remote(client) => client.create_cidr_block(input).await,
-        }
-    }
-
-    pub async fn list_cidr_blocks(&self) -> crate::error::Result<Vec<CidrBlock>> {
-        match self {
-            Self::Local(ops) => ops.list_cidr_blocks(Tenant::LOCAL).await,
-            Self::Remote(client) => client.list_cidr_blocks().await,
-        }
-    }
-
-    pub async fn allocate_auto(
-        &self,
-        request: &AutoAllocateRequest,
-    ) -> crate::error::Result<Vec<Allocation>> {
-        match self {
-            Self::Local(ops) => ops.allocate_auto(Tenant::LOCAL, request).await,
-            Self::Remote(client) => client.allocate_auto(request).await,
-        }
-    }
-
-    pub async fn allocate_specific(
-        &self,
-        input: &CreateAllocation,
-    ) -> crate::error::Result<Allocation> {
-        match self {
-            Self::Local(ops) => ops.allocate_specific(Tenant::LOCAL, input).await,
-            Self::Remote(client) => client.allocate_specific(input).await,
-        }
-    }
-
-    pub async fn update_allocation(
-        &self,
-        id: &str,
-        input: &UpdateAllocation,
-    ) -> crate::error::Result<Allocation> {
-        match self {
-            Self::Local(ops) => ops.update_allocation(Tenant::LOCAL, id, input).await,
-            Self::Remote(client) => client.update_allocation(id, input).await,
-        }
-    }
-
-    pub async fn release_allocation(&self, id: &str) -> crate::error::Result<Allocation> {
-        match self {
-            Self::Local(ops) => ops.release_allocation(Tenant::LOCAL, id).await,
-            Self::Remote(client) => client.release_allocation(id).await,
-        }
-    }
-
-    pub async fn list_allocations(
-        &self,
-        filter: &AllocationFilter,
-    ) -> crate::error::Result<Vec<Allocation>> {
-        match self {
-            Self::Local(ops) => ops.list_allocations(Tenant::LOCAL, filter).await,
-            Self::Remote(client) => client.list_allocations(filter).await,
-        }
-    }
-
-    pub async fn free_blocks(
-        &self,
-        cidr_block_id: &str,
-        prefix: Option<u8>,
-    ) -> crate::error::Result<FreeBlocksReport> {
-        match self {
-            Self::Local(ops) => ops.free_blocks(Tenant::LOCAL, cidr_block_id, prefix).await,
-            Self::Remote(client) => client.free_blocks(cidr_block_id, prefix).await,
-        }
-    }
-
-    pub async fn utilization(
-        &self,
-        cidr_block_id: &str,
-    ) -> crate::error::Result<UtilizationReport> {
-        match self {
-            Self::Local(ops) => ops.utilization(Tenant::LOCAL, cidr_block_id).await,
-            Self::Remote(client) => client.utilization(cidr_block_id).await,
-        }
-    }
-
-    pub async fn find_by_ip(&self, address: &str) -> crate::error::Result<Vec<Allocation>> {
-        match self {
-            Self::Local(ops) => ops.find_by_ip(Tenant::LOCAL, address).await,
-            Self::Remote(client) => client.find_by_ip(address).await,
-        }
-    }
-
-    pub async fn find_by_resource(
-        &self,
-        resource_id: &str,
-    ) -> crate::error::Result<Vec<Allocation>> {
-        match self {
-            Self::Local(ops) => ops.find_by_resource(Tenant::LOCAL, resource_id).await,
-            Self::Remote(client) => client.find_by_resource(resource_id).await,
-        }
-    }
-
-    pub async fn batch_allocate(
-        &self,
-        items: &[BatchAllocateItem],
-    ) -> crate::error::Result<BatchAllocateResult> {
-        match self {
-            Self::Local(ops) => ops.batch_allocate(Tenant::LOCAL, items).await,
-            Self::Remote(client) => client.batch_allocate(items).await,
-        }
-    }
-
-    pub async fn batch_release(
-        &self,
-        request: &BatchReleaseRequest,
-    ) -> crate::error::Result<BatchReleaseResult> {
-        match self {
-            Self::Local(ops) => ops.batch_release(Tenant::LOCAL, request).await,
-            Self::Remote(client) => client.batch_release(request).await,
-        }
-    }
-
-    pub async fn allocation_summary(
-        &self,
-        cidr_block_id: Option<&str>,
-    ) -> crate::error::Result<AllocationSummary> {
-        match self {
-            Self::Local(ops) => ops.allocation_summary(Tenant::LOCAL, cidr_block_id).await,
-            Self::Remote(client) => client.allocation_summary(cidr_block_id).await,
-        }
-    }
-
-    pub async fn set_hostname_pointer(
-        &self,
-        input: &CreateHostnamePointer,
-    ) -> crate::error::Result<HostnamePointer> {
-        match self {
-            Self::Local(ops) => ops.set_hostname_pointer(Tenant::LOCAL, input).await,
-            Self::Remote(client) => client.set_hostname_pointer(input).await,
-        }
-    }
-
-    pub async fn list_hostname_pointers(
-        &self,
-        filter: &HostnamePointerFilter,
-    ) -> crate::error::Result<Vec<HostnamePointer>> {
-        match self {
-            Self::Local(ops) => ops.list_hostname_pointers(Tenant::LOCAL, filter).await,
-            Self::Remote(client) => client.list_hostname_pointers(filter).await,
-        }
-    }
-
-    pub async fn list_hostname_history(
-        &self,
-        filter: &HostnameHistoryFilter,
-    ) -> crate::error::Result<Vec<HostnamePointerHistoryEntry>> {
-        match self {
-            Self::Local(ops) => ops.list_hostname_history(Tenant::LOCAL, filter).await,
-            Self::Remote(client) => client.list_hostname_history(filter).await,
-        }
-    }
-
-    pub async fn delete_hostname_pointer(
-        &self,
-        ip: &str,
-        hostname: &str,
-    ) -> crate::error::Result<()> {
-        match self {
-            Self::Local(ops) => {
-                ops.delete_hostname_pointer(Tenant::LOCAL, ip, hostname)
-                    .await
-            }
-            Self::Remote(client) => client.delete_hostname_pointer(ip, hostname).await,
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Parameter types — calculator tools
@@ -475,11 +283,11 @@ struct IpamHostnameDeleteParams {
 
 #[derive(Debug, Clone)]
 pub struct NetcidrMcp {
-    ipam: Option<McpIpamBackend>,
+    ipam: Option<IpamBackend>,
 }
 
 impl NetcidrMcp {
-    pub fn new(ipam: Option<McpIpamBackend>) -> Self {
+    pub fn new(ipam: Option<IpamBackend>) -> Self {
         Self { ipam }
     }
 }
@@ -1050,11 +858,11 @@ pub async fn run_mcp_server(config: McpServerConfig<'_>) -> crate::error::Result
         (Some(db), None) => {
             let ipam_config = crate::ipam::config::IpamConfig::default();
             let store = crate::ipam::create_store(&ipam_config, Some(db), None).await?;
-            Some(McpIpamBackend::Local(Arc::new(IpamOps::new(store))))
+            Some(IpamBackend::Local(Arc::new(IpamOps::new(store))))
         }
         (None, Some(url)) => {
             let client = HttpIpamClient::new(url, config.api_token)?;
-            Some(McpIpamBackend::Remote(client))
+            Some(IpamBackend::Remote(client))
         }
         (None, None) => None,
     };
@@ -1088,7 +896,7 @@ pub fn daemonize_process(pid_file: &str, log_file: Option<&str>) -> crate::error
     crate::daemon::daemonize_process(pid_file, log_file)
 }
 
-async fn run_mcp_stdio(ipam: Option<McpIpamBackend>) -> crate::error::Result<()> {
+async fn run_mcp_stdio(ipam: Option<IpamBackend>) -> crate::error::Result<()> {
     let server = NetcidrMcp::new(ipam);
     let transport = rmcp::transport::io::stdio();
     let service = server
@@ -1103,7 +911,7 @@ async fn run_mcp_stdio(ipam: Option<McpIpamBackend>) -> crate::error::Result<()>
 }
 
 async fn run_mcp_http(
-    ipam: Option<McpIpamBackend>,
+    ipam: Option<IpamBackend>,
     address: &str,
     port: u16,
 ) -> crate::error::Result<()> {
@@ -1147,6 +955,7 @@ async fn run_mcp_http(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tenant::Tenant;
 
     fn calc_server() -> NetcidrMcp {
         NetcidrMcp::new(None)
@@ -1158,7 +967,7 @@ mod tests {
         store.initialize().await.expect("init");
         store.migrate().await.expect("migrate");
         let ops = Arc::new(IpamOps::new(Arc::new(store)));
-        NetcidrMcp::new(Some(McpIpamBackend::Local(ops)))
+        NetcidrMcp::new(Some(IpamBackend::Local(ops)))
     }
 
     // -------------------------------------------------------------------
@@ -1672,7 +1481,7 @@ mod tests {
         store.initialize().await.expect("init");
         store.migrate().await.expect("migrate");
         let ops = Arc::new(IpamOps::new(Arc::new(store)));
-        let server = NetcidrMcp::new(Some(McpIpamBackend::Local(ops.clone())));
+        let server = NetcidrMcp::new(Some(IpamBackend::Local(ops.clone())));
         (server, ops)
     }
 
@@ -1800,10 +1609,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_ipam_update_allocation_remote_backend() {
-        use crate::mcp_client::tests::{mock_update_api, sample_allocation};
+        use crate::ipam::http_client::tests::{mock_update_api, sample_allocation};
 
         let (base, seen) = mock_update_api(200, sample_allocation()).await;
-        let server = NetcidrMcp::new(Some(McpIpamBackend::Remote(
+        let server = NetcidrMcp::new(Some(IpamBackend::Remote(
             HttpIpamClient::new(&base, Some("ncdr_pat_abc")).unwrap(),
         )));
         let result = server
@@ -1821,7 +1630,7 @@ mod tests {
 
         // A reader-role token is refused upstream; the tool reports it.
         let (base, _) = mock_update_api(403, serde_json::json!({"error": "Forbidden"})).await;
-        let server = NetcidrMcp::new(Some(McpIpamBackend::Remote(
+        let server = NetcidrMcp::new(Some(IpamBackend::Remote(
             HttpIpamClient::new(&base, Some("reader_pat")).unwrap(),
         )));
         let result = server
