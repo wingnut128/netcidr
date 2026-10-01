@@ -54,6 +54,76 @@ pub enum AllocationStatus {
     Released,
 }
 
+impl CidrBlock {
+    /// A new cidr block row for `input`, with the given id and creation
+    /// time. Derived network fields come from the CIDR.
+    pub fn from_input(
+        tenant_id: &str,
+        input: &CreateCidrBlock,
+        id: String,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> crate::error::Result<Self> {
+        let (network, broadcast, prefix, total, ip_version) =
+            crate::ipam::parse_cidr_metadata(&input.cidr)?;
+        let timestamp = now.to_rfc3339();
+        Ok(Self {
+            id,
+            tenant_id: tenant_id.to_string(),
+            cidr: input.cidr.clone(),
+            network_address: network,
+            broadcast_address: broadcast,
+            prefix_length: prefix,
+            total_hosts: total,
+            name: input.name.clone(),
+            description: input.description.clone(),
+            ip_version,
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+        })
+    }
+}
+
+impl Allocation {
+    /// A new allocation row for `input`, with the given id and creation
+    /// time. Derived network fields come from the CIDR; `ttl_seconds`
+    /// becomes `expires_at` relative to `now`; status defaults to active.
+    pub fn from_input(
+        tenant_id: &str,
+        input: &CreateAllocation,
+        id: String,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> crate::error::Result<Self> {
+        let (network, broadcast, prefix, total, _ip_version) =
+            crate::ipam::parse_cidr_metadata(&input.cidr)?;
+        let timestamp = now.to_rfc3339();
+        Ok(Self {
+            id,
+            tenant_id: tenant_id.to_string(),
+            cidr_block_id: input.cidr_block_id.clone(),
+            cidr: input.cidr.clone(),
+            network_address: network,
+            broadcast_address: broadcast,
+            prefix_length: prefix,
+            total_hosts: total,
+            status: input.status.clone().unwrap_or(AllocationStatus::Active),
+            resource_id: input.resource_id.clone(),
+            resource_type: input.resource_type.clone(),
+            name: input.name.clone(),
+            description: input.description.clone(),
+            environment: input.environment.clone(),
+            owner: input.owner.clone(),
+            parent_allocation_id: input.parent_allocation_id.clone(),
+            tags: input.tags.clone().unwrap_or_default(),
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+            released_at: None,
+            expires_at: input
+                .ttl_seconds
+                .map(|ttl| (now + chrono::Duration::seconds(ttl as i64)).to_rfc3339()),
+        })
+    }
+}
+
 impl std::fmt::Display for AllocationStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
