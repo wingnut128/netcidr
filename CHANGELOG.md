@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `PUT /ipam/allocations/{id}/tags` (and `netcidr ipam tags set`) now writes a `set_tags` audit row in the same transaction as the tags; setting the tags an allocation already has writes nothing. Duplicate tag keys are rejected with `400` instead of failing with a `500` ([#487](https://github.com/wingnut128/netcidr/issues/487)).
+- A batch allocate request whose `Idempotency-Key` matches one still in progress now returns `409` ("still in progress; retry later") ([#487](https://github.com/wingnut128/netcidr/issues/487)).
 - Setting and deleting a hostname pointer now write audit rows (`set_hostname_pointer`, `delete_hostname_pointer`) in the same transaction as the pointer and its history entry ([#486](https://github.com/wingnut128/netcidr/issues/486)).
 - Minting and revoking a personal access token now write audit rows (`mint_pat`, `revoke_pat`) in the same transaction; re-revoking an already-revoked token writes none ([#485](https://github.com/wingnut128/netcidr/issues/485)).
 - The env-list user seed now writes an audit row per seeded user (`seed_user`) and one for the seed itself (`seed_users`), under the local tenant ([#484](https://github.com/wingnut128/netcidr/issues/484)).
@@ -23,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Batch idempotency race.** Concurrent `POST /ipam/batch/allocate` requests with the same `Idempotency-Key` all missed the cache and all allocated (in tests, 8 of 8 ran). The batch now claims its key in a transaction of its own before allocating, so exactly one runs and the others replay its result or get `409` while it is in progress ([#487](https://github.com/wingnut128/netcidr/issues/487)).
+- **Tag replacement was not atomic on SQLite.** Replacing an allocation's tags deleted and re-inserted them outside a transaction; tags are now replaced in one transaction under the allocation's cidr block Lock Scope ([#487](https://github.com/wingnut128/netcidr/issues/487)).
 - **Concurrent hostname pointer race.** Two requests setting the same IP↔hostname pair at once, from one process or several, could both try to create it: one failed with a 500 (a duplicate-key error on Postgres, "database is locked" on SQLite). Setting and deleting a pointer now run as one transaction under the tenant's Lock Scope, so the second request updates the pointer the first created ([#486](https://github.com/wingnut128/netcidr/issues/486)).
 - **Cross-process PAT limit race.** Concurrent mints for one PAT Owner from different processes could each pass the active-token count and exceed the per-owner limit. Minting and revoking now run as one transaction under the PAT Owner's Lock Scope ([#485](https://github.com/wingnut128/netcidr/issues/485)).
 - **Cross-process last-platform-admin race.** Two processes could each delete or demote a different platform admin at the same time and leave none, locking everyone out of user management. User upserts and deletes now run as one transaction under the user-directory Lock Scope, so the guard sees the other change. The one-shot env-list user seed runs under the same scope, so concurrent cold starts apply it once instead of one failing on the bootstrap marker ([#484](https://github.com/wingnut128/netcidr/issues/484)).
