@@ -42,3 +42,28 @@ the given status; the MCP frontend serializes it to a scrubbed string. The
 unrecognized errors are flattened to `"internal server error"`. `PatNotFound`
 is canonicalised to `"token not found"` so the caller-supplied id is never
 echoed back.
+
+### Mutation
+
+A single IPAM write operation expressed as a pure decision over data read
+under its Lock Scope — for example allocating a specific CIDR or deleting a
+user. A Mutation decides; it never touches storage itself.
+_Avoid_: command, transaction script
+
+### Decision
+
+What a Mutation concludes: its result for the caller plus the Changes to
+apply. A Decision is applied completely or not at all.
+
+### Change
+
+One write together with the audit fact that records it. A write without an
+audit fact is not a Change.
+_Avoid_: write op, patch
+
+### Lock Scope
+
+The one thing a Mutation holds exclusively while it decides and commits: a
+cidr block, a tenant, the user directory, or a PAT Owner. Two Mutations with
+the same Lock Scope never interleave.
+_Avoid_: lock key, mutex

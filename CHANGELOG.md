@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other
 
+- ADR-0007 records the decide-then-commit store seam for atomic IPAM invariants, and the glossary defines Mutation, Decision, Change, and Lock Scope ([#479](https://github.com/wingnut128/netcidr/issues/479)).
 - ADR-0002 and ADR-0003 carry an "amended by ADR-0006" note: bearer-mode principals resolve to `PlatformAdmin`, roles live in the unified `users` table, and the admin guards protect the last platform admin ([#476](https://github.com/wingnut128/netcidr/issues/476)).
 - The `[0.32.0]` CHANGELOG section is deduplicated and SECURITY.md lists 0.32.x as the current release ([#474](https://github.com/wingnut128/netcidr/issues/474)).
 
