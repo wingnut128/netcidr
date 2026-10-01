@@ -94,7 +94,7 @@ The release job validates `Cargo.toml` version matches, confirms a CHANGELOG ent
 
 ```bash
 # Essential commands
-just check          # Run fmt-check, lint, test, test-tui, test-mcp, and semgrep (use before commits)
+just check          # Run fmt-check, lint, test, test-tui, test-mcp, test-lambda, and semgrep (use before commits)
 just test           # Run all tests
 just test-tui       # Run TUI tests (requires tui feature)
 just lint           # Run clippy with -D warnings
