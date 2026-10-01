@@ -1352,8 +1352,8 @@ fn test_ipam_release_and_reactivate_via_update() {
 }
 
 #[test]
-fn test_ipam_reallocate_released_cidr_reuses_record() {
-    let db = "/tmp/netcidr-test-realloc-dedup.db";
+fn test_ipam_reallocate_released_cidr_creates_new_record() {
+    let db = "/tmp/netcidr-test-realloc-new-record.db";
     let _ = std::fs::remove_file(db);
 
     // Create CIDR block and allocate
@@ -1361,7 +1361,18 @@ fn test_ipam_reallocate_released_cidr_reuses_record() {
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let sn_id = json["id"].as_str().unwrap().to_string();
 
-    let (stdout, _, success) = run_ipam(db, &["allocate", &sn_id, "10.0.1.0/24", "--name", "Web"]);
+    let (stdout, _, success) = run_ipam(
+        db,
+        &[
+            "allocate",
+            &sn_id,
+            "10.0.1.0/24",
+            "--name",
+            "Web",
+            "--owner",
+            "alice",
+        ],
+    );
     assert!(success);
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let original_id = json["id"].as_str().unwrap().to_string();
@@ -1370,24 +1381,28 @@ fn test_ipam_reallocate_released_cidr_reuses_record() {
     let (_, _, success) = run_ipam(db, &["release", &original_id]);
     assert!(success);
 
-    // Re-allocate the same CIDR — should reactivate the existing record
+    // Re-allocate the same CIDR: a new record, nothing inherited
     let (stdout, _, success) =
         run_ipam(db, &["allocate", &sn_id, "10.0.1.0/24", "--name", "Web-v2"]);
     assert!(success);
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(json["status"], "active");
     assert_eq!(json["name"], "Web-v2");
-    // Same record reused — ID should match
-    assert_eq!(json["id"].as_str().unwrap(), original_id);
+    assert!(json["owner"].is_null(), "owner must not be inherited");
+    assert_ne!(json["id"].as_str().unwrap(), original_id);
 
-    // Verify no duplicate — listing should show only 1 allocation
+    // The released record stays as history alongside the new one
     let (stdout, _, success) = run_ipam(db, &["allocation", "list", "--cidr-block-id", &sn_id]);
     assert!(success);
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    assert_eq!(
-        json["count"], 1,
-        "should have 1 allocation, not a duplicate"
-    );
+    assert_eq!(json["count"], 2, "released history + new allocation");
+    let statuses: Vec<&str> = json["allocations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["status"].as_str().unwrap())
+        .collect();
+    assert!(statuses.contains(&"released") && statuses.contains(&"active"));
 
     let _ = std::fs::remove_file(db);
 }
