@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.0](https://github.com/wingnut128/netcidr/compare/v0.30.0...v0.31.0) - 2026-10-01
+
+### Added
+
+- *(mcp)* add ipam_update_allocation tool ([#448](https://github.com/wingnut128/netcidr/pull/448))
+
+### Fixed
+
+- clear semgrep findings so just check passes (release secrets, unsafe in telemetry tests) ([#455](https://github.com/wingnut128/netcidr/pull/455))
+- *(ipam)* create a new allocation when re-allocating a released CIDR ([#454](https://github.com/wingnut128/netcidr/pull/454))
+- *(login)* name every setting the server needs for CLI OAuth ([#453](https://github.com/wingnut128/netcidr/pull/453))
+
 ### Added
 
 - MCP `ipam_update_allocation` tool renames or retags an allocation in place (name, description, resource ID/type, environment, owner) with a single audit event, instead of releasing and re-allocating. Works with both the local (`--ipam-db`) and remote (`--api-url`) backends ([#447](https://github.com/wingnut128/netcidr/issues/447)).
