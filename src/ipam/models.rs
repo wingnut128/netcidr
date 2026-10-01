@@ -800,7 +800,7 @@ impl std::str::FromStr for UserStatus {
 /// and [`RoleAssignment`]: "allowlisted" = an active row exists; the role
 /// lives on the same record. Not tenant-scoped — an email maps to one role
 /// system-wide (data isolation is handled separately via tenant scoping).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct UserRecord {
     pub email: String,

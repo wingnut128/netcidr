@@ -3,14 +3,16 @@
 //! Shared by `netcidr serve` (`main.rs`) and the Lambda binary so the two
 //! startup paths cannot drift. The seed is one-shot: it runs exactly once
 //! per database, guarded by the `bootstrap_markers` table (see
-//! [`IpamStore::seed_users_once`]) — after that the DB is the source of
-//! truth and the env lists are ignored.
+//! [`IpamOps::seed_users`]) — after that the DB is the source of truth and
+//! the env lists are ignored. The seed runs under the user-directory Lock
+//! Scope, so concurrent cold starts cannot both apply it.
 
 use std::sync::Arc;
 
 use crate::auth::Role;
 use crate::config::ServerConfig;
 use crate::ipam::models::UserStatus;
+use crate::ipam::operations::IpamOps;
 use crate::ipam::store::IpamStore;
 
 /// Build the `(email, role, status)` seed triples from the env/config lists.
@@ -25,9 +27,9 @@ use crate::ipam::store::IpamStore;
 ///   `reader` (they had default-Reader access before the directory
 ///   existed).
 ///
-/// Ordering is first-write-wins per email (the store seed uses
-/// `ON CONFLICT DO NOTHING`), so a stronger role wins when an email
-/// appears in multiple lists.
+/// Ordering is first-write-wins per email (the seed skips emails it has
+/// already placed), so a stronger role wins when an email appears in
+/// multiple lists.
 ///
 /// Status: when the env allowlist is **non-empty**, a role-listed email
 /// that is *not* in it is seeded `disabled` — that email has no access
@@ -81,7 +83,7 @@ pub fn user_seed_triples(config: &ServerConfig) -> Vec<(String, Role, UserStatus
 /// outage.
 pub async fn seed_users(store: &Arc<dyn IpamStore>, config: &ServerConfig) {
     let seeds = user_seed_triples(config);
-    match store.seed_users_once(&seeds).await {
+    match IpamOps::new(Arc::clone(store)).seed_users(&seeds).await {
         Ok(n) if n > 0 => tracing::info!("seeded {n} user(s) from env lists"),
         Ok(_) => {}
         Err(e) => tracing::warn!(error = %e, "users directory bootstrap seed failed"),

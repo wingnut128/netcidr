@@ -188,12 +188,12 @@ async fn pat_owner_outside_allowlist_is_unauthorized() {
 async fn pat_of_allowlisted_owner_authenticates_in_closed_mode() {
     // Closed mode with an ACTIVE user row for the owner: the PAT works.
     let h = build_harness(vec![OWNER_EMAIL.to_string()]).await;
-    h.store
+    netcidr::ipam::operations::IpamOps::new(std::sync::Arc::clone(&h.store))
         .upsert_user(
+            netcidr::tenant::Tenant::LOCAL,
             OWNER_EMAIL,
             netcidr::auth::Role::Admin,
             netcidr::ipam::models::UserStatus::Active,
-            "test",
         )
         .await
         .unwrap();
@@ -208,12 +208,12 @@ async fn pat_of_disabled_owner_is_unauthorized_even_in_open_mode() {
     // (empty env allowlist), where unknown users are admitted. An explicit
     // deny beats the open default.
     let h = build_harness(Vec::new()).await;
-    h.store
+    netcidr::ipam::operations::IpamOps::new(std::sync::Arc::clone(&h.store))
         .upsert_user(
+            netcidr::tenant::Tenant::LOCAL,
             OWNER_EMAIL,
             netcidr::auth::Role::Admin,
             netcidr::ipam::models::UserStatus::Disabled,
-            "test",
         )
         .await
         .unwrap();

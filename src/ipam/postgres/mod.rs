@@ -528,6 +528,94 @@ async fn replace_allocation(conn: &mut sqlx::PgConnection, a: &Allocation) -> Re
     Ok(())
 }
 
+async fn read_user<'e>(ex: impl PgExecutor<'e>, email: &str) -> Result<Option<UserRecord>> {
+    let row = sqlx::query(
+        "SELECT email, role, status, created_at, updated_at, created_by, updated_by \
+         FROM users WHERE email = $1",
+    )
+    .bind(email)
+    .fetch_optional(ex)
+    .await
+    .map_err(db_err)?;
+    row.as_ref().map(pg_row_to_user).transpose()
+}
+
+async fn read_users<'e>(ex: impl PgExecutor<'e>) -> Result<Vec<UserRecord>> {
+    let rows = sqlx::query(
+        "SELECT email, role, status, created_at, updated_at, created_by, updated_by \
+         FROM users ORDER BY email",
+    )
+    .fetch_all(ex)
+    .await
+    .map_err(db_err)?;
+    rows.iter().map(pg_row_to_user).collect()
+}
+
+async fn read_active_platform_admin_count<'e>(ex: impl PgExecutor<'e>) -> Result<u64> {
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM users WHERE role = 'platform_admin' AND status = 'active'",
+    )
+    .fetch_one(ex)
+    .await
+    .map_err(db_err)?;
+    Ok(n as u64)
+}
+
+async fn read_bootstrap_marker<'e>(ex: impl PgExecutor<'e>, key: &str) -> Result<bool> {
+    let row = sqlx::query("SELECT key FROM bootstrap_markers WHERE key = $1")
+        .bind(key)
+        .fetch_optional(ex)
+        .await
+        .map_err(db_err)?;
+    Ok(row.is_some())
+}
+
+async fn put_user<'e>(ex: impl PgExecutor<'e>, u: &UserRecord) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO users (email, role, status, created_at, updated_at, created_by, updated_by) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7) \
+         ON CONFLICT(email) DO UPDATE SET role = $2, status = $3, created_at = $4, \
+             updated_at = $5, created_by = $6, updated_by = $7",
+    )
+    .bind(&u.email)
+    .bind(u.role.as_str())
+    .bind(u.status.as_str())
+    .bind(&u.created_at)
+    .bind(&u.updated_at)
+    .bind(&u.created_by)
+    .bind(&u.updated_by)
+    .execute(ex)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
+async fn delete_user_row<'e>(ex: impl PgExecutor<'e>, email: &str) -> Result<()> {
+    let res = sqlx::query("DELETE FROM users WHERE email = $1")
+        .bind(email)
+        .execute(ex)
+        .await
+        .map_err(db_err)?;
+    if res.rows_affected() == 0 {
+        return Err(NetcidrError::UserNotFound(email.to_string()));
+    }
+    Ok(())
+}
+
+async fn set_bootstrap_marker<'e>(
+    ex: impl PgExecutor<'e>,
+    key: &str,
+    applied_at: &str,
+) -> Result<()> {
+    sqlx::query("INSERT INTO bootstrap_markers (key, applied_at) VALUES ($1, $2)")
+        .bind(key)
+        .bind(applied_at)
+        .execute(ex)
+        .await
+        .map_err(db_err)?;
+    Ok(())
+}
+
 async fn read_one(conn: &mut sqlx::PgConnection, read: &Read) -> Result<Rows> {
     match read {
         Read::CidrBlock { tenant_id, id } => {
@@ -546,6 +634,14 @@ async fn read_one(conn: &mut sqlx::PgConnection, read: &Read) -> Result<Rows> {
         } => Ok(Rows::Allocations(
             read_allocations_in_block(conn, tenant_id, cidr_block_id, statuses).await?,
         )),
+        Read::User { email } => Ok(Rows::User(read_user(&mut *conn, email).await?)),
+        Read::Users => Ok(Rows::Users(read_users(&mut *conn).await?)),
+        Read::ActivePlatformAdminCount => Ok(Rows::Count(
+            read_active_platform_admin_count(&mut *conn).await?,
+        )),
+        Read::BootstrapMarker { key } => {
+            Ok(Rows::Flag(read_bootstrap_marker(&mut *conn, key).await?))
+        }
     }
 }
 
@@ -557,6 +653,11 @@ async fn apply_write(conn: &mut sqlx::PgConnection, write: &Write) -> Result<()>
         }
         Write::InsertAllocation(a) => insert_allocation(conn, a).await,
         Write::ReplaceAllocation(a) => replace_allocation(conn, a).await,
+        Write::PutUser(u) => put_user(&mut *conn, u).await,
+        Write::DeleteUser { email } => delete_user_row(&mut *conn, email).await,
+        Write::SetBootstrapMarker { key, applied_at } => {
+            set_bootstrap_marker(&mut *conn, key, applied_at).await
+        }
     }
 }
 
@@ -1037,131 +1138,15 @@ impl IpamStore for PostgresStore {
     // --- users directory (unified allowlist + roles; ADR-0006) ---
 
     async fn get_user(&self, email: &str) -> Result<Option<UserRecord>> {
-        let needle = email.to_ascii_lowercase();
-        let row = sqlx::query(
-            "SELECT email, role, status, created_at, updated_at, created_by, updated_by \
-             FROM users WHERE email = $1",
-        )
-        .bind(&needle)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        match row {
-            Some(r) => Ok(Some(pg_row_to_user(&r)?)),
-            None => Ok(None),
-        }
+        read_user(&self.pool, &email.to_ascii_lowercase()).await
     }
 
     async fn list_users(&self) -> Result<Vec<UserRecord>> {
-        let rows = sqlx::query(
-            "SELECT email, role, status, created_at, updated_at, created_by, updated_by \
-             FROM users ORDER BY email",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        rows.iter().map(pg_row_to_user).collect()
-    }
-
-    async fn upsert_user(
-        &self,
-        email: &str,
-        role: crate::auth::Role,
-        status: UserStatus,
-        actor: &str,
-    ) -> Result<UserRecord> {
-        let needle = email.to_ascii_lowercase();
-        let now = Self::now();
-        let row = sqlx::query(
-            "INSERT INTO users (email, role, status, created_at, updated_at, created_by) \
-             VALUES ($1, $2, $3, $4, $4, $5) \
-             ON CONFLICT(email) DO UPDATE SET \
-                 role = $2, status = $3, updated_at = $4, updated_by = $5 \
-             RETURNING email, role, status, created_at, updated_at, created_by, updated_by",
-        )
-        .bind(&needle)
-        .bind(role.as_str())
-        .bind(status.as_str())
-        .bind(&now)
-        .bind(actor)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        pg_row_to_user(&row)
-    }
-
-    async fn delete_user(&self, email: &str) -> Result<()> {
-        let needle = email.to_ascii_lowercase();
-        let res = sqlx::query("DELETE FROM users WHERE email = $1")
-            .bind(&needle)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        if res.rows_affected() == 0 {
-            return Err(NetcidrError::UserNotFound(email.to_string()));
-        }
-        Ok(())
+        read_users(&self.pool).await
     }
 
     async fn count_active_platform_admins(&self) -> Result<u64> {
-        let n: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM users \
-             WHERE role = 'platform_admin' AND status = 'active'",
-        )
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        Ok(n as u64)
-    }
-
-    async fn seed_users_once(
-        &self,
-        seeds: &[(String, crate::auth::Role, UserStatus)],
-    ) -> Result<u64> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        let marker: Option<String> =
-            sqlx::query_scalar("SELECT key FROM bootstrap_markers WHERE key = 'users_env_seed'")
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        if marker.is_some() {
-            return Ok(0);
-        }
-        let now = Self::now();
-        let mut seeded = 0u64;
-        for (email, role, status) in seeds {
-            let needle = email.to_ascii_lowercase();
-            // First-write-wins if env lists overlap (admin > allocator > reader
-            // order is the caller's responsibility). Never overwrites rows
-            // copied from role_assignments by migration 013.
-            let res = sqlx::query(
-                "INSERT INTO users (email, role, status, created_at, updated_at, created_by) \
-                 VALUES ($1, $2, $3, $4, $4, 'bootstrap') ON CONFLICT(email) DO NOTHING",
-            )
-            .bind(&needle)
-            .bind(role.as_str())
-            .bind(status.as_str())
-            .bind(&now)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-            seeded += res.rows_affected();
-        }
-        sqlx::query(
-            "INSERT INTO bootstrap_markers (key, applied_at) VALUES ('users_env_seed', $1)",
-        )
-        .bind(&now)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        tx.commit()
-            .await
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        Ok(seeded)
+        read_active_platform_admin_count(&self.pool).await
     }
 
     // --- audit ---

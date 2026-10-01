@@ -188,6 +188,104 @@ macro_rules! store_contract_tests {
         }
 
         #[tokio::test]
+        async fn contract_user_writes_round_trip() {
+            use netcidr::auth::Role;
+            use netcidr::ipam::models::{UserRecord, UserStatus};
+            use netcidr::ipam::store::Write;
+            let store = $factory().await;
+            let user = UserRecord {
+                email: "a@x".to_string(),
+                role: Role::PlatformAdmin,
+                status: UserStatus::Active,
+                created_at: "2026-10-01T00:00:00+00:00".to_string(),
+                updated_at: "2026-10-01T00:00:00+00:00".to_string(),
+                created_by: Some("bootstrap".to_string()),
+                updated_by: None,
+            };
+            store_support::commit_writes(&*store, TEST_TENANT, vec![Write::PutUser(user.clone())])
+                .await
+                .unwrap();
+            assert_eq!(store.get_user("a@x").await.unwrap(), Some(user.clone()));
+            assert_eq!(store.count_active_platform_admins().await.unwrap(), 1);
+
+            // PutUser overwrites every column of an existing row.
+            let changed = UserRecord {
+                status: UserStatus::Disabled,
+                updated_at: "2026-10-01T01:00:00+00:00".to_string(),
+                updated_by: Some("cli".to_string()),
+                ..user
+            };
+            store_support::commit_writes(
+                &*store,
+                TEST_TENANT,
+                vec![Write::PutUser(changed.clone())],
+            )
+            .await
+            .unwrap();
+            assert_eq!(store.list_users().await.unwrap(), vec![changed]);
+            assert_eq!(store.count_active_platform_admins().await.unwrap(), 0);
+
+            store_support::commit_writes(
+                &*store,
+                TEST_TENANT,
+                vec![Write::DeleteUser {
+                    email: "a@x".to_string(),
+                }],
+            )
+            .await
+            .unwrap();
+            assert_eq!(store.get_user("a@x").await.unwrap(), None);
+            let err = store_support::commit_writes(
+                &*store,
+                TEST_TENANT,
+                vec![Write::DeleteUser {
+                    email: "a@x".to_string(),
+                }],
+            )
+            .await
+            .unwrap_err();
+            assert!(matches!(err, NetcidrError::UserNotFound(_)), "got {err:?}");
+        }
+
+        #[tokio::test]
+        async fn contract_bootstrap_marker_is_readable_after_it_is_set() {
+            use netcidr::ipam::store::{LockScope, Plan, Read, Rows, TxUnit, Write};
+            let store = $factory().await;
+            async fn read_marker(store: &dyn IpamStore) -> netcidr::error::Result<String> {
+                store
+                    .transact(TxUnit {
+                        scope: LockScope::UserDirectory,
+                        reads: vec![Read::BootstrapMarker {
+                            key: "k".to_string(),
+                        }],
+                        idempotency: None,
+                        decide: Box::new(|loaded| {
+                            let Rows::Flag(set) = loaded.rows[0] else {
+                                panic!("expected a flag");
+                            };
+                            Ok(Plan {
+                                output_json: set.to_string(),
+                                ..Plan::default()
+                            })
+                        }),
+                    })
+                    .await
+            }
+            assert_eq!(read_marker(&*store).await.unwrap(), "false");
+            store_support::commit_writes(
+                &*store,
+                TEST_TENANT,
+                vec![Write::SetBootstrapMarker {
+                    key: "k".to_string(),
+                    applied_at: "2026-10-01T00:00:00+00:00".to_string(),
+                }],
+            )
+            .await
+            .unwrap();
+            assert_eq!(read_marker(&*store).await.unwrap(), "true");
+        }
+
+        #[tokio::test]
         async fn contract_cidr_block_get_not_found() {
             let store = $factory().await;
             let err = store
@@ -1804,79 +1902,127 @@ mod postgres_transact_contract {
     transact_contract_tests!(postgres_store_short_timeout);
 }
 
-/// Users directory: get/list/upsert/delete, active-platform-admin counting,
-/// and the marker-guarded one-shot seed (ADR-0006).
+/// Users directory through the operations layer: the marker-guarded
+/// one-shot seed, actor stamping on upsert, active-platform-admin counting,
+/// listing, and delete (ADR-0006).
 #[tokio::test]
 async fn users_directory_crud_and_marker_seed() {
+    use netcidr::audit_context::{self, AuditContext};
     use netcidr::auth::Role;
     use netcidr::ipam::models::UserStatus;
-    let store = sqlite_store().await;
+    use netcidr::ipam::operations::IpamOps;
+    use std::sync::Arc;
+
+    let (store, _guard) = sqlite_store().await.into_parts();
+    let store: Arc<dyn IpamStore> = Arc::new(store);
+    let ops = IpamOps::new(Arc::clone(&store));
 
     // One-shot seed populates from the given triples.
-    let seeded = store
-        .seed_users_once(&[
+    let seeded = ops
+        .seed_users(&[
             (
-                "owner@x".to_string(),
+                "owner@example.com".to_string(),
                 Role::PlatformAdmin,
                 UserStatus::Active,
             ),
-            ("dev@x".to_string(), Role::Allocator, UserStatus::Active),
-            ("ghost@x".to_string(), Role::Reader, UserStatus::Disabled),
+            (
+                "dev@example.com".to_string(),
+                Role::Allocator,
+                UserStatus::Active,
+            ),
+            (
+                "ghost@example.com".to_string(),
+                Role::Reader,
+                UserStatus::Disabled,
+            ),
         ])
         .await
         .unwrap();
     assert_eq!(seeded, 3);
 
     // Resolution + case-insensitivity + audit provenance.
-    let owner = store.get_user("OWNER@X").await.unwrap().unwrap();
+    let owner = store.get_user("OWNER@EXAMPLE.COM").await.unwrap().unwrap();
     assert_eq!(owner.role, Role::PlatformAdmin);
     assert_eq!(owner.status, UserStatus::Active);
     assert_eq!(owner.created_by.as_deref(), Some("bootstrap"));
-    assert!(store.get_user("nobody@x").await.unwrap().is_none());
+    assert!(
+        store
+            .get_user("nobody@example.com")
+            .await
+            .unwrap()
+            .is_none()
+    );
 
     // The seed is marker-guarded, not emptiness-guarded: even after deleting
-    // every row, a second seed must insert nothing.
-    store.delete_user("owner@x").await.unwrap();
-    store.delete_user("dev@x").await.unwrap();
-    store.delete_user("ghost@x").await.unwrap();
-    let again = store
-        .seed_users_once(&[(
-            "late@x".to_string(),
+    // every row (raw deletes, past the last-admin guard), a second seed must
+    // insert nothing.
+    store.delete_user("owner@example.com").await.unwrap();
+    store.delete_user("dev@example.com").await.unwrap();
+    store.delete_user("ghost@example.com").await.unwrap();
+    let again = ops
+        .seed_users(&[(
+            "late@example.com".to_string(),
             Role::PlatformAdmin,
             UserStatus::Active,
         )])
         .await
         .unwrap();
     assert_eq!(again, 0, "marker must make the seed one-shot forever");
-    assert!(store.get_user("late@x").await.unwrap().is_none());
+    assert!(store.get_user("late@example.com").await.unwrap().is_none());
 
-    // Upsert: insert stamps created_by; update stamps updated_by and
-    // preserves created_*.
-    let created = store
-        .upsert_user("dev@x", Role::Admin, UserStatus::Active, "owner@x")
-        .await
-        .unwrap();
-    assert_eq!(created.created_by.as_deref(), Some("owner@x"));
+    // Upsert: insert stamps created_by with the caller; update stamps
+    // updated_by and preserves created_*.
+    let as_owner = AuditContext {
+        caller_email: Some("owner@example.com".to_string()),
+        ..AuditContext::default()
+    };
+    let created = audit_context::scope(
+        as_owner.clone(),
+        ops.upsert_user(
+            TEST_TENANT,
+            "dev@example.com",
+            Role::Admin,
+            UserStatus::Active,
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(created.created_by.as_deref(), Some("owner@example.com"));
     assert!(created.updated_by.is_none());
-    let updated = store
-        .upsert_user("dev@x", Role::Admin, UserStatus::Disabled, "owner@x")
-        .await
-        .unwrap();
+    let updated = audit_context::scope(
+        as_owner,
+        ops.upsert_user(
+            TEST_TENANT,
+            "dev@example.com",
+            Role::Admin,
+            UserStatus::Disabled,
+        ),
+    )
+    .await
+    .unwrap();
     assert_eq!(updated.status, UserStatus::Disabled);
-    assert_eq!(updated.created_by.as_deref(), Some("owner@x"));
-    assert_eq!(updated.updated_by.as_deref(), Some("owner@x"));
+    assert_eq!(updated.created_by.as_deref(), Some("owner@example.com"));
+    assert_eq!(updated.updated_by.as_deref(), Some("owner@example.com"));
     assert_eq!(updated.created_at, created.created_at);
 
     // Active-platform-admin counting ignores disabled rows and lower roles.
     assert_eq!(store.count_active_platform_admins().await.unwrap(), 0);
-    store
-        .upsert_user("owner@x", Role::PlatformAdmin, UserStatus::Active, "cli")
-        .await
-        .unwrap();
-    store
-        .upsert_user("frozen@x", Role::PlatformAdmin, UserStatus::Disabled, "cli")
-        .await
-        .unwrap();
+    ops.upsert_user(
+        TEST_TENANT,
+        "owner@example.com",
+        Role::PlatformAdmin,
+        UserStatus::Active,
+    )
+    .await
+    .unwrap();
+    ops.upsert_user(
+        TEST_TENANT,
+        "frozen@example.com",
+        Role::PlatformAdmin,
+        UserStatus::Disabled,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         store.count_active_platform_admins().await.unwrap(),
         1,
@@ -1886,11 +2032,19 @@ async fn users_directory_crud_and_marker_seed() {
     // List is sorted by email and complete.
     let all = store.list_users().await.unwrap();
     let emails: Vec<&str> = all.iter().map(|u| u.email.as_str()).collect();
-    assert_eq!(emails, vec!["dev@x", "frozen@x", "owner@x"]);
+    assert_eq!(
+        emails,
+        vec!["dev@example.com", "frozen@example.com", "owner@example.com"]
+    );
 
     // Delete + not-found.
-    store.delete_user("dev@x").await.unwrap();
-    let err = store.delete_user("dev@x").await.unwrap_err();
+    ops.delete_user(TEST_TENANT, "dev@example.com")
+        .await
+        .unwrap();
+    let err = ops
+        .delete_user(TEST_TENANT, "dev@example.com")
+        .await
+        .unwrap_err();
     assert!(matches!(err, NetcidrError::UserNotFound(_)));
 }
 

@@ -1419,19 +1419,19 @@ mod tests {
         store.initialize().await.unwrap();
         store.migrate().await.unwrap();
         let store: Arc<dyn IpamStore> = Arc::new(store);
-        store
-            .upsert_user("alice@example.com", Role::Reader, UserStatus::Active, "t")
+        let ops = crate::ipam::operations::IpamOps::new(Arc::clone(&store));
+        let local = crate::tenant::Tenant::LOCAL;
+        ops.upsert_user(local, "alice@example.com", Role::Reader, UserStatus::Active)
             .await
             .unwrap();
-        store
-            .upsert_user(
-                "mallory@example.com",
-                Role::Reader,
-                UserStatus::Disabled,
-                "t",
-            )
-            .await
-            .unwrap();
+        ops.upsert_user(
+            local,
+            "mallory@example.com",
+            Role::Reader,
+            UserStatus::Disabled,
+        )
+        .await
+        .unwrap();
 
         let config = AuthConfig::oidc(Some("aud".to_string()))
             .with_user_store(store)

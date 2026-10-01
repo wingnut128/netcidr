@@ -12,6 +12,7 @@ use crate::validation;
 
 mod allocation;
 mod cidr_block;
+mod users;
 
 /// Outcome of an idempotency-aware operation. Carries the produced
 /// value and whether it was freshly computed or replayed from the
@@ -935,10 +936,10 @@ impl IpamOps {
     /// Create or update a user record. `tenant_id` scopes only the audit row
     /// (the acting admin's tenant); the record itself is global.
     ///
-    /// Guarded by [`Self::guard_platform_admin_invariants`]: the operation is
-    /// refused if it would disable/demote the last active platform admin, or
-    /// if an authenticated platform admin targets their own row with a
-    /// demotion or disable.
+    /// Runs under the user-directory Lock Scope and is refused if it would
+    /// disable or demote the last active platform admin, or if an
+    /// authenticated platform admin targets their own row with a demotion or
+    /// disable (ADR-0006).
     pub async fn upsert_user(
         &self,
         tenant_id: &str,
@@ -947,120 +948,41 @@ impl IpamOps {
         status: UserStatus,
     ) -> Result<UserRecord> {
         validation::validate_email(email)?;
-        let needle = email.to_ascii_lowercase();
-        self.guard_platform_admin_invariants(&needle, Some(role), Some(status))
-            .await?;
-        let actor = Self::current_actor();
-        let user = self
-            .store
-            .upsert_user(&needle, role, status, &actor)
-            .await?;
-        self.audit(
-            tenant_id,
-            "upsert_user",
-            "user",
-            &user.email,
-            Some(&format!(
-                "role={},status={}",
-                role.as_str(),
-                status.as_str()
-            )),
-        )
-        .await?;
-        Ok(user)
+        let mutation = users::UpsertUser {
+            email: email.to_ascii_lowercase(),
+            role,
+            status,
+        };
+        Ok(self.run(tenant_id, mutation, None).await?.into_inner())
     }
 
     /// Hard-delete a user record. Tenant data is untouched (`tenant_id` is
     /// just the email string; nothing cascades). Same guards as
     /// [`Self::upsert_user`].
     pub async fn delete_user(&self, tenant_id: &str, email: &str) -> Result<()> {
-        let needle = email.to_ascii_lowercase();
-        self.guard_platform_admin_invariants(&needle, None, None)
-            .await?;
-        self.store.delete_user(&needle).await?;
-        self.audit(tenant_id, "delete_user", "user", &needle, None)
-            .await?;
-        Ok(())
-    }
-
-    /// Shared safety rails for mutations of the users directory
-    /// (ADR-0006). `proposed_role`/`proposed_status` are `None` for a hard
-    /// delete.
-    ///
-    /// 1. **Last-platform-admin guard**: refuse any operation that would
-    ///    leave zero *active* platform admins — deleting, disabling, or
-    ///    demoting the only one returns [`NetcidrError::LastPlatformAdmin`]
-    ///    (409). Without it, a slip could strand the deployment with no way
-    ///    to manage users short of CLI access to the DB host.
-    /// 2. **Self-protection guard**: an authenticated platform admin cannot
-    ///    delete, disable, or demote **their own** row. The CLI actor is
-    ///    `"cli"` and never matches an email, so CLI is bound only by guard
-    ///    1 — the documented lockout-recovery path.
-    async fn guard_platform_admin_invariants(
-        &self,
-        email: &str,
-        proposed_role: Option<crate::auth::Role>,
-        proposed_status: Option<UserStatus>,
-    ) -> Result<()> {
-        let Some(current) = self.store.get_user(email).await? else {
-            // New row: creation can only add capability, never strand it.
-            return Ok(());
+        let mutation = users::DeleteUser {
+            email: email.to_ascii_lowercase(),
         };
-        let is_active_platform_admin = current.role == crate::auth::Role::PlatformAdmin
-            && current.status == UserStatus::Active;
-        if !is_active_platform_admin {
-            return Ok(());
-        }
-        // Would the proposed state still count as an active platform admin?
-        let survives = proposed_role == Some(crate::auth::Role::PlatformAdmin)
-            && proposed_status == Some(UserStatus::Active);
-        if survives {
-            return Ok(());
-        }
-
-        // Self-protection (CLI actor "cli" never matches an email).
-        let ctx = crate::audit_context::current();
-        if let Some(caller) = ctx.caller_email.as_deref()
-            && caller.eq_ignore_ascii_case(email)
-        {
-            return Err(NetcidrError::InvalidInput(
-                "cannot remove, disable, or demote your own platform admin role".to_string(),
-            ));
-        }
-
-        // Last-active-platform-admin.
-        if self.store.count_active_platform_admins().await? <= 1 {
-            return Err(NetcidrError::LastPlatformAdmin);
-        }
+        self.run(tenant_id, mutation, None).await?;
         Ok(())
     }
 
-    async fn audit(
+    /// Seed the users directory from `(email, role, status)` triples exactly
+    /// once per database (ADR-0006). Existing users are never overwritten;
+    /// the first entry wins for a repeated email. Returns how many users
+    /// were added, and 0 on every call after the first. Audited under the
+    /// local tenant, since no caller is involved.
+    pub async fn seed_users(
         &self,
-        tenant_id: &str,
-        action: &str,
-        entity_type: &str,
-        entity_id: &str,
-        details: Option<&str>,
-    ) -> Result<()> {
-        let ctx = crate::audit_context::current();
-        self.store
-            .append_audit(&AuditEntry {
-                id: String::new(),
-                tenant_id: tenant_id.to_string(),
-                entity_type: entity_type.to_string(),
-                entity_id: entity_id.to_string(),
-                action: action.to_string(),
-                details: details.map(|s| s.to_string()),
-                timestamp: Utc::now().to_rfc3339(),
-                caller_sub: ctx.caller_sub,
-                caller_email: ctx.caller_email,
-                source_ip: ctx.source_ip,
-                request_id: ctx.request_id,
-                auth_method: ctx.auth_method.unwrap_or_else(|| "oidc".to_string()),
-                pat_id: ctx.pat_id,
-            })
-            .await
+        seeds: &[(String, crate::auth::Role, UserStatus)],
+    ) -> Result<u64> {
+        let mutation = users::SeedUsers {
+            seeds: seeds.to_vec(),
+        };
+        Ok(self
+            .run(crate::tenant::Tenant::LOCAL, mutation, None)
+            .await?
+            .into_inner())
     }
 }
 
