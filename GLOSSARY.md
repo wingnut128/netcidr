@@ -1,4 +1,4 @@
-# Context
+# Glossary
 
 ## Domain Terms
 

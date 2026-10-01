@@ -5,7 +5,7 @@
 //! one place.
 //!
 //! See the `Error Presenter` and `Presented Error` entries in
-//! `CONTEXT.md`.
+//! `GLOSSARY.md`.
 
 use crate::error::NetcidrError;
 
