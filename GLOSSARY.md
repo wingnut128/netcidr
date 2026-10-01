@@ -64,6 +64,7 @@ _Avoid_: write op, patch
 ### Lock Scope
 
 The one thing a Mutation holds exclusively while it decides and commits: a
-cidr block, a tenant, the user directory, or a PAT Owner. Two Mutations with
-the same Lock Scope never interleave.
+cidr block, a tenant, the user directory, a PAT Owner, or one idempotency
+key (for batch allocate's claim). Two Mutations with the same Lock Scope
+never interleave.
 _Avoid_: lock key, mutex

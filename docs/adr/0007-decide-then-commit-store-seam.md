@@ -33,14 +33,23 @@ adapters.
    be constructed without its audit fact, so an unaudited write does not
    compile. One executor handles idempotency replay and recording, and
    builds the decide context (`now`, id generator, caller) from an injected
-   clock and id source. The `*_idempotent` wrappers go away.
+   clock and id source. The `*_idempotent` methods shrink to building an
+   idempotency spec and running the same Mutation; none keeps its own
+   replay-and-record path.
 3. **Exactly one Lock Scope per unit:** a cidr block (allocations, tags,
    cidr-block delete), a tenant (cidr-block create, `load`, hostname
-   pointers), the user directory (user upsert/delete/seed), or a PAT owner
-   (mint/revoke). One
-   lock per unit makes deadlock impossible by construction. Operations
-   spanning scopes run one unit per scope, as `batch_allocate` and
-   `reap_expired` already do.
+   pointers), the user directory (user upsert/delete/seed), a PAT owner
+   (mint/revoke), or one idempotency key (batch allocate's claim and
+   completion). One lock per unit makes deadlock impossible by
+   construction. Operations spanning scopes run one unit per scope, as
+   `batch_allocate` and `reap_expired` already do.
+   Such an operation can't record its idempotency result in the unit that
+   writes it, so `batch_allocate` claims its key first: a unit under the
+   key's scope writes a pending record (status 0, short expiry) that makes
+   a concurrent same-key request fail with `IdempotencyInProgress`, and a
+   final unit replaces it with the result. A failed batch expires its
+   claim. Claim records are bookkeeping, not Changes, and carry no audit
+   row; each allocation the batch makes is audited in its own unit.
    A scope is chosen by what its rule reads. Create checks overlap across
    every block in the tenant, so it takes the tenant. Delete checks that the
    block has no live allocations, which are written under the block's scope,
