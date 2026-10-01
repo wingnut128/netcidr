@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The remote IPAM client (used by `netcidr mcp-serve --api-url` and now `netcidr ipam --api-url`) fetched only the first page of list endpoints, so lists of CIDR blocks, allocations, hostnames and hostname history silently stopped at 100 rows. It now pages through every result ([#457](https://github.com/wingnut128/netcidr/issues/457)).
 
+### Other
+
+- Dependabot no longer bumps the `chainguard/static` base image digest; Digestabot owns it, which stops duplicate digest PRs ([#462](https://github.com/wingnut128/netcidr/issues/462)).
+
 ## [0.31.0](https://github.com/wingnut128/netcidr/compare/v0.30.0...v0.31.0) - 2026-10-01
 
 ### Added
