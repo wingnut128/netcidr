@@ -1,27 +1,23 @@
 //! Trait-contract test suite for IpamStore backend parity.
 //!
-//! These tests verify that any IpamStore implementation behaves identically.
-//! Run against SQLite in-memory by default; Postgres via Docker with
-//! `--features ipam-postgres`.
+//! These tests verify that every IpamStore implementation behaves
+//! identically. They run against in-memory SQLite, file-backed SQLite, and,
+//! with `--features ipam-postgres`, Postgres (see `store_support` for how the
+//! Postgres server is found).
+
+mod store_support;
 
 use netcidr::error::NetcidrError;
 use netcidr::ipam::models::*;
 use netcidr::ipam::sqlite::SqliteStore;
 use netcidr::ipam::store::IpamStore;
+use store_support::sqlite_memory_store as sqlite_store;
 
 const TEST_TENANT: &str = "test@example.com";
 
 // ---------------------------------------------------------------------------
 // Test harness: macro generates identical tests for each backend
 // ---------------------------------------------------------------------------
-
-/// Creates a ready-to-use SQLite in-memory store.
-async fn sqlite_store() -> impl IpamStore {
-    let store = SqliteStore::in_memory().unwrap();
-    store.initialize().await.unwrap();
-    store.migrate().await.unwrap();
-    store
-}
 
 /// Macro that generates a full contract test suite for a given store factory.
 macro_rules! store_contract_tests {
@@ -1369,12 +1365,25 @@ macro_rules! store_contract_tests {
 }
 
 // ---------------------------------------------------------------------------
-// Run contract tests against SQLite
+// Run contract tests against every store adapter
 // ---------------------------------------------------------------------------
 
 mod sqlite_contract {
     use super::*;
     store_contract_tests!(sqlite_store);
+}
+
+mod sqlite_file_contract {
+    use super::*;
+    use store_support::sqlite_file_store;
+    store_contract_tests!(sqlite_file_store);
+}
+
+#[cfg(feature = "ipam-postgres")]
+mod postgres_contract {
+    use super::*;
+    use store_support::postgres_store;
+    store_contract_tests!(postgres_store);
 }
 
 /// Users directory: get/list/upsert/delete, active-platform-admin counting,

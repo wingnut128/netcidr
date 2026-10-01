@@ -132,3 +132,322 @@ async fn concurrent_auto_allocate_produces_no_overlaps() {
     cidrs.dedup();
     assert_eq!(cidrs.len(), 4, "all four /24 CIDRs must be distinct");
 }
+
+// ---------------------------------------------------------------------------
+// Cross-process races: two independent `IpamOps` over two stores that share
+// one database — the shape of two Lambda execution environments or two
+// `netcidr serve` processes. The in-process cidr_block lock cannot help
+// here, so these tests fail until the invariants are enforced inside the
+// database transaction (#479). Each test repeats its race for several rounds
+// to make the interleaving likely rather than lucky.
+// ---------------------------------------------------------------------------
+
+mod store_support;
+
+mod cross_process {
+    use std::collections::HashSet;
+    use std::sync::Arc;
+
+    use netcidr::auth::Role;
+    use netcidr::error::NetcidrError;
+    use netcidr::ipam::models::*;
+    use netcidr::ipam::operations::IpamOps;
+    use netcidr::ipam::store::IpamStore;
+    use netcidr::pat::PatPepper;
+    use netcidr::pat_lifecycle::{CreatePatRequest, PatLifecycle, PatOwner};
+
+    use super::TEST_TENANT;
+    use super::store_support::Guard;
+
+    const ROUNDS: usize = 20;
+
+    /// Two "processes" sharing one database.
+    pub struct Pair {
+        pub stores: [Arc<dyn IpamStore>; 2],
+        pub ops: [Arc<IpamOps>; 2],
+        _guard: Guard,
+    }
+
+    impl Pair {
+        pub fn new(a: Arc<dyn IpamStore>, b: Arc<dyn IpamStore>, guard: Guard) -> Self {
+            let ops = [
+                Arc::new(IpamOps::new(Arc::clone(&a))),
+                Arc::new(IpamOps::new(Arc::clone(&b))),
+            ];
+            Self {
+                stores: [a, b],
+                ops,
+                _guard: guard,
+            }
+        }
+    }
+
+    fn alloc_request(block_id: &str, cidr: &str) -> CreateAllocation {
+        CreateAllocation {
+            cidr_block_id: block_id.to_string(),
+            cidr: cidr.to_string(),
+            status: None,
+            resource_id: None,
+            resource_type: None,
+            name: None,
+            description: None,
+            environment: None,
+            owner: None,
+            parent_allocation_id: None,
+            tags: None,
+            ttl_seconds: None,
+        }
+    }
+
+    fn auto_request(block_id: &str) -> AutoAllocateRequest {
+        AutoAllocateRequest {
+            cidr_block_id: block_id.to_string(),
+            prefix_length: 24,
+            count: Some(1),
+            status: None,
+            resource_id: None,
+            resource_type: None,
+            name: None,
+            description: None,
+            environment: None,
+            owner: None,
+            parent_allocation_id: None,
+            tags: None,
+            ttl_seconds: None,
+        }
+    }
+
+    async fn block(ops: &IpamOps, cidr: &str) -> String {
+        ops.create_cidr_block(
+            TEST_TENANT,
+            &CreateCidrBlock {
+                cidr: cidr.to_string(),
+                name: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap()
+        .id
+    }
+
+    /// Per round, 8 tasks split across both processes request the same /24.
+    /// Exactly one may win.
+    pub async fn allocate_specific_has_one_winner(pair: Pair) {
+        let block_id = block(&pair.ops[0], "10.0.0.0/8").await;
+        for round in 0..ROUNDS {
+            let cidr = format!("10.{round}.0.0/24");
+            let mut handles = Vec::new();
+            for task in 0..8 {
+                let ops = Arc::clone(&pair.ops[task % 2]);
+                let req = alloc_request(&block_id, &cidr);
+                handles.push(tokio::spawn(async move {
+                    ops.allocate_specific(TEST_TENANT, &req).await
+                }));
+            }
+            let mut wins = 0;
+            for h in handles {
+                match h.await.unwrap() {
+                    Ok(_) => wins += 1,
+                    Err(NetcidrError::AllocationConflict { .. }) => {}
+                    Err(e) => panic!("round {round}: unexpected error: {e:?}"),
+                }
+            }
+            assert_eq!(wins, 1, "round {round}: {cidr} allocated {wins} times");
+        }
+    }
+
+    /// Per round, 16 tasks split across both processes auto-allocate /24s
+    /// from a fresh /22 (room for four). The winners must be four distinct
+    /// CIDRs.
+    pub async fn allocate_auto_never_overlaps(pair: Pair) {
+        for round in 0..ROUNDS {
+            let block_id = block(&pair.ops[0], &format!("10.{}.0.0/22", round * 4)).await;
+            let mut handles = Vec::new();
+            for task in 0..16 {
+                let ops = Arc::clone(&pair.ops[task % 2]);
+                let req = auto_request(&block_id);
+                handles.push(tokio::spawn(async move {
+                    ops.allocate_auto(TEST_TENANT, &req).await
+                }));
+            }
+            let mut cidrs = Vec::new();
+            for h in handles {
+                match h.await.unwrap() {
+                    Ok(allocs) => cidrs.extend(allocs.into_iter().map(|a| a.cidr)),
+                    Err(NetcidrError::NoFreeSpace { .. }) => {}
+                    Err(e) => panic!("round {round}: unexpected error: {e:?}"),
+                }
+            }
+            let distinct: HashSet<_> = cidrs.iter().collect();
+            assert_eq!(
+                cidrs.len(),
+                distinct.len(),
+                "round {round}: duplicate allocations {cidrs:?}"
+            );
+            assert_eq!(cidrs.len(), 4, "round {round}: /22 fits four /24s");
+        }
+    }
+
+    /// Per round there are exactly two active platform admins; each process
+    /// deletes a different one at the same time. At most one delete may
+    /// succeed, so a platform admin always remains.
+    pub async fn last_platform_admin_survives(pair: Pair) {
+        let ops = &pair.ops;
+        let mut survivor = "admin-0@example.com".to_string();
+        ops[0]
+            .upsert_user(
+                TEST_TENANT,
+                &survivor,
+                Role::PlatformAdmin,
+                UserStatus::Active,
+            )
+            .await
+            .unwrap();
+        for round in 1..=ROUNDS {
+            let newcomer = format!("admin-{round}@example.com");
+            ops[0]
+                .upsert_user(
+                    TEST_TENANT,
+                    &newcomer,
+                    Role::PlatformAdmin,
+                    UserStatus::Active,
+                )
+                .await
+                .unwrap();
+            let (a, b) = (Arc::clone(&ops[0]), Arc::clone(&ops[1]));
+            let (old, new) = (survivor.clone(), newcomer.clone());
+            let ha = tokio::spawn(async move { a.delete_user(TEST_TENANT, &old).await });
+            let hb = tokio::spawn(async move { b.delete_user(TEST_TENANT, &new).await });
+            let (ra, rb) = (ha.await.unwrap(), hb.await.unwrap());
+            for r in [&ra, &rb] {
+                if let Err(e) = r
+                    && !matches!(e, NetcidrError::LastPlatformAdmin)
+                {
+                    panic!("round {round}: unexpected error: {e:?}");
+                }
+            }
+            let remaining = pair.stores[0].count_active_platform_admins().await.unwrap();
+            assert_eq!(
+                remaining, 1,
+                "round {round}: {remaining} active platform admins remain"
+            );
+            survivor = if ra.is_ok() { newcomer } else { survivor };
+        }
+    }
+
+    /// Per round, 8 mints for one PAT Owner split across both processes,
+    /// with a per-owner limit of 2. At most 2 may be active afterwards.
+    pub async fn pat_limit_holds(pair: Pair) {
+        const LIMIT: u32 = 2;
+        let pepper = Arc::new(PatPepper::from_bytes(&[0xA5u8; 32]).unwrap());
+        let lifecycles = [
+            Arc::new(PatLifecycle::new(
+                Arc::clone(&pair.stores[0]),
+                Arc::clone(&pepper),
+                LIMIT,
+            )),
+            Arc::new(PatLifecycle::new(
+                Arc::clone(&pair.stores[1]),
+                Arc::clone(&pepper),
+                LIMIT,
+            )),
+        ];
+        for round in 0..ROUNDS {
+            let owner = PatOwner {
+                tenant_id: TEST_TENANT.to_string(),
+                subject: format!("sub-{round}"),
+                email: TEST_TENANT.to_string(),
+            };
+            let mut handles = Vec::new();
+            for task in 0..8 {
+                let lc = Arc::clone(&lifecycles[task % 2]);
+                let owner = owner.clone();
+                handles.push(tokio::spawn(async move {
+                    lc.mint_for_owner(
+                        &owner,
+                        Role::Admin,
+                        CreatePatRequest {
+                            name: format!("tok-{task}"),
+                            expires_in_days: Some(30),
+                            role: None,
+                        },
+                    )
+                    .await
+                }));
+            }
+            for h in handles {
+                match h.await.unwrap() {
+                    Ok(_) | Err(NetcidrError::PatLimitExceeded { .. }) => {}
+                    Err(e) => panic!("round {round}: unexpected error: {e:?}"),
+                }
+            }
+            let now = chrono::Utc::now().to_rfc3339();
+            let active = pair.stores[0]
+                .pat_count_active_for_owner(TEST_TENANT, &owner.subject, &now)
+                .await
+                .unwrap();
+            assert!(
+                active <= LIMIT,
+                "round {round}: {active} active PATs exceed the limit of {LIMIT}"
+            );
+        }
+    }
+
+    macro_rules! cross_process_tests {
+        ($pair:expr) => {
+            #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+            #[ignore = "cross-process allocation race; fixed by #482"]
+            async fn allocate_specific_has_one_winner() {
+                super::allocate_specific_has_one_winner($pair.await).await;
+            }
+
+            #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+            #[ignore = "cross-process allocation race; fixed by #482"]
+            async fn allocate_auto_never_overlaps() {
+                super::allocate_auto_never_overlaps($pair.await).await;
+            }
+
+            #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+            #[ignore = "cross-process last-platform-admin race; fixed by #484"]
+            async fn last_platform_admin_survives() {
+                super::last_platform_admin_survives($pair.await).await;
+            }
+
+            #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+            #[ignore = "cross-process PAT-limit race; fixed by #485"]
+            async fn pat_limit_holds() {
+                super::pat_limit_holds($pair.await).await;
+            }
+        };
+    }
+
+    mod sqlite_file {
+        use super::super::store_support::{open_sqlite_file, sqlite_file_path};
+        use super::*;
+
+        async fn pair() -> Pair {
+            let (path, dir) = sqlite_file_path();
+            let a: Arc<dyn IpamStore> = Arc::new(open_sqlite_file(&path).await);
+            let b: Arc<dyn IpamStore> = Arc::new(open_sqlite_file(&path).await);
+            Pair::new(a, b, Guard::TempDir(dir))
+        }
+
+        cross_process_tests!(pair());
+    }
+
+    #[cfg(feature = "ipam-postgres")]
+    mod postgres {
+        use super::super::store_support::pg::{open_postgres, test_database};
+        use super::*;
+
+        async fn pair() -> Pair {
+            let db = test_database().await;
+            let a: Arc<dyn IpamStore> = Arc::new(open_postgres(&db.url()).await);
+            let b: Arc<dyn IpamStore> = Arc::new(open_postgres(&db.url()).await);
+            Pair::new(a, b, Guard::Postgres(db))
+        }
+
+        cross_process_tests!(pair());
+    }
+}
