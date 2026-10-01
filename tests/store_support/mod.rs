@@ -14,6 +14,7 @@
 #![allow(dead_code)]
 
 use std::ops::Deref;
+use std::time::Duration;
 
 use netcidr::ipam::sqlite::SqliteStore;
 use netcidr::ipam::store::IpamStore;
@@ -49,9 +50,24 @@ pub enum Guard {
     Postgres(pg::TestDatabase),
 }
 
+/// Lock timeout for tests that hold a Lock Scope on purpose: long enough
+/// that an uncontended unit never trips it, short enough to keep the
+/// timeout tests fast.
+pub const SHORT_LOCK_TIMEOUT: Duration = Duration::from_millis(300);
+
 /// In-memory SQLite (pool of one connection).
 pub async fn sqlite_memory_store() -> Held<SqliteStore> {
-    let store = SqliteStore::in_memory().expect("open in-memory sqlite");
+    sqlite_memory_store_with(netcidr::ipam::store::DEFAULT_LOCK_TIMEOUT).await
+}
+
+/// In-memory SQLite with [`SHORT_LOCK_TIMEOUT`].
+pub async fn sqlite_memory_store_short_timeout() -> Held<SqliteStore> {
+    sqlite_memory_store_with(SHORT_LOCK_TIMEOUT).await
+}
+
+async fn sqlite_memory_store_with(lock_timeout: Duration) -> Held<SqliteStore> {
+    let store =
+        SqliteStore::in_memory_with_lock_timeout(lock_timeout).expect("open in-memory sqlite");
     store.initialize().await.expect("initialize");
     store.migrate().await.expect("migrate");
     Held {
@@ -69,8 +85,19 @@ pub fn sqlite_file_path() -> (String, tempfile::TempDir) {
 
 /// File-backed SQLite (multi-connection pool), as `netcidr serve` uses.
 pub async fn sqlite_file_store() -> Held<SqliteStore> {
+    sqlite_file_store_with(netcidr::ipam::store::DEFAULT_LOCK_TIMEOUT).await
+}
+
+/// File-backed SQLite with [`SHORT_LOCK_TIMEOUT`].
+pub async fn sqlite_file_store_short_timeout() -> Held<SqliteStore> {
+    sqlite_file_store_with(SHORT_LOCK_TIMEOUT).await
+}
+
+async fn sqlite_file_store_with(lock_timeout: Duration) -> Held<SqliteStore> {
     let (path, dir) = sqlite_file_path();
-    let store = open_sqlite_file(&path).await;
+    let store = SqliteStore::new_with_lock_timeout(&path, lock_timeout).expect("open sqlite file");
+    store.initialize().await.expect("initialize");
+    store.migrate().await.expect("migrate");
     Held {
         store,
         _guard: Guard::TempDir(dir),
@@ -88,7 +115,7 @@ pub async fn open_sqlite_file(path: &str) -> SqliteStore {
 
 #[cfg(feature = "ipam-postgres")]
 #[allow(unused_imports)]
-pub use pg::{open_postgres, postgres_store};
+pub use pg::{open_postgres, postgres_store, postgres_store_short_timeout};
 
 #[cfg(feature = "ipam-postgres")]
 pub mod pg {
@@ -161,8 +188,17 @@ pub mod pg {
 
     /// A migrated `PostgresStore` on its own fresh database.
     pub async fn postgres_store() -> Held<PostgresStore> {
+        postgres_store_with(netcidr::ipam::store::DEFAULT_LOCK_TIMEOUT).await
+    }
+
+    /// A per-test Postgres store with [`super::SHORT_LOCK_TIMEOUT`].
+    pub async fn postgres_store_short_timeout() -> Held<PostgresStore> {
+        postgres_store_with(super::SHORT_LOCK_TIMEOUT).await
+    }
+
+    async fn postgres_store_with(lock_timeout: Duration) -> Held<PostgresStore> {
         let db = TestDatabase::create().await;
-        let store = open_postgres(&db.url()).await;
+        let store = open_postgres_with(&db.url(), lock_timeout).await;
         Held {
             store,
             _guard: Guard::Postgres(db),
@@ -177,12 +213,16 @@ pub mod pg {
 
     /// Open (and migrate) a `PostgresStore` on `url`.
     pub async fn open_postgres(url: &str) -> PostgresStore {
+        open_postgres_with(url, netcidr::ipam::store::DEFAULT_LOCK_TIMEOUT).await
+    }
+
+    async fn open_postgres_with(url: &str, lock_timeout: Duration) -> PostgresStore {
         let config = PostgresConfig {
             url: Some(url.to_string()),
             max_connections: 5,
             min_connections: 1,
         };
-        let store = PostgresStore::new(url, &config)
+        let store = PostgresStore::new_with_lock_timeout(url, &config, lock_timeout)
             .await
             .expect("connect to test database");
         store.initialize().await.expect("initialize");
