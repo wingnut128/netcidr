@@ -138,10 +138,8 @@ async fn concurrent_auto_allocate_produces_no_overlaps() {
 // Cross-process races: two independent `IpamOps` over two stores that share
 // one database — the shape of two Lambda execution environments or two
 // `netcidr serve` processes. Only a lock held inside the database
-// transaction can protect an invariant here (#479); tests for invariants not
-// yet moved onto `transact` stay ignored until their fix lands. Each test
-// repeats its race for several rounds to make the interleaving likely rather
-// than lucky.
+// transaction can protect an invariant here (#479). Each test repeats its
+// race for several rounds to make the interleaving likely rather than lucky.
 // ---------------------------------------------------------------------------
 
 mod store_support;
@@ -514,7 +512,6 @@ mod cross_process {
             }
 
             #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-            #[ignore = "cross-process PAT-limit race; fixed by #485"]
             async fn pat_limit_holds() {
                 super::pat_limit_holds($pair.await).await;
             }
