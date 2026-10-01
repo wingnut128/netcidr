@@ -8,6 +8,12 @@ use reqwest::{Client, Url};
 use crate::error::{NetcidrError, Result};
 use crate::ipam::models::*;
 
+/// Largest page the API serves (`MAX_PAGE_LIMIT` in `ipam_api`).
+const PAGE_SIZE: u32 = 1000;
+/// Upper bound on pages walked for one list call, so a server that ignores
+/// `offset` cannot keep the client looping forever (10M rows).
+const MAX_PAGES: u32 = 10_000;
+
 /// HTTP client for a remote netcidr API server.
 #[derive(Debug, Clone)]
 pub struct HttpIpamClient {
@@ -79,6 +85,77 @@ impl HttpIpamClient {
         NetcidrError::Upstream { status, message }
     }
 
+    /// GET a list endpoint. With an explicit `limit` the caller wants one
+    /// page, so it is forwarded as-is. Without one, walk every page: the API
+    /// caps each response (default 100 rows), and stopping at the first page
+    /// would silently truncate the result.
+    async fn get_list<L, T>(
+        &self,
+        url: Url,
+        params: &[(&str, String)],
+        limit: Option<u32>,
+        offset: Option<u32>,
+        items: fn(L) -> Vec<T>,
+    ) -> Result<Vec<T>>
+    where
+        L: serde::de::DeserializeOwned,
+    {
+        if let Some(limit) = limit {
+            return self
+                .get_page(url, params, limit, offset.unwrap_or(0), items)
+                .await;
+        }
+
+        let mut all = Vec::new();
+        let mut offset = offset.unwrap_or(0);
+        for _ in 0..MAX_PAGES {
+            let page = self
+                .get_page(url.clone(), params, PAGE_SIZE, offset, items)
+                .await?;
+            let short = page.len() < PAGE_SIZE as usize;
+            all.extend(page);
+            if short {
+                return Ok(all);
+            }
+            offset = offset
+                .checked_add(PAGE_SIZE)
+                .ok_or_else(|| NetcidrError::DatabaseError("list offset overflowed".to_string()))?;
+        }
+        Err(NetcidrError::DatabaseError(format!(
+            "list did not finish within {MAX_PAGES} pages"
+        )))
+    }
+
+    async fn get_page<L, T>(
+        &self,
+        url: Url,
+        params: &[(&str, String)],
+        limit: u32,
+        offset: u32,
+        items: fn(L) -> Vec<T>,
+    ) -> Result<Vec<T>>
+    where
+        L: serde::de::DeserializeOwned,
+    {
+        let resp = self
+            .client
+            .get(url)
+            .query(params)
+            .query(&[("limit", limit), ("offset", offset)])
+            .send()
+            .await
+            .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
+        if resp.status().is_success() {
+            let list: L = resp
+                .json()
+                .await
+                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
+            Ok(items(list))
+        } else {
+            Err(Self::map_error(resp).await)
+        }
+    }
+
     // -----------------------------------------------------------------------
     // CidrBlock operations
     // -----------------------------------------------------------------------
@@ -101,21 +178,9 @@ impl HttpIpamClient {
     }
 
     pub async fn list_cidr_blocks(&self) -> Result<Vec<CidrBlock>> {
-        let resp = self
-            .client
-            .get(self.url("/cidr-blocks"))
-            .send()
+        let url = self.seg_url(&["cidr-blocks"])?;
+        self.get_list(url, &[], None, None, |l: CidrBlockList| l.cidr_blocks)
             .await
-            .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
-        if resp.status().is_success() {
-            let list: CidrBlockList = resp
-                .json()
-                .await
-                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-            Ok(list.cidr_blocks)
-        } else {
-            Err(Self::map_error(resp).await)
-        }
     }
 
     // -----------------------------------------------------------------------
@@ -233,38 +298,31 @@ impl HttpIpamClient {
 
     pub async fn list_allocations(&self, filter: &AllocationFilter) -> Result<Vec<Allocation>> {
         let cidr_block_id = filter.cidr_block_id.as_deref().unwrap_or("");
-        let mut query_params = Vec::new();
+        let mut params = Vec::new();
         if let Some(ref s) = filter.status {
-            query_params.push(("status", s.to_string()));
+            params.push(("status", s.to_string()));
         }
         if let Some(ref e) = filter.environment {
-            query_params.push(("environment", e.clone()));
+            params.push(("environment", e.clone()));
         }
         if let Some(ref o) = filter.owner {
-            query_params.push(("owner", o.clone()));
+            params.push(("owner", o.clone()));
         }
         if let Some(ref r) = filter.resource_id {
-            query_params.push(("resource_id", r.clone()));
+            params.push(("resource_id", r.clone()));
         }
         if let Some(ref r) = filter.resource_type {
-            query_params.push(("resource_type", r.clone()));
+            params.push(("resource_type", r.clone()));
         }
-        let resp = self
-            .client
-            .get(self.seg_url(&["cidr-blocks", cidr_block_id, "allocations"])?)
-            .query(&query_params)
-            .send()
-            .await
-            .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
-        if resp.status().is_success() {
-            let list: AllocationList = resp
-                .json()
-                .await
-                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-            Ok(list.allocations)
-        } else {
-            Err(Self::map_error(resp).await)
-        }
+        let url = self.seg_url(&["cidr-blocks", cidr_block_id, "allocations"])?;
+        self.get_list(
+            url,
+            &params,
+            filter.limit,
+            filter.offset,
+            |l: AllocationList| l.allocations,
+        )
+        .await
     }
 
     // -----------------------------------------------------------------------
@@ -437,61 +495,47 @@ impl HttpIpamClient {
         &self,
         filter: &HostnamePointerFilter,
     ) -> Result<Vec<HostnamePointer>> {
-        let mut query: Vec<(&str, &str)> = Vec::new();
+        let mut params = Vec::new();
         if let Some(ref ip) = filter.ip_address {
-            query.push(("ip", ip));
+            params.push(("ip", ip.clone()));
         }
         if let Some(ref h) = filter.hostname {
-            query.push(("hostname", h));
+            params.push(("hostname", h.clone()));
         }
         if let Some(ref a) = filter.allocation_id {
-            query.push(("allocation_id", a));
+            params.push(("allocation_id", a.clone()));
         }
-        let resp = self
-            .client
-            .get(self.url("/hostnames"))
-            .query(&query)
-            .send()
-            .await
-            .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
-        if resp.status().is_success() {
-            let list: HostnamePointerList = resp
-                .json()
-                .await
-                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-            Ok(list.pointers)
-        } else {
-            Err(Self::map_error(resp).await)
-        }
+        let url = self.seg_url(&["hostnames"])?;
+        self.get_list(
+            url,
+            &params,
+            filter.limit,
+            filter.offset,
+            |l: HostnamePointerList| l.pointers,
+        )
+        .await
     }
 
     pub async fn list_hostname_history(
         &self,
         filter: &HostnameHistoryFilter,
     ) -> Result<Vec<HostnamePointerHistoryEntry>> {
-        let mut query: Vec<(&str, &str)> = Vec::new();
+        let mut params = Vec::new();
         if let Some(ref ip) = filter.ip_address {
-            query.push(("ip", ip));
+            params.push(("ip", ip.clone()));
         }
         if let Some(ref h) = filter.hostname {
-            query.push(("hostname", h));
+            params.push(("hostname", h.clone()));
         }
-        let resp = self
-            .client
-            .get(self.url("/hostnames/history"))
-            .query(&query)
-            .send()
-            .await
-            .map_err(|e| NetcidrError::DatabaseError(format!("HTTP request failed: {e}")))?;
-        if resp.status().is_success() {
-            let list: HostnamePointerHistoryList = resp
-                .json()
-                .await
-                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-            Ok(list.entries)
-        } else {
-            Err(Self::map_error(resp).await)
-        }
+        let url = self.seg_url(&["hostnames", "history"])?;
+        self.get_list(
+            url,
+            &params,
+            filter.limit,
+            filter.offset,
+            |l: HostnamePointerHistoryList| l.entries,
+        )
+        .await
     }
 
     pub async fn delete_hostname_pointer(&self, ip: &str, hostname: &str) -> Result<()> {
@@ -729,5 +773,101 @@ pub(crate) mod tests {
                 other => panic!("expected Upstream, got {other:?}"),
             }
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Pagination: list endpoints cap a page at 1000 rows (default 100)
+    // -----------------------------------------------------------------------
+
+    fn sample_cidr_block(i: usize) -> serde_json::Value {
+        serde_json::json!({
+            "id": format!("block-{i}"),
+            "tenant_id": "t",
+            "cidr": format!("10.{}.{}.0/24", i / 256, i % 256),
+            "network_address": "10.0.0.0",
+            "broadcast_address": "10.0.0.255",
+            "prefix_length": 24,
+            "total_hosts": 254,
+            "name": null,
+            "description": null,
+            "ip_version": 4,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+        })
+    }
+
+    /// Serve `total` CIDR blocks from `GET /ipam/cidr-blocks`, paginated the
+    /// way the real API is (default 100, clamped to 1000, `offset` skips).
+    /// Records every (limit, offset) the client asked for.
+    async fn mock_paged_cidr_blocks(
+        total: usize,
+    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<(u32, u32)>>>) {
+        use axum::extract::{Query, State};
+        use axum::routing::get;
+        use std::sync::{Arc, Mutex};
+
+        #[derive(serde::Deserialize)]
+        struct Page {
+            limit: Option<u32>,
+            offset: Option<u32>,
+        }
+        type Seen = Arc<Mutex<Vec<(u32, u32)>>>;
+        let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+
+        let app = axum::Router::new()
+            .route(
+                "/ipam/cidr-blocks",
+                get(
+                    move |State(seen): State<Seen>, Query(page): Query<Page>| async move {
+                        let limit = page.limit.unwrap_or(100).clamp(1, 1000);
+                        let offset = page.offset.unwrap_or(0);
+                        seen.lock().unwrap().push((limit, offset));
+                        let blocks: Vec<_> = (offset as usize..total)
+                            .take(limit as usize)
+                            .map(sample_cidr_block)
+                            .collect();
+                        axum::Json(serde_json::json!({
+                            "count": blocks.len(),
+                            "cidr_blocks": blocks,
+                        }))
+                    },
+                ),
+            )
+            .with_state(seen.clone());
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{addr}"), seen)
+    }
+
+    #[tokio::test]
+    async fn list_cidr_blocks_fetches_every_page() {
+        // 2500 rows: two full 1000-row pages plus a short one.
+        let (base, seen) = mock_paged_cidr_blocks(2500).await;
+        let client = HttpIpamClient::new(&base, None).unwrap();
+
+        let blocks = client.list_cidr_blocks().await.unwrap();
+        assert_eq!(
+            blocks.len(),
+            2500,
+            "must not stop at the server's default page"
+        );
+        assert_eq!(blocks[0].id, "block-0");
+        assert_eq!(blocks[2499].id, "block-2499");
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![(1000, 0), (1000, 1000), (1000, 2000)]
+        );
+    }
+
+    #[tokio::test]
+    async fn list_cidr_blocks_stops_after_an_exactly_full_last_page() {
+        let (base, seen) = mock_paged_cidr_blocks(1000).await;
+        let client = HttpIpamClient::new(&base, None).unwrap();
+
+        assert_eq!(client.list_cidr_blocks().await.unwrap().len(), 1000);
+        // One full page, then an empty one that ends the walk.
+        assert_eq!(*seen.lock().unwrap(), vec![(1000, 0), (1000, 1000)]);
     }
 }
