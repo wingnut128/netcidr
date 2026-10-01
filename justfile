@@ -73,6 +73,10 @@ test-tui:
 test-mcp:
     cargo test --features mcp mcp::
 
+# Run the lambda binary's tests (requires lambda feature)
+test-lambda:
+    cargo test --features lambda --bin lambda
+
 # Run store tests against Postgres (local Docker, or NETCIDR_TEST_DATABASE_URL)
 test-postgres:
     cargo test --features ipam-postgres --test ipam_store_contract --test postgres_integration --test ipam_concurrency
@@ -103,8 +107,8 @@ fmt-check:
 semgrep:
     semgrep scan --config=p/owasp-top-ten --config=p/rust --error .
 
-# Run everything: fmt-check + lint + test + test-tui + test-mcp + semgrep
-check: fmt-check lint test test-tui test-mcp semgrep
+# Run everything: fmt-check + lint + test + test-tui + test-mcp + test-lambda + semgrep
+check: fmt-check lint test test-tui test-mcp test-lambda semgrep
 
 # Full CI pipeline (check + release build)
 ci: check

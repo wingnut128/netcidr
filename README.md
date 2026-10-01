@@ -772,7 +772,7 @@ just docker
 
 The `just setup` command installs a pre-commit hook that automatically runs `cargo fmt --check` and `cargo clippy` before each commit.
 
-`just check` runs formatting, linting, all tests (including TUI and MCP), and Semgrep security scanning.
+`just check` runs formatting, linting, all tests (including TUI, MCP, and the Lambda binary), and Semgrep security scanning.
 
 `just test-postgres` runs the IPAM store contract suite and the Postgres integration and concurrency tests against Postgres. Each test gets its own throwaway database. It uses `NETCIDR_TEST_DATABASE_URL` (a server URL such as `postgresql://postgres@127.0.0.1:5432/postgres`) when set; otherwise it starts a local `postgres:16-alpine` container named `netcidr-test-pg` on port 15432 and leaves it running for later runs (`docker rm -f netcidr-test-pg` removes it). CI runs these tests on every PR.
 
