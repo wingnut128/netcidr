@@ -334,6 +334,27 @@ pub struct StatusBreakdown {
     pub released_count: usize,
 }
 
+/// What one expiry sweep did across every tenant.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SweepReport {
+    /// Allocations released because their `expires_at` had passed.
+    pub allocations_released: usize,
+    /// Cidr blocks whose expiry failed (e.g. a lock timeout) and will be
+    /// retried by the next sweep.
+    pub blocks_failed: usize,
+    /// Expired idempotency records deleted.
+    pub idempotency_keys_deleted: u64,
+    /// Expired personal access tokens deleted.
+    pub pats_deleted: u64,
+}
+
+impl SweepReport {
+    /// Whether the sweep changed or attempted anything worth logging.
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct UtilizationReport {

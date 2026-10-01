@@ -488,6 +488,40 @@ impl IpamOps {
         Ok(reaped)
     }
 
+    /// Expire everything that is due, in every tenant: release allocations
+    /// past their `expires_at` (one audited unit per cidr block, as
+    /// [`reap_expired`](Self::reap_expired) does), then delete expired
+    /// idempotency records and personal access tokens.
+    ///
+    /// Meant for a scheduler (the `serve` background task, or a scheduled
+    /// Lambda invocation), not for a request: it crosses tenants. A block
+    /// that fails is counted and left for the next sweep rather than
+    /// aborting the rest.
+    pub async fn sweep_expired(&self) -> Result<SweepReport> {
+        let now = self.clock.now().to_rfc3339();
+        let mut report = SweepReport::default();
+        for due in self.store.due_expiry_blocks(&now).await? {
+            let mutation = allocation::ExpireInBlock {
+                tenant_id: due.tenant_id.clone(),
+                cidr_block_id: due.cidr_block_id.clone(),
+            };
+            match self.run(&due.tenant_id, mutation, None).await {
+                Ok(released) => report.allocations_released += released.into_inner(),
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        cidr_block_id = %due.cidr_block_id,
+                        "expiry sweep failed for a cidr block"
+                    );
+                    report.blocks_failed += 1;
+                }
+            }
+        }
+        report.idempotency_keys_deleted = self.store.idempotency_reap_expired(&now).await?;
+        report.pats_deleted = self.store.pat_reap_expired(&now).await?;
+        Ok(report)
+    }
+
     // -----------------------------------------------------------------------
     // Batch operations
     // -----------------------------------------------------------------------
@@ -2798,6 +2832,131 @@ mod tests {
             other_tenant,
             Err(NetcidrError::AllocationNotFound(_))
         ));
+    }
+
+    /// A clock tests can move forward.
+    struct StepClock(std::sync::Mutex<chrono::DateTime<Utc>>);
+    impl crate::ipam::mutation::Clock for StepClock {
+        fn now(&self) -> chrono::DateTime<Utc> {
+            *self.0.lock().unwrap()
+        }
+    }
+
+    #[tokio::test]
+    async fn sweep_expires_every_tenant_and_prunes_idempotency_and_pats() {
+        use chrono::TimeZone;
+        let t0 = Utc.with_ymd_and_hms(2026, 10, 1, 12, 0, 0).unwrap();
+        let store = SqliteStore::in_memory().unwrap();
+        store.initialize().await.unwrap();
+        store.migrate().await.unwrap();
+        let store: Arc<dyn IpamStore> = Arc::new(store);
+        let clock = Arc::new(StepClock(std::sync::Mutex::new(t0)));
+        let ops = IpamOps::with_clock_and_ids(
+            Arc::clone(&store),
+            Arc::clone(&clock) as Arc<dyn Clock>,
+            Arc::new(UuidIds),
+        );
+
+        for tenant in ["a@x", "b@x"] {
+            let block = ops
+                .create_cidr_block(
+                    tenant,
+                    &CreateCidrBlock {
+                        cidr: "10.0.0.0/8".to_string(),
+                        name: None,
+                        description: None,
+                    },
+                )
+                .await
+                .unwrap();
+            let mut request = AutoAllocateRequest {
+                cidr_block_id: block.id,
+                prefix_length: 24,
+                count: None,
+                status: Some(AllocationStatus::Reserved),
+                resource_id: None,
+                resource_type: None,
+                name: None,
+                description: None,
+                environment: None,
+                owner: None,
+                parent_allocation_id: None,
+                tags: None,
+                ttl_seconds: Some(60),
+            };
+            // An idempotent request leaves a record that expires in 24h.
+            ops.allocate_auto_idempotent(tenant, &request, "key-1")
+                .await
+                .unwrap();
+            request.ttl_seconds = None;
+            ops.allocate_auto(tenant, &request).await.unwrap();
+        }
+        let expired_pat = PersonalAccessToken {
+            id: "pat-1".to_string(),
+            tenant_id: "a@x".to_string(),
+            owner_sub: "sub".to_string(),
+            owner_email: "a@x".to_string(),
+            name: "old".to_string(),
+            prefix: "ncdr_pat_old".to_string(),
+            token_hash: vec![1; 32],
+            role: crate::auth::Role::Reader,
+            created_at: t0.to_rfc3339(),
+            expires_at: (t0 + chrono::Duration::hours(1)).to_rfc3339(),
+            last_used_at: None,
+            revoked_at: None,
+        };
+        store
+            .transact(crate::ipam::store::TxUnit {
+                scope: crate::ipam::store::LockScope::Tenant {
+                    tenant_id: "a@x".to_string(),
+                },
+                reads: vec![],
+                idempotency: None,
+                decide: Box::new(move |_| {
+                    Ok(crate::ipam::store::Plan {
+                        writes: vec![crate::ipam::store::Write::InsertPat(expired_pat)],
+                        ..Default::default()
+                    })
+                }),
+            })
+            .await
+            .unwrap();
+
+        // Nothing is due yet.
+        assert!(ops.sweep_expired().await.unwrap().is_empty());
+
+        // Past the allocation TTLs only.
+        *clock.0.lock().unwrap() = t0 + chrono::Duration::minutes(2);
+        let report = ops.sweep_expired().await.unwrap();
+        assert_eq!(
+            report,
+            SweepReport {
+                allocations_released: 2,
+                ..SweepReport::default()
+            }
+        );
+        for tenant in ["a@x", "b@x"] {
+            let expired = ops
+                .query_audit(
+                    tenant,
+                    &AuditFilter {
+                        action: Some("expire".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(expired.len(), 1, "{tenant}");
+        }
+        // Sweeping again finds nothing new.
+        assert!(ops.sweep_expired().await.unwrap().is_empty());
+
+        // A day later the idempotency records and the PAT are past expiry.
+        *clock.0.lock().unwrap() = t0 + chrono::Duration::hours(25);
+        let report = ops.sweep_expired().await.unwrap();
+        assert_eq!(report.allocations_released, 0);
+        assert_eq!(report.idempotency_keys_deleted, 2);
+        assert_eq!(report.pats_deleted, 1);
     }
 
     mod prop {
