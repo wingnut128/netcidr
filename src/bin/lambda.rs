@@ -10,14 +10,29 @@
 //! Provide `NETCIDR_DATABASE_URL` with a Postgres connection string. The
 //! backend defaults to `postgres`; override with `NETCIDR_IPAM_BACKEND`.
 //!
+//! ## Scheduled expiry sweep
+//!
+//! Lambda has no long-lived process for `netcidr serve`'s background sweep,
+//! so an EventBridge schedule invokes the function instead. An invocation
+//! whose payload is an EventBridge Scheduled Event (`"source":
+//! "aws.events"`, `"detail-type": "Scheduled Event"`) runs one expiry sweep
+//! across every tenant; every other payload is an HTTP request for the
+//! router. API Gateway builds HTTP events itself, so a client cannot make a
+//! request look scheduled; only an IAM principal allowed to invoke the
+//! function directly can send arbitrary payloads.
+//!
 //! Build with:
 //!   `cargo lambda build --release --arm64 --bin lambda --features lambda,ipam-postgres`
 
 use std::sync::Arc;
 
-use lambda_http::{Error, run};
+use lambda_http::request::LambdaRequest;
+use lambda_http::tower::{Service, ServiceExt};
+use lambda_http::{Adapter, Error, LambdaEvent, lambda_runtime, service_fn};
 use netcidr::api::{RouterConfig, create_router};
 use netcidr::config::{AuthMode, ServerConfig};
+use netcidr::ipam::operations::IpamOps;
+use serde_json::Value;
 
 fn env_or<S: Into<String>>(key: &str, fallback: S) -> String {
     std::env::var(key).unwrap_or_else(|_| fallback.into())
@@ -36,6 +51,64 @@ fn env_parse<T: std::str::FromStr>(key: &str, fallback: T) -> T {
 /// address. Must be a bare IP (no port) — `is_loopback_bind_address` parses
 /// it as an `IpAddr`, so `"127.0.0.1:0"` would fail every cold start.
 const LAMBDA_VALIDATION_BIND_ADDRESS: &str = "127.0.0.1";
+
+/// What a raw invocation asks the function to do.
+#[derive(Debug, PartialEq, Eq)]
+enum Invocation {
+    /// An EventBridge scheduled event: run the expiry sweep.
+    Sweep,
+    /// Anything else: an HTTP request for the router.
+    Http,
+}
+
+fn classify(payload: &Value) -> Invocation {
+    let field = |name: &str| payload.get(name).and_then(Value::as_str);
+    if field("source") == Some("aws.events") && field("detail-type") == Some("Scheduled Event") {
+        Invocation::Sweep
+    } else {
+        Invocation::Http
+    }
+}
+
+/// Run one expiry sweep and report it as the invocation's result.
+async fn run_sweep(ops: Option<&IpamOps>) -> Result<Value, Error> {
+    let Some(ops) = ops else {
+        tracing::warn!("scheduled sweep invoked but IPAM is disabled");
+        return Ok(serde_json::json!({ "swept": false }));
+    };
+    let report = netcidr::ipam::sweeper::sweep_and_log(ops).await?;
+    Ok(serde_json::to_value(report)?)
+}
+
+/// Handle one invocation: run the sweep for a scheduled event, otherwise
+/// pass the HTTP event to `adapter` (the same `lambda_http` adapter that
+/// `lambda_http::run` would use).
+async fn dispatch<S>(
+    mut adapter: S,
+    ops: Option<Arc<IpamOps>>,
+    event: LambdaEvent<Value>,
+) -> Result<Value, Error>
+where
+    S: Service<LambdaEvent<LambdaRequest>>,
+    S::Response: serde::Serialize,
+    S::Error: Into<Error>,
+{
+    let LambdaEvent { payload, context } = event;
+    match classify(&payload) {
+        Invocation::Sweep => run_sweep(ops.as_deref()).await,
+        Invocation::Http => {
+            let request: LambdaRequest = serde_json::from_value(payload)?;
+            let response = adapter
+                .ready()
+                .await
+                .map_err(Into::into)?
+                .call(LambdaEvent::new(request, context))
+                .await
+                .map_err(Into::into)?;
+            Ok(serde_json::to_value(response)?)
+        }
+    }
+}
 
 /// An unknown authentication mode must never become an unauthenticated router.
 fn parse_auth_mode(raw: &str) -> Result<AuthMode, String> {
@@ -134,6 +207,7 @@ async fn main() -> Result<(), Error> {
         None
     };
 
+    let sweep_ops = ipam_ops.clone();
     // `mut` is only needed when the otel layer is appended below.
     #[cfg_attr(not(feature = "otel"), allow(unused_mut))]
     let mut router = create_router(RouterConfig {
@@ -160,12 +234,147 @@ async fn main() -> Result<(), Error> {
         ));
     }
 
-    run(router).await
+    // `lambda_http::run(router)` would accept only HTTP events. Dispatch by
+    // hand so scheduled events reach the sweep; HTTP events go through the
+    // same adapter `run` uses.
+    let adapter = Adapter::from(router);
+    lambda_runtime::run(service_fn(move |event: LambdaEvent<Value>| {
+        dispatch(adapter.clone(), sweep_ops.clone(), event)
+    }))
+    .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_eventbridge_scheduled_events_run_the_sweep() {
+        let scheduled = serde_json::json!({
+            "version": "0",
+            "id": "53dc4d37-cffa-4f76-80c9-8b7d4a4d2eaa",
+            "detail-type": "Scheduled Event",
+            "source": "aws.events",
+            "account": "123456789012",
+            "time": "2026-10-01T12:00:00Z",
+            "region": "us-east-1",
+            "resources": ["arn:aws:events:us-east-1:123456789012:rule/netcidr-sweep"],
+            "detail": {}
+        });
+        assert_eq!(classify(&scheduled), Invocation::Sweep);
+
+        let api_gateway = serde_json::json!({
+            "version": "2.0",
+            "routeKey": "$default",
+            "rawPath": "/health",
+            "headers": {"source": "aws.events", "detail-type": "Scheduled Event"},
+            "requestContext": {"http": {"method": "GET", "path": "/health"}}
+        });
+        assert_eq!(classify(&api_gateway), Invocation::Http);
+        // Other EventBridge events are not sweeps.
+        let other = serde_json::json!({"source": "aws.events", "detail-type": "EC2 State Change"});
+        assert_eq!(classify(&other), Invocation::Http);
+    }
+
+    fn api_gateway_get(path: &str) -> Value {
+        serde_json::json!({
+            "version": "2.0",
+            "routeKey": "$default",
+            "rawPath": path,
+            "rawQueryString": "",
+            "headers": {"host": "example.com"},
+            "requestContext": {
+                "accountId": "123456789012",
+                "apiId": "api",
+                "domainName": "example.com",
+                "domainPrefix": "example",
+                "http": {
+                    "method": "GET",
+                    "path": path,
+                    "protocol": "HTTP/1.1",
+                    "sourceIp": "192.0.2.1",
+                    "userAgent": "test"
+                },
+                "requestId": "req",
+                "routeKey": "$default",
+                "stage": "$default",
+                "time": "01/Oct/2026:12:00:00 +0000",
+                "timeEpoch": 1790000000000_u64
+            },
+            "isBase64Encoded": false
+        })
+    }
+
+    #[tokio::test]
+    async fn http_events_still_reach_the_router() {
+        let router = axum::Router::new().route("/ping", axum::routing::get(|| async { "pong" }));
+        let adapter = Adapter::from(router);
+        let out = dispatch(
+            adapter,
+            None,
+            LambdaEvent::new(api_gateway_get("/ping"), lambda_http::Context::default()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(out["statusCode"], 200);
+        assert_eq!(out["body"], "pong");
+    }
+
+    #[tokio::test]
+    async fn a_scheduled_event_sweeps_every_tenant() {
+        use netcidr::ipam::models::{CreateAllocation, CreateCidrBlock};
+        use netcidr::ipam::store::IpamStore;
+        let store = netcidr::ipam::sqlite::SqliteStore::in_memory().unwrap();
+        store.initialize().await.unwrap();
+        store.migrate().await.unwrap();
+        let ops = Arc::new(IpamOps::new(Arc::new(store)));
+        let block = ops
+            .create_cidr_block(
+                "t",
+                &CreateCidrBlock {
+                    cidr: "10.0.0.0/8".to_string(),
+                    name: None,
+                    description: None,
+                },
+            )
+            .await
+            .unwrap();
+        ops.allocate_specific(
+            "t",
+            &CreateAllocation {
+                cidr_block_id: block.id,
+                cidr: "10.0.1.0/24".to_string(),
+                status: None,
+                resource_id: None,
+                resource_type: None,
+                name: None,
+                description: None,
+                environment: None,
+                owner: None,
+                parent_allocation_id: None,
+                tags: None,
+                ttl_seconds: Some(1),
+            },
+        )
+        .await
+        .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+
+        let scheduled = serde_json::json!({
+            "detail-type": "Scheduled Event",
+            "source": "aws.events",
+            "detail": {}
+        });
+        let router = axum::Router::new();
+        let out = dispatch(
+            Adapter::from(router),
+            Some(ops),
+            LambdaEvent::new(scheduled, lambda_http::Context::default()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(out["allocations_released"], 1);
+    }
 
     #[test]
     fn lambda_rejects_every_unauthenticated_mode_and_typos() {
