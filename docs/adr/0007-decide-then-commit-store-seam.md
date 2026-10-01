@@ -35,8 +35,9 @@ adapters.
    builds the decide context (`now`, id generator, caller) from an injected
    clock and id source. The `*_idempotent` wrappers go away.
 3. **Exactly one Lock Scope per unit:** a cidr block (allocations, tags,
-   cidr-block delete), a tenant (cidr-block create, `load`), the user
-   directory (user upsert/delete/seed), or a PAT owner (mint/revoke). One
+   cidr-block delete), a tenant (cidr-block create, `load`, hostname
+   pointers), the user directory (user upsert/delete/seed), or a PAT owner
+   (mint/revoke). One
    lock per unit makes deadlock impossible by construction. Operations
    spanning scopes run one unit per scope, as `batch_allocate` and
    `reap_expired` already do.
@@ -45,7 +46,11 @@ adapters.
    block has no live allocations, which are written under the block's scope,
    so it takes the block: under the tenant scope an allocation could commit
    between the check and the delete. A delete can only free space, so it
-   needs nothing from the tenant scope.
+   needs nothing from the tenant scope. Hostname pointers take the tenant:
+   their rule is one live pointer per `(ip, hostname)` in the tenant. The
+   allocation a pointer links is read under the same unit but written under
+   its block's scope; the `allocation_id` foreign key, not the lock, keeps
+   that link from dangling.
 4. **Adapters persist and lock; they hold no rules.**
    - SQLite runs the whole unit synchronously in one `spawn_blocking` under
      `BEGIN IMMEDIATE`, with `busy_timeout` 5s on every pooled connection.

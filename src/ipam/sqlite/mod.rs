@@ -169,11 +169,6 @@ impl SqliteStore {
     }
 }
 
-/// Serialize a hostname pointer to a JSON snapshot for the history table.
-fn hostname_snapshot(p: &HostnamePointer) -> String {
-    serde_json::to_string(p).unwrap_or_default()
-}
-
 fn row_to_hostname_pointer(row: &rusqlite::Row<'_>) -> rusqlite::Result<HostnamePointer> {
     Ok(HostnamePointer {
         id: row.get("id")?,
@@ -703,6 +698,79 @@ fn revoke_pat(
     Ok(())
 }
 
+fn read_hostname_pointer(
+    conn: &Connection,
+    tenant_id: &str,
+    ip_address: &str,
+    hostname: &str,
+) -> Result<Option<HostnamePointer>> {
+    conn.query_row(
+        "SELECT id, tenant_id, ip_address, hostname, allocation_id, notes, created_at, updated_at \
+         FROM hostname_pointers WHERE tenant_id = ?1 AND ip_address = ?2 AND hostname = ?3",
+        params![tenant_id, ip_address, hostname],
+        row_to_hostname_pointer,
+    )
+    .optional()
+    .map_err(db_err)
+}
+
+fn put_hostname_pointer(conn: &Connection, p: &HostnamePointer) -> Result<()> {
+    conn.execute(
+        "INSERT INTO hostname_pointers \
+         (id, tenant_id, ip_address, hostname, allocation_id, notes, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
+         ON CONFLICT(id) DO UPDATE SET allocation_id = ?5, notes = ?6, updated_at = ?8 \
+         WHERE hostname_pointers.tenant_id = ?2",
+        params![
+            p.id,
+            p.tenant_id,
+            p.ip_address,
+            p.hostname,
+            p.allocation_id,
+            p.notes,
+            p.created_at,
+            p.updated_at
+        ],
+    )
+    .map_err(db_err)?;
+    Ok(())
+}
+
+fn delete_hostname_pointer_row(conn: &Connection, tenant_id: &str, id: &str) -> Result<()> {
+    let deleted = conn
+        .execute(
+            "DELETE FROM hostname_pointers WHERE id = ?1 AND tenant_id = ?2",
+            params![id, tenant_id],
+        )
+        .map_err(db_err)?;
+    if deleted == 0 {
+        return Err(NetcidrError::HostnamePointerNotFound(id.to_string()));
+    }
+    Ok(())
+}
+
+fn append_hostname_history(conn: &Connection, h: &HostnamePointerHistoryEntry) -> Result<()> {
+    conn.execute(
+        "INSERT INTO hostname_pointer_history \
+         (id, tenant_id, pointer_id, ip_address, hostname, change_kind, previous_value, new_value, actor, changed_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![
+            h.id,
+            h.tenant_id,
+            h.pointer_id,
+            h.ip_address,
+            h.hostname,
+            h.change_kind.to_string(),
+            h.previous_value,
+            h.new_value,
+            h.actor,
+            h.changed_at
+        ],
+    )
+    .map_err(db_err)?;
+    Ok(())
+}
+
 fn read_one(conn: &Connection, read: &Read) -> Result<Rows> {
     match read {
         Read::CidrBlock { tenant_id, id } => {
@@ -740,6 +808,13 @@ fn read_one(conn: &Connection, read: &Read) -> Result<Rows> {
         } => Ok(Rows::Count(read_active_pat_count(
             conn, tenant_id, owner_sub, now,
         )?)),
+        Read::HostnamePointer {
+            tenant_id,
+            ip_address,
+            hostname,
+        } => Ok(Rows::HostnamePointer(read_hostname_pointer(
+            conn, tenant_id, ip_address, hostname,
+        )?)),
     }
 }
 
@@ -761,6 +836,11 @@ fn apply_write(conn: &Connection, write: &Write) -> Result<()> {
             id,
             revoked_at,
         } => revoke_pat(conn, tenant_id, owner_sub, id, revoked_at),
+        Write::PutHostnamePointer(p) => put_hostname_pointer(conn, p),
+        Write::DeleteHostnamePointer { tenant_id, id } => {
+            delete_hostname_pointer_row(conn, tenant_id, id)
+        }
+        Write::AppendHostnameHistory(h) => append_hostname_history(conn, h),
     }
 }
 
@@ -992,115 +1072,6 @@ impl IpamStore for SqliteStore {
 
     // --- hostname pointers ---
 
-    async fn set_hostname_pointer(
-        &self,
-        tenant_id: &str,
-        actor: &str,
-        input: &CreateHostnamePointer,
-    ) -> Result<HostnamePointer> {
-        let mut conn = self.conn()?;
-        let now = Self::now();
-        let tx = conn
-            .transaction()
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        // Cross-tenant invariant: a linked allocation must belong to this tenant.
-        if let Some(ref alloc_id) = input.allocation_id {
-            let in_tenant: bool = tx
-                .query_row(
-                    "SELECT COUNT(*) > 0 FROM allocations WHERE id = ?1 AND tenant_id = ?2",
-                    params![alloc_id, tenant_id],
-                    |row| row.get(0),
-                )
-                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-            if !in_tenant {
-                return Err(NetcidrError::AllocationNotFound(alloc_id.clone()));
-            }
-        }
-
-        // Existing live row for this (tenant, ip, hostname)?
-        let existing: Option<HostnamePointer> = tx
-            .query_row(
-                "SELECT id, tenant_id, ip_address, hostname, allocation_id, notes, created_at, updated_at \
-                 FROM hostname_pointers WHERE tenant_id = ?1 AND ip_address = ?2 AND hostname = ?3",
-                params![tenant_id, input.ip_address, input.hostname],
-                row_to_hostname_pointer,
-            )
-            .optional()
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        let (pointer, change_kind, previous) = match existing {
-            Some(prev) => {
-                // Update path: refresh notes / allocation_id.
-                tx.execute(
-                    "UPDATE hostname_pointers SET allocation_id = ?1, notes = ?2, updated_at = ?3 \
-                     WHERE id = ?4 AND tenant_id = ?5",
-                    params![input.allocation_id, input.notes, now, prev.id, tenant_id],
-                )
-                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-                let updated = HostnamePointer {
-                    allocation_id: input.allocation_id.clone(),
-                    notes: input.notes.clone(),
-                    updated_at: now.clone(),
-                    ..prev.clone()
-                };
-                (updated, ChangeKind::Update, Some(hostname_snapshot(&prev)))
-            }
-            None => {
-                let id = uuid::Uuid::new_v4().to_string();
-                tx.execute(
-                    "INSERT INTO hostname_pointers \
-                     (id, tenant_id, ip_address, hostname, allocation_id, notes, created_at, updated_at) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
-                    params![
-                        id,
-                        tenant_id,
-                        input.ip_address,
-                        input.hostname,
-                        input.allocation_id,
-                        input.notes,
-                        now
-                    ],
-                )
-                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-                let created = HostnamePointer {
-                    id,
-                    tenant_id: tenant_id.to_string(),
-                    ip_address: input.ip_address.clone(),
-                    hostname: input.hostname.clone(),
-                    allocation_id: input.allocation_id.clone(),
-                    notes: input.notes.clone(),
-                    created_at: now.clone(),
-                    updated_at: now.clone(),
-                };
-                (created, ChangeKind::Create, None)
-            }
-        };
-
-        tx.execute(
-            "INSERT INTO hostname_pointer_history \
-             (id, tenant_id, pointer_id, ip_address, hostname, change_kind, previous_value, new_value, actor, changed_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            params![
-                uuid::Uuid::new_v4().to_string(),
-                tenant_id,
-                pointer.id,
-                pointer.ip_address,
-                pointer.hostname,
-                change_kind.to_string(),
-                previous,
-                Some(hostname_snapshot(&pointer)),
-                actor,
-                now
-            ],
-        )
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        tx.commit()
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        Ok(pointer)
-    }
-
     async fn list_hostname_pointers(
         &self,
         tenant_id: &str,
@@ -1140,66 +1111,6 @@ impl IpamStore for SqliteStore {
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         Ok(rows)
-    }
-
-    async fn delete_hostname_pointer(
-        &self,
-        tenant_id: &str,
-        actor: &str,
-        ip: &str,
-        hostname: &str,
-    ) -> Result<()> {
-        let mut conn = self.conn()?;
-        let now = Self::now();
-        let tx = conn
-            .transaction()
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        let existing: Option<HostnamePointer> = tx
-            .query_row(
-                "SELECT id, tenant_id, ip_address, hostname, allocation_id, notes, created_at, updated_at \
-                 FROM hostname_pointers WHERE tenant_id = ?1 AND ip_address = ?2 AND hostname = ?3",
-                params![tenant_id, ip, hostname],
-                row_to_hostname_pointer,
-            )
-            .optional()
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        let prev = match existing {
-            Some(p) => p,
-            None => {
-                return Err(NetcidrError::HostnamePointerNotFound(format!(
-                    "{ip} -> {hostname}"
-                )));
-            }
-        };
-
-        tx.execute(
-            "DELETE FROM hostname_pointers WHERE id = ?1 AND tenant_id = ?2",
-            params![prev.id, tenant_id],
-        )
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        tx.execute(
-            "INSERT INTO hostname_pointer_history \
-             (id, tenant_id, pointer_id, ip_address, hostname, change_kind, previous_value, new_value, actor, changed_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, 'delete', ?6, NULL, ?7, ?8)",
-            params![
-                uuid::Uuid::new_v4().to_string(),
-                tenant_id,
-                prev.id,
-                prev.ip_address,
-                prev.hostname,
-                hostname_snapshot(&prev),
-                actor,
-                now
-            ],
-        )
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        tx.commit()
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        Ok(())
     }
 
     async fn list_hostname_history(

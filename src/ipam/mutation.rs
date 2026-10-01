@@ -18,8 +18,8 @@ use crate::audit_context::AuditContext;
 use crate::error::{NetcidrError, Result};
 use crate::ipam::idempotency::TTL;
 use crate::ipam::models::{
-    Allocation, AllocationStatus, AuditEntry, CidrBlock, IdempotencyRecord, PersonalAccessToken,
-    UserRecord,
+    Allocation, AllocationStatus, AuditEntry, CidrBlock, HostnamePointer, IdempotencyRecord,
+    PersonalAccessToken, UserRecord,
 };
 use crate::ipam::operations::IdempotentOutcome;
 use crate::ipam::store::{
@@ -207,6 +207,21 @@ impl ReadSet {
         })
     }
 
+    /// The live hostname pointer for `(ip_address, hostname)` in
+    /// `tenant_id`, or `None`.
+    pub fn hostname_pointer(
+        &mut self,
+        tenant_id: &str,
+        ip_address: &str,
+        hostname: &str,
+    ) -> Handle<Option<HostnamePointer>> {
+        self.push(Read::HostnamePointer {
+            tenant_id: tenant_id.to_string(),
+            ip_address: ip_address.to_string(),
+            hostname: hostname.to_string(),
+        })
+    }
+
     /// A cidr block's allocations in `statuses` (with tags), ordered by
     /// network address.
     pub fn allocations_in_block(
@@ -304,6 +319,15 @@ impl FromRows for Vec<Allocation> {
     fn from_rows(rows: &Rows) -> Option<&Self> {
         match rows {
             Rows::Allocations(allocs) => Some(allocs),
+            _ => None,
+        }
+    }
+}
+
+impl FromRows for Option<HostnamePointer> {
+    fn from_rows(rows: &Rows) -> Option<&Self> {
+        match rows {
+            Rows::HostnamePointer(pointer) => Some(pointer),
             _ => None,
         }
     }
