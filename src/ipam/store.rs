@@ -79,15 +79,35 @@ impl LockScope {
 /// A read a unit declares up front. Reads run after the lock is taken,
 /// inside the transaction, in declaration order. Every tenant-scoped read
 /// carries its tenant (ADR-0001); a row in another tenant reads as absent.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Read {
-    CidrBlock { tenant_id: String, id: String },
+    CidrBlock {
+        tenant_id: String,
+        id: String,
+    },
+    /// One allocation, with its tags.
+    Allocation {
+        tenant_id: String,
+        id: String,
+    },
+    /// A cidr block's allocations in the given statuses, with their tags,
+    /// ordered by network address.
+    AllocationsInBlock {
+        tenant_id: String,
+        cidr_block_id: String,
+        statuses: Vec<AllocationStatus>,
+    },
 }
 
 /// The result of one [`Read`], in the same position as its read.
+// One short-lived value per declared read; boxing the larger variants would
+// add an allocation per read for no benefit.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum Rows {
     CidrBlock(Option<CidrBlock>),
+    Allocation(Option<Allocation>),
+    Allocations(Vec<Allocation>),
 }
 
 /// A rule-free row write. The adapter applies it verbatim: ids, timestamps,
@@ -96,7 +116,14 @@ pub enum Rows {
 /// Variants are added as operations move onto [`IpamStore::transact`]
 /// (#482–#487).
 #[derive(Debug, Clone)]
-pub enum Write {}
+pub enum Write {
+    /// Insert a new allocation row and its tags.
+    InsertAllocation(Allocation),
+    /// Overwrite an existing allocation's mutable fields (status, resource,
+    /// descriptive fields, `updated_at`, `released_at`, `expires_at`),
+    /// matched by tenant and id. Tags are left as they are.
+    ReplaceAllocation(Allocation),
+}
 
 /// Looks up an existing idempotency record inside the unit, under its lock.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,13 +230,6 @@ pub trait IpamStore: Send + Sync {
         tenant_id: &str,
         filter: &AllocationFilter,
     ) -> Result<Vec<Allocation>>;
-    async fn update_allocation(
-        &self,
-        tenant_id: &str,
-        id: &str,
-        input: &UpdateAllocation,
-    ) -> Result<Allocation>;
-    async fn release_allocation(&self, tenant_id: &str, id: &str) -> Result<Allocation>;
     async fn find_allocations_in_cidr_block(
         &self,
         tenant_id: &str,

@@ -290,16 +290,176 @@ async fn insert_idempotency<'e>(ex: impl PgExecutor<'e>, record: &IdempotencyRec
     Ok(())
 }
 
+async fn read_tags(
+    conn: &mut sqlx::PgConnection,
+    tenant_id: &str,
+    allocation_id: &str,
+) -> Result<Vec<Tag>> {
+    let rows = sqlx::query(
+        "SELECT key, value FROM allocation_tags WHERE allocation_id = $1 AND tenant_id = $2",
+    )
+    .bind(allocation_id)
+    .bind(tenant_id)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    Ok(rows
+        .iter()
+        .map(|row| Tag {
+            key: row.get("key"),
+            value: row.get("value"),
+        })
+        .collect())
+}
+
+async fn read_allocation(
+    conn: &mut sqlx::PgConnection,
+    tenant_id: &str,
+    id: &str,
+) -> Result<Option<Allocation>> {
+    let row = sqlx::query("SELECT id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = $1 AND tenant_id = $2")
+        .bind(id)
+        .bind(tenant_id)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(db_err)?;
+    match row {
+        Some(row) => {
+            let mut alloc = PostgresStore::row_to_allocation(&row);
+            alloc.tags = read_tags(conn, tenant_id, id).await?;
+            Ok(Some(alloc))
+        }
+        None => Ok(None),
+    }
+}
+
+async fn read_allocations_in_block(
+    conn: &mut sqlx::PgConnection,
+    tenant_id: &str,
+    cidr_block_id: &str,
+    statuses: &[AllocationStatus],
+) -> Result<Vec<Allocation>> {
+    if statuses.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+        "SELECT id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE cidr_block_id = ",
+    );
+    builder.push_bind(cidr_block_id);
+    builder.push(" AND tenant_id = ");
+    builder.push_bind(tenant_id);
+    builder.push(" AND status IN (");
+    {
+        let mut sep = builder.separated(", ");
+        for s in statuses {
+            sep.push_bind(s.to_string());
+        }
+    }
+    builder.push(") ORDER BY network_address");
+    let rows = builder
+        .build()
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(db_err)?;
+    let mut allocations: Vec<Allocation> =
+        rows.iter().map(PostgresStore::row_to_allocation).collect();
+    for alloc in &mut allocations {
+        alloc.tags = read_tags(conn, tenant_id, &alloc.id).await?;
+    }
+    Ok(allocations)
+}
+
+async fn insert_allocation(conn: &mut sqlx::PgConnection, a: &Allocation) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO allocations (id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)",
+    )
+    .bind(&a.id)
+    .bind(&a.tenant_id)
+    .bind(&a.cidr_block_id)
+    .bind(&a.cidr)
+    .bind(&a.network_address)
+    .bind(&a.broadcast_address)
+    .bind(a.prefix_length as i16)
+    .bind(a.total_hosts.to_string())
+    .bind(&a.resource_id)
+    .bind(&a.resource_type)
+    .bind(&a.name)
+    .bind(&a.description)
+    .bind(&a.environment)
+    .bind(&a.owner)
+    .bind(a.status.to_string())
+    .bind(&a.parent_allocation_id)
+    .bind(&a.created_at)
+    .bind(&a.updated_at)
+    .bind(&a.released_at)
+    .bind(&a.expires_at)
+    .execute(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    for tag in &a.tags {
+        sqlx::query(
+            "INSERT INTO allocation_tags (allocation_id, tenant_id, key, value) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(&a.id)
+        .bind(&a.tenant_id)
+        .bind(&tag.key)
+        .bind(&tag.value)
+        .execute(&mut *conn)
+        .await
+        .map_err(db_err)?;
+    }
+    Ok(())
+}
+
+async fn replace_allocation(conn: &mut sqlx::PgConnection, a: &Allocation) -> Result<()> {
+    let result = sqlx::query(
+        "UPDATE allocations SET status = $1, resource_id = $2, resource_type = $3, name = $4, description = $5, environment = $6, owner = $7, updated_at = $8, released_at = $9, expires_at = $10 WHERE id = $11 AND tenant_id = $12",
+    )
+    .bind(a.status.to_string())
+    .bind(&a.resource_id)
+    .bind(&a.resource_type)
+    .bind(&a.name)
+    .bind(&a.description)
+    .bind(&a.environment)
+    .bind(&a.owner)
+    .bind(&a.updated_at)
+    .bind(&a.released_at)
+    .bind(&a.expires_at)
+    .bind(&a.id)
+    .bind(&a.tenant_id)
+    .execute(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    if result.rows_affected() == 0 {
+        return Err(NetcidrError::AllocationNotFound(a.id.clone()));
+    }
+    Ok(())
+}
+
 async fn read_one(conn: &mut sqlx::PgConnection, read: &Read) -> Result<Rows> {
     match read {
         Read::CidrBlock { tenant_id, id } => {
             Ok(Rows::CidrBlock(read_cidr_block(conn, tenant_id, id).await?))
         }
+        Read::Allocation { tenant_id, id } => Ok(Rows::Allocation(
+            read_allocation(conn, tenant_id, id).await?,
+        )),
+        Read::AllocationsInBlock {
+            tenant_id,
+            cidr_block_id,
+            statuses,
+        } => Ok(Rows::Allocations(
+            read_allocations_in_block(conn, tenant_id, cidr_block_id, statuses).await?,
+        )),
     }
 }
 
-async fn apply_write(_conn: &mut sqlx::PgConnection, write: &Write) -> Result<()> {
-    match *write {}
+async fn apply_write(conn: &mut sqlx::PgConnection, write: &Write) -> Result<()> {
+    match write {
+        Write::InsertAllocation(a) => insert_allocation(conn, a).await,
+        Write::ReplaceAllocation(a) => replace_allocation(conn, a).await,
+    }
 }
 
 #[async_trait]
@@ -655,19 +815,10 @@ impl IpamStore for PostgresStore {
     }
 
     async fn get_allocation(&self, tenant_id: &str, id: &str) -> Result<Allocation> {
-        let row = sqlx::query(
-            "SELECT id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE id = $1 AND tenant_id = $2",
-        )
-        .bind(id)
-        .bind(tenant_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
-        .ok_or_else(|| NetcidrError::AllocationNotFound(id.to_string()))?;
-
-        let mut alloc = Self::row_to_allocation(&row);
-        alloc.tags = self.load_tags_for_allocation(tenant_id, id).await?;
-        Ok(alloc)
+        let mut conn = self.pool.acquire().await.map_err(db_err)?;
+        read_allocation(&mut conn, tenant_id, id)
+            .await?
+            .ok_or_else(|| NetcidrError::AllocationNotFound(id.to_string()))
     }
 
     async fn list_allocations(
@@ -724,129 +875,15 @@ impl IpamStore for PostgresStore {
         Ok(allocations)
     }
 
-    async fn update_allocation(
-        &self,
-        tenant_id: &str,
-        id: &str,
-        input: &UpdateAllocation,
-    ) -> Result<Allocation> {
-        let now = Self::now();
-
-        // Verify allocation exists in this tenant
-        self.assert_allocation_in_tenant(tenant_id, id).await?;
-
-        let mut builder =
-            sqlx::QueryBuilder::<sqlx::Postgres>::new("UPDATE allocations SET updated_at = ");
-        builder.push_bind(now);
-
-        macro_rules! push_set {
-            ($field:ident, $col:literal) => {
-                if let Some(ref val) = input.$field {
-                    builder.push(concat!(", ", $col, " = "));
-                    builder.push_bind(val.to_string());
-                }
-            };
-        }
-        push_set!(name, "name");
-        push_set!(description, "description");
-        push_set!(resource_id, "resource_id");
-        push_set!(resource_type, "resource_type");
-        push_set!(environment, "environment");
-        push_set!(owner, "owner");
-        push_set!(status, "status");
-
-        // Clear released_at when reactivating (status changes to active/reserved)
-        if let Some(ref status) = input.status {
-            let s = status.to_string();
-            if s == "active" || s == "reserved" {
-                builder.push(", released_at = NULL");
-            }
-        }
-
-        builder.push(" WHERE id = ");
-        builder.push_bind(id);
-        builder.push(" AND tenant_id = ");
-        builder.push_bind(tenant_id);
-
-        builder
-            .build()
-            .execute(&self.pool)
-            .await
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        self.get_allocation(tenant_id, id).await
-    }
-
-    async fn release_allocation(&self, tenant_id: &str, id: &str) -> Result<Allocation> {
-        let now = Self::now();
-
-        let result = sqlx::query(
-            "UPDATE allocations SET status = 'released', released_at = $1, updated_at = $1 WHERE id = $2 AND tenant_id = $3 AND status != 'released'",
-        )
-        .bind(&now)
-        .bind(id)
-        .bind(tenant_id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        if result.rows_affected() == 0 {
-            let exists = sqlx::query(
-                "SELECT COUNT(*) as cnt FROM allocations WHERE id = $1 AND tenant_id = $2",
-            )
-            .bind(id)
-            .bind(tenant_id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-            let cnt: i64 = exists.get("cnt");
-            if cnt == 0 {
-                return Err(NetcidrError::AllocationNotFound(id.to_string()));
-            }
-        }
-
-        self.get_allocation(tenant_id, id).await
-    }
-
     async fn find_allocations_in_cidr_block(
         &self,
         tenant_id: &str,
         cidr_block_id: &str,
         statuses: &[AllocationStatus],
     ) -> Result<Vec<Allocation>> {
-        if statuses.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let mut builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
-            "SELECT id, tenant_id, cidr_block_id, cidr, network_address, broadcast_address, prefix_length, total_hosts, resource_id, resource_type, name, description, environment, owner, status, parent_allocation_id, created_at, updated_at, released_at, expires_at FROM allocations WHERE cidr_block_id = ",
-        );
-        builder.push_bind(cidr_block_id);
-        builder.push(" AND tenant_id = ");
-        builder.push_bind(tenant_id);
-        builder.push(" AND status IN (");
-        {
-            let mut sep = builder.separated(", ");
-            for s in statuses {
-                sep.push_bind(s.to_string());
-            }
-        }
-        builder.push(") ORDER BY network_address");
-
-        let rows = builder
-            .build()
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        let mut allocations: Vec<Allocation> = rows.iter().map(Self::row_to_allocation).collect();
-        for alloc in &mut allocations {
-            alloc.tags = self.load_tags_for_allocation(tenant_id, &alloc.id).await?;
-        }
-        Ok(allocations)
+        let mut conn = self.pool.acquire().await.map_err(db_err)?;
+        read_allocations_in_block(&mut conn, tenant_id, cidr_block_id, statuses).await
     }
-
-    // --- tags ---
 
     async fn set_tags(&self, tenant_id: &str, allocation_id: &str, tags: &[Tag]) -> Result<()> {
         self.assert_allocation_in_tenant(tenant_id, allocation_id)

@@ -77,6 +77,35 @@ async fn allocation_with_mismatched_tenant_id_is_rejected_by_trigger() {
     pool.close().await;
 }
 
+/// Commit one `ReplaceAllocation` through a transaction unit.
+async fn replace(store: &PostgresStore, alloc: Allocation) {
+    store
+        .transact(netcidr::ipam::store::TxUnit {
+            scope: netcidr::ipam::store::LockScope::CidrBlock {
+                tenant_id: alloc.tenant_id.clone(),
+                cidr_block_id: alloc.cidr_block_id.clone(),
+            },
+            reads: vec![],
+            idempotency: None,
+            decide: Box::new(move |_| {
+                Ok(netcidr::ipam::store::Plan {
+                    writes: vec![netcidr::ipam::store::Write::ReplaceAllocation(alloc)],
+                    ..Default::default()
+                })
+            }),
+        })
+        .await
+        .unwrap();
+}
+
+fn released_row(mut alloc: Allocation) -> Allocation {
+    let now = chrono::Utc::now().to_rfc3339();
+    alloc.status = AllocationStatus::Released;
+    alloc.released_at = Some(now.clone());
+    alloc.updated_at = now;
+    alloc
+}
+
 async fn cidr_block_crud(store: &PostgresStore) {
     let sn = store
         .create_cidr_block(
@@ -154,23 +183,12 @@ async fn allocation_lifecycle(store: &PostgresStore) {
     assert_eq!(fetched.tags.len(), 1);
     assert_eq!(fetched.tags[0].key, "team");
 
-    // Update
-    let updated = store
-        .update_allocation(
-            TEST_TENANT,
-            &alloc.id,
-            &UpdateAllocation {
-                name: None,
-                description: Some("updated".to_string()),
-                resource_id: None,
-                resource_type: None,
-                environment: None,
-                owner: Some("new-team".to_string()),
-                status: None,
-            },
-        )
-        .await
-        .unwrap();
+    // Replace mutable fields
+    let mut changed = fetched.clone();
+    changed.description = Some("updated".to_string());
+    changed.owner = Some("new-team".to_string());
+    replace(store, changed).await;
+    let updated = store.get_allocation(TEST_TENANT, &alloc.id).await.unwrap();
     assert_eq!(updated.description, Some("updated".to_string()));
     assert_eq!(updated.owner, Some("new-team".to_string()));
 
@@ -189,10 +207,8 @@ async fn allocation_lifecycle(store: &PostgresStore) {
     assert_eq!(filtered.len(), 1);
 
     // Release
-    let released = store
-        .release_allocation(TEST_TENANT, &alloc.id)
-        .await
-        .unwrap();
+    replace(store, released_row(updated)).await;
+    let released = store.get_allocation(TEST_TENANT, &alloc.id).await.unwrap();
     assert_eq!(released.status, AllocationStatus::Released);
     assert!(released.released_at.is_some());
 
@@ -283,10 +299,8 @@ async fn tags(store: &PostgresStore) {
     assert_eq!(tags[0].value, "staging");
 
     // Cleanup
-    store
-        .release_allocation(TEST_TENANT, &alloc.id)
-        .await
-        .unwrap();
+    let current = store.get_allocation(TEST_TENANT, &alloc.id).await.unwrap();
+    replace(store, released_row(current)).await;
     store.delete_cidr_block(TEST_TENANT, &sn.id).await.unwrap();
 }
 

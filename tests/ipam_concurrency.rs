@@ -1,8 +1,9 @@
-//! Concurrency tests for IPAM allocations.
+//! Concurrency tests for IPAM invariants.
 //!
-//! Per-cidr_block locking in `IpamOps` serializes the
-//! "check overlap → insert" sequence so concurrent requests for an
-//! overlapping CIDR cannot both succeed. These tests prove the invariant.
+//! Each allocation write runs as one transaction under its cidr block's
+//! Lock Scope (ADR-0007), so concurrent requests for an overlapping CIDR
+//! cannot both succeed. These tests prove the invariant, first within one
+//! process and then across processes sharing a database.
 
 use std::sync::Arc;
 
@@ -34,8 +35,8 @@ async fn ops_with_cidr_block(cidr: &str) -> (Arc<IpamOps>, String) {
 }
 
 /// 8 tasks race to allocate the *same* CIDR. Exactly one must succeed; the
-/// other 7 must fail with `AllocationConflict`. Without per-cidr_block
-/// locking the check-then-insert window allows duplicates to slip through.
+/// other 7 must fail with `AllocationConflict`. Without the cidr block's
+/// Lock Scope the check-then-insert window lets duplicates slip through.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_allocate_specific_same_cidr_yields_exactly_one_winner() {
     let (ops, sn_id) = ops_with_cidr_block("10.0.0.0/8").await;
@@ -136,10 +137,11 @@ async fn concurrent_auto_allocate_produces_no_overlaps() {
 // ---------------------------------------------------------------------------
 // Cross-process races: two independent `IpamOps` over two stores that share
 // one database — the shape of two Lambda execution environments or two
-// `netcidr serve` processes. The in-process cidr_block lock cannot help
-// here, so these tests fail until the invariants are enforced inside the
-// database transaction (#479). Each test repeats its race for several rounds
-// to make the interleaving likely rather than lucky.
+// `netcidr serve` processes. Only a lock held inside the database
+// transaction can protect an invariant here (#479); tests for invariants not
+// yet moved onto `transact` stay ignored until their fix lands. Each test
+// repeats its race for several rounds to make the interleaving likely rather
+// than lucky.
 // ---------------------------------------------------------------------------
 
 mod store_support;
@@ -397,13 +399,11 @@ mod cross_process {
     macro_rules! cross_process_tests {
         ($pair:expr) => {
             #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-            #[ignore = "cross-process allocation race; fixed by #482"]
             async fn allocate_specific_has_one_winner() {
                 super::allocate_specific_has_one_winner($pair.await).await;
             }
 
             #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-            #[ignore = "cross-process allocation race; fixed by #482"]
             async fn allocate_auto_never_overlaps() {
                 super::allocate_auto_never_overlaps($pair.await).await;
             }
