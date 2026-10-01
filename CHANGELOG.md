@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `netcidr ipam` can talk to a netcidr server: `--api-url URL` (or `NETCIDR_API_URL`) runs every IPAM subcommand against that server, using `--api-token`, `NETCIDR_API_TOKEN`, or the `netcidr login` session. `--db PATH` always forces the local database. The backend in use is printed to stderr, and `netcidr ipam --help` explains the selection order. `dump`/`load` remain local-only ([#457](https://github.com/wingnut128/netcidr/issues/457)).
+
+### Fixed
+
+- The remote IPAM client (used by `netcidr mcp-serve --api-url` and now `netcidr ipam --api-url`) fetched only the first page of list endpoints, so lists of CIDR blocks, allocations, hostnames and hostname history silently stopped at 100 rows. It now pages through every result ([#457](https://github.com/wingnut128/netcidr/issues/457)).
+
 ## [0.31.0](https://github.com/wingnut128/netcidr/compare/v0.30.0...v0.31.0) - 2026-10-01
 
 ### Added

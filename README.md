@@ -1012,6 +1012,33 @@ netcidr ipam --db /path/to/my.db cidr-block list
 
 **Database location** (precedence order): `--db` flag > `NETCIDR_DB` env var > `db_path` in config file > `~/.local/share/netcidr/netcidr.db`
 
+**Talking to a netcidr server.** `netcidr ipam` can run against a `netcidr serve` instance (local or published) instead of a local database. It decides where to run like this, first match wins:
+
+| Setting | Runs against |
+|---|---|
+| `--db PATH` | that local SQLite file (always wins) |
+| `--api-url URL` | the server at URL |
+| `NETCIDR_API_URL` | the server at that URL |
+| none of the above | the local database (see precedence above) |
+
+For a server, the credential comes from `--api-token`, then `NETCIDR_API_TOKEN` (a personal access token or static bearer token), then the session saved by `netcidr login --api-url URL`. Every invocation prints the backend in use to stderr (`ipam: remote https://…` or `ipam: local /path/to/netcidr.db`). `dump` and `load` only work on a local database.
+
+```bash
+# Published endpoint, using your `netcidr login` session
+export NETCIDR_API_URL=https://netcidr.example.com
+netcidr ipam cidr-block list
+
+# A local test server in bearer-token mode
+printf 'auth_mode = "bearer"\nauth_token = "devtoken"\n' > dev.toml
+netcidr serve --config dev.toml --ipam-enabled --ipam-db ./serve.db &
+netcidr ipam --api-url http://localhost:8080 --api-token devtoken cidr-block list
+
+# Force the local database even with NETCIDR_API_URL exported
+netcidr ipam --db ./test.db cidr-block list
+```
+
+> A `netcidr serve` with authentication off (the default) rejects IPAM requests with `401 tenant not set`, because the tenant comes from the authenticated caller. Use bearer-token mode for local testing, as above.
+
 **REST API:**
 
 Enable IPAM endpoints on the HTTP server with `--ipam-enabled`:
