@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Setting and deleting a hostname pointer now write audit rows (`set_hostname_pointer`, `delete_hostname_pointer`) in the same transaction as the pointer and its history entry ([#486](https://github.com/wingnut128/netcidr/issues/486)).
 - Minting and revoking a personal access token now write audit rows (`mint_pat`, `revoke_pat`) in the same transaction; re-revoking an already-revoked token writes none ([#485](https://github.com/wingnut128/netcidr/issues/485)).
 - The env-list user seed now writes an audit row per seeded user (`seed_user`) and one for the seed itself (`seed_users`), under the local tenant ([#484](https://github.com/wingnut128/netcidr/issues/484)).
 - `netcidr ipam load` restores a dump in one transaction: a failure partway through leaves the tenant empty instead of half-restored. Each restored cidr block and allocation is recorded in the audit log as `load` ([#483](https://github.com/wingnut128/netcidr/issues/483)).
@@ -22,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Concurrent hostname pointer race.** Two requests setting the same IP↔hostname pair at once, from one process or several, could both try to create it: one failed with a 500 (a duplicate-key error on Postgres, "database is locked" on SQLite). Setting and deleting a pointer now run as one transaction under the tenant's Lock Scope, so the second request updates the pointer the first created ([#486](https://github.com/wingnut128/netcidr/issues/486)).
 - **Cross-process PAT limit race.** Concurrent mints for one PAT Owner from different processes could each pass the active-token count and exceed the per-owner limit. Minting and revoking now run as one transaction under the PAT Owner's Lock Scope ([#485](https://github.com/wingnut128/netcidr/issues/485)).
 - **Cross-process last-platform-admin race.** Two processes could each delete or demote a different platform admin at the same time and leave none, locking everyone out of user management. User upserts and deletes now run as one transaction under the user-directory Lock Scope, so the guard sees the other change. The one-shot env-list user seed runs under the same scope, so concurrent cold starts apply it once instead of one failing on the bootstrap marker ([#484](https://github.com/wingnut128/netcidr/issues/484)).
 - **Cross-process CIDR-block races.** Two processes could create overlapping cidr blocks in one tenant, and a block could be deleted while another process allocated into it. Creating a block now runs as one transaction under the tenant's Lock Scope, and deleting one under the block's scope ([#483](https://github.com/wingnut128/netcidr/issues/483)).

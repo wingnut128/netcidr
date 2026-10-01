@@ -12,6 +12,7 @@ use crate::validation;
 
 mod allocation;
 mod cidr_block;
+mod hostnames;
 mod users;
 
 /// Outcome of an idempotency-aware operation. Carries the produced
@@ -802,17 +803,9 @@ impl IpamOps {
 
     // --- hostname pointers ---
 
-    /// Resolve the acting identity for history records: the authenticated
-    /// caller's email, then their OIDC subject, else `"cli"`.
-    fn current_actor() -> String {
-        let ctx = crate::audit_context::current();
-        ctx.caller_email
-            .or(ctx.caller_sub)
-            .unwrap_or_else(|| "cli".to_string())
-    }
-
     /// Create or update a hostname pointer. The IP is canonicalized and the
     /// hostname normalized (lowercased, RFC 1123 validated) before storage.
+    /// The pointer, its history entry, and its audit row commit together.
     pub async fn set_hostname_pointer(
         &self,
         tenant_id: &str,
@@ -823,16 +816,16 @@ impl IpamOps {
         validation::validate_optional_identifier(&input.allocation_id)?;
         validation::validate_optional_text(&input.notes, 0)?;
 
-        let normalized = CreateHostnamePointer {
-            ip_address,
-            hostname,
-            allocation_id: input.allocation_id.clone(),
-            notes: input.notes.clone(),
+        let mutation = hostnames::SetHostnamePointer {
+            tenant_id: tenant_id.to_string(),
+            input: CreateHostnamePointer {
+                ip_address,
+                hostname,
+                allocation_id: input.allocation_id.clone(),
+                notes: input.notes.clone(),
+            },
         };
-        let actor = Self::current_actor();
-        self.store
-            .set_hostname_pointer(tenant_id, &actor, &normalized)
-            .await
+        Ok(self.run(tenant_id, mutation, None).await?.into_inner())
     }
 
     /// List hostname pointers, optionally filtered by IP, hostname, or
@@ -890,10 +883,14 @@ impl IpamOps {
     ) -> Result<()> {
         let ip_address = validation::normalize_ip_address(ip)?;
         let hostname = validation::normalize_hostname(hostname)?;
-        let actor = Self::current_actor();
-        self.store
-            .delete_hostname_pointer(tenant_id, &actor, &ip_address, &hostname)
+        let mutation = hostnames::DeleteHostnamePointer {
+            tenant_id: tenant_id.to_string(),
+            ip_address,
+            hostname,
+        };
+        self.run(tenant_id, mutation, None)
             .await
+            .map(IdempotentOutcome::into_inner)
     }
 
     /// The append-only change history, optionally filtered by IP or hostname.

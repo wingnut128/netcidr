@@ -20,15 +20,6 @@ use crate::ipam::store::{LockScope, Write};
 /// The bootstrap marker that makes the env-list seed one-shot.
 pub(super) const USERS_ENV_SEED: &str = "users_env_seed";
 
-/// Who made a change: the caller's email, else their subject, else `"cli"`.
-fn actor(caller: &AuditContext) -> String {
-    caller
-        .caller_email
-        .clone()
-        .or_else(|| caller.caller_sub.clone())
-        .unwrap_or_else(|| "cli".to_string())
-}
-
 /// Safety rails for changing or deleting an existing user (ADR-0006).
 /// `proposed` is the new `(role, status)`, or `None` for a delete.
 ///
@@ -107,7 +98,7 @@ impl Mutation for UpsertUser {
         cx: &DecideCtx,
     ) -> Result<Decision<UserRecord>> {
         let now = cx.now().to_rfc3339();
-        let actor = actor(cx.caller());
+        let actor = cx.actor();
         let user = match snapshot.get(reads.user)? {
             // A new row can only add capability, never strand the directory.
             None => UserRecord {

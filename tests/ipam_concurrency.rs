@@ -479,6 +479,55 @@ mod cross_process {
         }
     }
 
+    /// Per round, 8 tasks split across both processes set the same
+    /// `(ip, hostname)` pair. None may fail on the unique constraint: one
+    /// creates the pointer and the rest update it, each with one history
+    /// entry.
+    pub async fn hostname_sets_of_one_pair_create_once(pair: Pair) {
+        for round in 0..ROUNDS {
+            let hostname = format!("host-{round}.example.com");
+            let mut handles = Vec::new();
+            for task in 0..8 {
+                let ops = Arc::clone(&pair.ops[task % 2]);
+                let input = CreateHostnamePointer {
+                    ip_address: "10.0.0.1".to_string(),
+                    hostname: hostname.clone(),
+                    allocation_id: None,
+                    notes: Some(format!("task-{task}")),
+                };
+                handles.push(tokio::spawn(async move {
+                    ops.set_hostname_pointer(TEST_TENANT, &input).await
+                }));
+            }
+            let mut ids = HashSet::new();
+            for h in handles {
+                match h.await.unwrap() {
+                    Ok(p) => {
+                        ids.insert(p.id);
+                    }
+                    Err(e) => panic!("round {round}: unexpected error: {e:?}"),
+                }
+            }
+            assert_eq!(ids.len(), 1, "round {round}: pointer ids {ids:?}");
+            let history = pair.stores[0]
+                .list_hostname_history(
+                    TEST_TENANT,
+                    &HostnameHistoryFilter {
+                        hostname: Some(hostname),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+            let creates = history
+                .iter()
+                .filter(|h| h.change_kind == ChangeKind::Create)
+                .count();
+            assert_eq!(history.len(), 8, "round {round}: one entry per set");
+            assert_eq!(creates, 1, "round {round}: {creates} create entries");
+        }
+    }
+
     macro_rules! cross_process_tests {
         ($pair:expr) => {
             #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -514,6 +563,11 @@ mod cross_process {
             #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
             async fn pat_limit_holds() {
                 super::pat_limit_holds($pair.await).await;
+            }
+
+            #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+            async fn hostname_sets_of_one_pair_create_once() {
+                super::hostname_sets_of_one_pair_create_once($pair.await).await;
             }
         };
     }

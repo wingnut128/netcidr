@@ -1408,13 +1408,123 @@ macro_rules! store_contract_tests {
         // ---- Hostname pointers ----
 
         #[tokio::test]
-        async fn contract_hostname_set_get_and_history() {
+        async fn contract_hostname_writes_round_trip() {
+            use netcidr::ipam::store::Write;
             let store = $factory().await;
+            let pointer = HostnamePointer {
+                id: "p-1".to_string(),
+                tenant_id: TEST_TENANT.to_string(),
+                ip_address: "10.0.1.5".to_string(),
+                hostname: "web.example.com".to_string(),
+                allocation_id: None,
+                notes: Some("v1".to_string()),
+                created_at: "2026-10-01T00:00:00+00:00".to_string(),
+                updated_at: "2026-10-01T00:00:00+00:00".to_string(),
+            };
+            let entry = HostnamePointerHistoryEntry {
+                id: "h-1".to_string(),
+                tenant_id: TEST_TENANT.to_string(),
+                pointer_id: "p-1".to_string(),
+                ip_address: "10.0.1.5".to_string(),
+                hostname: "web.example.com".to_string(),
+                change_kind: ChangeKind::Create,
+                previous_value: None,
+                new_value: Some("{}".to_string()),
+                actor: "cli".to_string(),
+                changed_at: "2026-10-01T00:00:00+00:00".to_string(),
+            };
+            write_rows(
+                &*store,
+                vec![
+                    Write::PutHostnamePointer(pointer.clone()),
+                    Write::AppendHostnameHistory(entry),
+                ],
+            )
+            .await
+            .unwrap();
 
-            let p = store
+            // PutHostnamePointer on an existing id overwrites only the
+            // allocation link, notes, and updated_at.
+            write_rows(
+                &*store,
+                vec![Write::PutHostnamePointer(HostnamePointer {
+                    hostname: "ignored.example.com".to_string(),
+                    notes: Some("v2".to_string()),
+                    created_at: "2030-01-01T00:00:00+00:00".to_string(),
+                    updated_at: "2026-10-01T01:00:00+00:00".to_string(),
+                    ..pointer.clone()
+                })],
+            )
+            .await
+            .unwrap();
+            let live = store
+                .list_hostname_pointers(TEST_TENANT, &HostnamePointerFilter::default())
+                .await
+                .unwrap();
+            assert_eq!(live.len(), 1);
+            assert_eq!(live[0].hostname, "web.example.com");
+            assert_eq!(live[0].notes.as_deref(), Some("v2"));
+            assert_eq!(live[0].created_at, "2026-10-01T00:00:00+00:00");
+            assert_eq!(live[0].updated_at, "2026-10-01T01:00:00+00:00");
+
+            let hist = store
+                .list_hostname_history(TEST_TENANT, &HostnameHistoryFilter::default())
+                .await
+                .unwrap();
+            assert_eq!(hist.len(), 1);
+            assert_eq!(hist[0].change_kind, ChangeKind::Create);
+            assert_eq!(hist[0].new_value.as_deref(), Some("{}"));
+
+            // Delete matches on tenant: another tenant's id is not found.
+            let cross = write_rows(
+                &*store,
+                vec![Write::DeleteHostnamePointer {
+                    tenant_id: "other@example.com".to_string(),
+                    id: "p-1".to_string(),
+                }],
+            )
+            .await;
+            assert!(matches!(
+                cross,
+                Err(NetcidrError::HostnamePointerNotFound(_))
+            ));
+            write_rows(
+                &*store,
+                vec![Write::DeleteHostnamePointer {
+                    tenant_id: TEST_TENANT.to_string(),
+                    id: "p-1".to_string(),
+                }],
+            )
+            .await
+            .unwrap();
+            assert!(
+                store
+                    .list_hostname_pointers(TEST_TENANT, &HostnamePointerFilter::default())
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+
+        /// The store behind `IpamOps`, so hostname rules run on this backend.
+        async fn hostname_ops() -> (
+            netcidr::ipam::operations::IpamOps,
+            std::sync::Arc<dyn IpamStore>,
+            store_support::Guard,
+        ) {
+            let (store, guard) = $factory().await.into_parts();
+            let store: std::sync::Arc<dyn IpamStore> = std::sync::Arc::new(store);
+            let ops = netcidr::ipam::operations::IpamOps::new(std::sync::Arc::clone(&store));
+            (ops, store, guard)
+        }
+
+        #[tokio::test]
+        async fn contract_hostname_set_get_and_history() {
+            let (ops, store, _guard) = hostname_ops().await;
+
+            let p = ops
                 .set_hostname_pointer(
                     TEST_TENANT,
-                    "cli",
                     &CreateHostnamePointer {
                         ip_address: "10.0.1.5".to_string(),
                         hostname: "web-01.example.com".to_string(),
@@ -1429,39 +1539,30 @@ macro_rules! store_contract_tests {
             assert!(!p.id.is_empty());
 
             // Many-to-many: a second hostname on the same IP.
-            store
-                .set_hostname_pointer(
-                    TEST_TENANT,
-                    "cli",
-                    &CreateHostnamePointer {
-                        ip_address: "10.0.1.5".to_string(),
-                        hostname: "app.example.com".to_string(),
-                        allocation_id: None,
-                        notes: None,
-                    },
-                )
-                .await
-                .unwrap();
+            ops.set_hostname_pointer(
+                TEST_TENANT,
+                &CreateHostnamePointer {
+                    ip_address: "10.0.1.5".to_string(),
+                    hostname: "app.example.com".to_string(),
+                    allocation_id: None,
+                    notes: None,
+                },
+            )
+            .await
+            .unwrap();
 
-            let by_ip = store
-                .list_hostname_pointers(
-                    TEST_TENANT,
-                    &HostnamePointerFilter {
-                        ip_address: Some("10.0.1.5".to_string()),
-                        ..Default::default()
-                    },
-                )
+            let by_ip = ops
+                .get_hostname_pointers_for_ip(TEST_TENANT, "10.0.1.5")
                 .await
                 .unwrap();
             assert_eq!(by_ip.len(), 2);
 
-            // History has two create rows so far.
-            let hist = store
+            // History has two create rows so far, each with one audit row.
+            let hist = ops
                 .list_hostname_history(
                     TEST_TENANT,
                     &HostnameHistoryFilter {
                         ip_address: Some("10.0.1.5".to_string()),
-                        hostname: None,
                         ..Default::default()
                     },
                 )
@@ -1469,26 +1570,34 @@ macro_rules! store_contract_tests {
                 .unwrap();
             assert_eq!(hist.len(), 2);
             assert!(hist.iter().all(|h| h.change_kind == ChangeKind::Create));
+            assert!(hist.iter().all(|h| h.actor == "cli"));
+            let audit = store
+                .query_audit(
+                    TEST_TENANT,
+                    &AuditFilter {
+                        action: Some("set_hostname_pointer".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(audit.len(), 2);
         }
 
         #[tokio::test]
         async fn contract_hostname_upsert_records_update() {
-            let store = $factory().await;
+            let (ops, _store, _guard) = hostname_ops().await;
             let input = CreateHostnamePointer {
                 ip_address: "192.168.0.1".to_string(),
                 hostname: "host.example.com".to_string(),
                 allocation_id: None,
                 notes: Some("v1".to_string()),
             };
-            let first = store
-                .set_hostname_pointer(TEST_TENANT, "cli", &input)
-                .await
-                .unwrap();
+            let first = ops.set_hostname_pointer(TEST_TENANT, &input).await.unwrap();
             // Re-set the same pair updates in place (same id), records `update`.
-            let second = store
+            let second = ops
                 .set_hostname_pointer(
                     TEST_TENANT,
-                    "cli",
                     &CreateHostnamePointer {
                         notes: Some("v2".to_string()),
                         ..input.clone()
@@ -1499,13 +1608,14 @@ macro_rules! store_contract_tests {
             assert_eq!(first.id, second.id);
             assert_eq!(second.notes, Some("v2".to_string()));
 
-            let pointers = store
+            let pointers = ops
                 .list_hostname_pointers(TEST_TENANT, &HostnamePointerFilter::default())
                 .await
                 .unwrap();
             assert_eq!(pointers.len(), 1, "upsert must not create a duplicate row");
+            assert_eq!(pointers[0].notes, Some("v2".to_string()));
 
-            let hist = store
+            let hist = ops
                 .list_hostname_history(TEST_TENANT, &HostnameHistoryFilter::default())
                 .await
                 .unwrap();
@@ -1515,36 +1625,89 @@ macro_rules! store_contract_tests {
         }
 
         #[tokio::test]
-        async fn contract_hostname_delete_is_hard_with_history() {
-            let store = $factory().await;
-            store
-                .set_hostname_pointer(
-                    TEST_TENANT,
-                    "cli",
-                    &CreateHostnamePointer {
-                        ip_address: "10.0.0.9".to_string(),
-                        hostname: "gone.example.com".to_string(),
-                        allocation_id: None,
-                        notes: None,
+        async fn contract_hostname_link_requires_an_allocation_in_the_tenant() {
+            let (ops, store, _guard) = hostname_ops().await;
+            let block = store
+                .create_cidr_block(
+                    "other@example.com",
+                    &CreateCidrBlock {
+                        cidr: "10.0.0.0/8".to_string(),
+                        name: None,
+                        description: None,
                     },
                 )
                 .await
                 .unwrap();
+            let theirs = store
+                .create_allocation(
+                    "other@example.com",
+                    &CreateAllocation {
+                        cidr_block_id: block.id,
+                        cidr: "10.0.1.0/24".to_string(),
+                        status: None,
+                        resource_id: None,
+                        resource_type: None,
+                        name: None,
+                        description: None,
+                        environment: None,
+                        owner: None,
+                        parent_allocation_id: None,
+                        tags: None,
+                        ttl_seconds: None,
+                    },
+                )
+                .await
+                .unwrap();
+            let err = ops
+                .set_hostname_pointer(
+                    TEST_TENANT,
+                    &CreateHostnamePointer {
+                        ip_address: "10.0.1.5".to_string(),
+                        hostname: "web.example.com".to_string(),
+                        allocation_id: Some(theirs.id),
+                        notes: None,
+                    },
+                )
+                .await
+                .unwrap_err();
+            assert!(matches!(err, NetcidrError::AllocationNotFound(_)));
+            assert!(
+                ops.list_hostname_history(TEST_TENANT, &HostnameHistoryFilter::default())
+                    .await
+                    .unwrap()
+                    .is_empty(),
+                "a rejected set writes no history"
+            );
+        }
 
-            store
-                .delete_hostname_pointer(TEST_TENANT, "cli", "10.0.0.9", "gone.example.com")
+        #[tokio::test]
+        async fn contract_hostname_delete_is_hard_with_history() {
+            let (ops, store, _guard) = hostname_ops().await;
+            ops.set_hostname_pointer(
+                TEST_TENANT,
+                &CreateHostnamePointer {
+                    ip_address: "10.0.0.9".to_string(),
+                    hostname: "gone.example.com".to_string(),
+                    allocation_id: None,
+                    notes: None,
+                },
+            )
+            .await
+            .unwrap();
+
+            ops.delete_hostname_pointer(TEST_TENANT, "10.0.0.9", "gone.example.com")
                 .await
                 .unwrap();
 
             // Live row is gone.
-            let live = store
+            let live = ops
                 .list_hostname_pointers(TEST_TENANT, &HostnamePointerFilter::default())
                 .await
                 .unwrap();
             assert!(live.is_empty());
 
             // History preserves create + delete.
-            let hist = store
+            let hist = ops
                 .list_hostname_history(TEST_TENANT, &HostnameHistoryFilter::default())
                 .await
                 .unwrap();
@@ -1552,10 +1715,21 @@ macro_rules! store_contract_tests {
             assert_eq!(hist[1].change_kind, ChangeKind::Delete);
             assert!(hist[1].previous_value.is_some());
             assert!(hist[1].new_value.is_none());
+            let audit = store
+                .query_audit(
+                    TEST_TENANT,
+                    &AuditFilter {
+                        action: Some("delete_hostname_pointer".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(audit.len(), 1);
 
             // Deleting a missing pointer is NotFound.
-            let err = store
-                .delete_hostname_pointer(TEST_TENANT, "cli", "10.0.0.9", "gone.example.com")
+            let err = ops
+                .delete_hostname_pointer(TEST_TENANT, "10.0.0.9", "gone.example.com")
                 .await
                 .unwrap_err();
             assert!(matches!(err, NetcidrError::HostnamePointerNotFound(_)));
@@ -2051,7 +2225,9 @@ async fn users_directory_crud_and_marker_seed() {
 /// `(ip, hostname)` pairs may coexist across tenants.
 #[tokio::test]
 async fn hostname_pointers_are_tenant_isolated() {
-    let store = sqlite_store().await;
+    use std::sync::Arc;
+    let store: Arc<dyn IpamStore> = Arc::new(sqlite_store().await.into_parts().0);
+    let ops = netcidr::ipam::operations::IpamOps::new(Arc::clone(&store));
     let mk = |ip: &str, host: &str| CreateHostnamePointer {
         ip_address: ip.to_string(),
         hostname: host.to_string(),
@@ -2060,12 +2236,10 @@ async fn hostname_pointers_are_tenant_isolated() {
     };
 
     // Both tenants record the *same* IP↔hostname pair.
-    store
-        .set_hostname_pointer("a@x", "a@x", &mk("10.0.0.1", "shared.example.com"))
+    ops.set_hostname_pointer("a@x", &mk("10.0.0.1", "shared.example.com"))
         .await
         .unwrap();
-    store
-        .set_hostname_pointer("b@x", "b@x", &mk("10.0.0.1", "shared.example.com"))
+    ops.set_hostname_pointer("b@x", &mk("10.0.0.1", "shared.example.com"))
         .await
         .unwrap();
 
@@ -2094,12 +2268,11 @@ async fn hostname_pointers_are_tenant_isolated() {
     assert!(a_hist.iter().all(|h| h.tenant_id == "a@x"));
 
     // Tenant A cannot delete tenant B's pointer (cross-tenant ⇒ NotFound).
-    store
-        .set_hostname_pointer("b@x", "b@x", &mk("10.0.0.2", "b-only.example.com"))
+    ops.set_hostname_pointer("b@x", &mk("10.0.0.2", "b-only.example.com"))
         .await
         .unwrap();
-    let err = store
-        .delete_hostname_pointer("a@x", "a@x", "10.0.0.2", "b-only.example.com")
+    let err = ops
+        .delete_hostname_pointer("a@x", "10.0.0.2", "b-only.example.com")
         .await
         .unwrap_err();
     assert!(matches!(err, NetcidrError::HostnamePointerNotFound(_)));

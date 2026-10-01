@@ -45,7 +45,8 @@ pub enum LockScope {
         tenant_id: String,
         cidr_block_id: String,
     },
-    /// A tenant's set of cidr blocks (create, load).
+    /// A tenant's set of cidr blocks (create, load) and its hostname
+    /// pointers (set, delete).
     Tenant { tenant_id: String },
     /// The global user directory (upsert, delete, seed).
     UserDirectory,
@@ -126,6 +127,12 @@ pub enum Read {
         owner_sub: String,
         now: String,
     },
+    /// The live hostname pointer for `(ip_address, hostname)` in a tenant.
+    HostnamePointer {
+        tenant_id: String,
+        ip_address: String,
+        hostname: String,
+    },
 }
 
 /// The result of one [`Read`], in the same position as its read.
@@ -143,6 +150,7 @@ pub enum Rows {
     Count(u64),
     Flag(bool),
     Pat(Option<PersonalAccessToken>),
+    HostnamePointer(Option<HostnamePointer>),
 }
 
 /// A rule-free row write. The adapter applies it verbatim: ids, timestamps,
@@ -179,6 +187,14 @@ pub enum Write {
         id: String,
         revoked_at: String,
     },
+    /// Insert a hostname pointer, or — when a row with its id exists in its
+    /// tenant — overwrite that row's `allocation_id`, `notes`, and
+    /// `updated_at`.
+    PutHostnamePointer(HostnamePointer),
+    /// Delete a hostname pointer, matched by tenant and id.
+    DeleteHostnamePointer { tenant_id: String, id: String },
+    /// Append one row to the hostname pointer history.
+    AppendHostnameHistory(HostnamePointerHistoryEntry),
 }
 
 /// Looks up an existing idempotency record inside the unit, under its lock.
@@ -287,33 +303,11 @@ pub trait IpamStore: Send + Sync {
     async fn get_tags(&self, tenant_id: &str, allocation_id: &str) -> Result<Vec<Tag>>;
 
     // --- hostname pointers ---
-    /// Upsert a hostname pointer for `(tenant_id, ip, hostname)`. Inserts when
-    /// new (recording a `create` history row), otherwise updates `notes`/
-    /// `allocation_id` (recording an `update` row). The live mutation and its
-    /// history row are written in a single transaction. `actor` is the OIDC
-    /// identity or `"cli"`.
-    async fn set_hostname_pointer(
-        &self,
-        tenant_id: &str,
-        actor: &str,
-        input: &CreateHostnamePointer,
-    ) -> Result<HostnamePointer>;
     async fn list_hostname_pointers(
         &self,
         tenant_id: &str,
         filter: &HostnamePointerFilter,
     ) -> Result<Vec<HostnamePointer>>;
-    /// Remove the live pointer for `(tenant_id, ip, hostname)` and record a
-    /// `delete` history row (with the prior value) in the same transaction.
-    /// Returns `CidrBlockNotFound`-style `NotFound` if no such live pointer
-    /// exists for the tenant.
-    async fn delete_hostname_pointer(
-        &self,
-        tenant_id: &str,
-        actor: &str,
-        ip: &str,
-        hostname: &str,
-    ) -> Result<()>;
     async fn list_hostname_history(
         &self,
         tenant_id: &str,

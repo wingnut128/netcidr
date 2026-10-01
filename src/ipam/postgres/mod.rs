@@ -122,10 +122,6 @@ impl PostgresStore {
     }
 }
 
-fn pg_hostname_snapshot(p: &HostnamePointer) -> String {
-    serde_json::to_string(p).unwrap_or_default()
-}
-
 fn pg_row_to_hostname_pointer(row: &sqlx::postgres::PgRow) -> HostnamePointer {
     HostnamePointer {
         id: row.get("id"),
@@ -706,6 +702,89 @@ async fn revoke_pat<'e>(
     Ok(())
 }
 
+async fn read_hostname_pointer<'e>(
+    ex: impl PgExecutor<'e>,
+    tenant_id: &str,
+    ip_address: &str,
+    hostname: &str,
+) -> Result<Option<HostnamePointer>> {
+    let row = sqlx::query(
+        "SELECT id, tenant_id, ip_address, hostname, allocation_id, notes, created_at, updated_at \
+         FROM hostname_pointers WHERE tenant_id = $1 AND ip_address = $2 AND hostname = $3",
+    )
+    .bind(tenant_id)
+    .bind(ip_address)
+    .bind(hostname)
+    .fetch_optional(ex)
+    .await
+    .map_err(db_err)?;
+    Ok(row.as_ref().map(pg_row_to_hostname_pointer))
+}
+
+async fn put_hostname_pointer<'e>(ex: impl PgExecutor<'e>, p: &HostnamePointer) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO hostname_pointers \
+         (id, tenant_id, ip_address, hostname, allocation_id, notes, created_at, updated_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+         ON CONFLICT (id) DO UPDATE SET allocation_id = $5, notes = $6, updated_at = $8 \
+         WHERE hostname_pointers.tenant_id = $2",
+    )
+    .bind(&p.id)
+    .bind(&p.tenant_id)
+    .bind(&p.ip_address)
+    .bind(&p.hostname)
+    .bind(&p.allocation_id)
+    .bind(&p.notes)
+    .bind(&p.created_at)
+    .bind(&p.updated_at)
+    .execute(ex)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
+async fn delete_hostname_pointer_row<'e>(
+    ex: impl PgExecutor<'e>,
+    tenant_id: &str,
+    id: &str,
+) -> Result<()> {
+    let res = sqlx::query("DELETE FROM hostname_pointers WHERE id = $1 AND tenant_id = $2")
+        .bind(id)
+        .bind(tenant_id)
+        .execute(ex)
+        .await
+        .map_err(db_err)?;
+    if res.rows_affected() == 0 {
+        return Err(NetcidrError::HostnamePointerNotFound(id.to_string()));
+    }
+    Ok(())
+}
+
+async fn append_hostname_history<'e>(
+    ex: impl PgExecutor<'e>,
+    h: &HostnamePointerHistoryEntry,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO hostname_pointer_history \
+         (id, tenant_id, pointer_id, ip_address, hostname, change_kind, previous_value, new_value, actor, changed_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+    )
+    .bind(&h.id)
+    .bind(&h.tenant_id)
+    .bind(&h.pointer_id)
+    .bind(&h.ip_address)
+    .bind(&h.hostname)
+    .bind(h.change_kind.to_string())
+    .bind(&h.previous_value)
+    .bind(&h.new_value)
+    .bind(&h.actor)
+    .bind(&h.changed_at)
+    .execute(ex)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
 async fn read_one(conn: &mut sqlx::PgConnection, read: &Read) -> Result<Rows> {
     match read {
         Read::CidrBlock { tenant_id, id } => {
@@ -746,6 +825,13 @@ async fn read_one(conn: &mut sqlx::PgConnection, read: &Read) -> Result<Rows> {
         } => Ok(Rows::Count(
             read_active_pat_count(&mut *conn, tenant_id, owner_sub, now).await?,
         )),
+        Read::HostnamePointer {
+            tenant_id,
+            ip_address,
+            hostname,
+        } => Ok(Rows::HostnamePointer(
+            read_hostname_pointer(&mut *conn, tenant_id, ip_address, hostname).await?,
+        )),
     }
 }
 
@@ -769,6 +855,11 @@ async fn apply_write(conn: &mut sqlx::PgConnection, write: &Write) -> Result<()>
             id,
             revoked_at,
         } => revoke_pat(&mut *conn, tenant_id, owner_sub, id, revoked_at).await,
+        Write::PutHostnamePointer(p) => put_hostname_pointer(&mut *conn, p).await,
+        Write::DeleteHostnamePointer { tenant_id, id } => {
+            delete_hostname_pointer_row(&mut *conn, tenant_id, id).await
+        }
+        Write::AppendHostnameHistory(h) => append_hostname_history(&mut *conn, h).await,
     }
 }
 
@@ -992,127 +1083,6 @@ impl IpamStore for PostgresStore {
 
     // --- hostname pointers ---
 
-    async fn set_hostname_pointer(
-        &self,
-        tenant_id: &str,
-        actor: &str,
-        input: &CreateHostnamePointer,
-    ) -> Result<HostnamePointer> {
-        let now = Self::now();
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        if let Some(ref alloc_id) = input.allocation_id {
-            let cnt: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM allocations WHERE id = $1 AND tenant_id = $2",
-            )
-            .bind(alloc_id)
-            .bind(tenant_id)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-            if cnt == 0 {
-                return Err(NetcidrError::AllocationNotFound(alloc_id.clone()));
-            }
-        }
-
-        let existing = sqlx::query(
-            "SELECT id, tenant_id, ip_address, hostname, allocation_id, notes, created_at, updated_at \
-             FROM hostname_pointers WHERE tenant_id = $1 AND ip_address = $2 AND hostname = $3",
-        )
-        .bind(tenant_id)
-        .bind(&input.ip_address)
-        .bind(&input.hostname)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
-        .map(|row| pg_row_to_hostname_pointer(&row));
-
-        let (pointer, change_kind, previous) = match existing {
-            Some(prev) => {
-                sqlx::query(
-                    "UPDATE hostname_pointers SET allocation_id = $1, notes = $2, updated_at = $3 \
-                     WHERE id = $4 AND tenant_id = $5",
-                )
-                .bind(&input.allocation_id)
-                .bind(&input.notes)
-                .bind(&now)
-                .bind(&prev.id)
-                .bind(tenant_id)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-                let updated = HostnamePointer {
-                    allocation_id: input.allocation_id.clone(),
-                    notes: input.notes.clone(),
-                    updated_at: now.clone(),
-                    ..prev.clone()
-                };
-                (
-                    updated,
-                    ChangeKind::Update,
-                    Some(pg_hostname_snapshot(&prev)),
-                )
-            }
-            None => {
-                let id = uuid::Uuid::new_v4().to_string();
-                sqlx::query(
-                    "INSERT INTO hostname_pointers \
-                     (id, tenant_id, ip_address, hostname, allocation_id, notes, created_at, updated_at) \
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $7)",
-                )
-                .bind(&id)
-                .bind(tenant_id)
-                .bind(&input.ip_address)
-                .bind(&input.hostname)
-                .bind(&input.allocation_id)
-                .bind(&input.notes)
-                .bind(&now)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-                let created = HostnamePointer {
-                    id,
-                    tenant_id: tenant_id.to_string(),
-                    ip_address: input.ip_address.clone(),
-                    hostname: input.hostname.clone(),
-                    allocation_id: input.allocation_id.clone(),
-                    notes: input.notes.clone(),
-                    created_at: now.clone(),
-                    updated_at: now.clone(),
-                };
-                (created, ChangeKind::Create, None)
-            }
-        };
-
-        sqlx::query(
-            "INSERT INTO hostname_pointer_history \
-             (id, tenant_id, pointer_id, ip_address, hostname, change_kind, previous_value, new_value, actor, changed_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(tenant_id)
-        .bind(&pointer.id)
-        .bind(&pointer.ip_address)
-        .bind(&pointer.hostname)
-        .bind(change_kind.to_string())
-        .bind(&previous)
-        .bind(Some(pg_hostname_snapshot(&pointer)))
-        .bind(actor)
-        .bind(&now)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        tx.commit()
-            .await
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        Ok(pointer)
-    }
-
     async fn list_hostname_pointers(
         &self,
         tenant_id: &str,
@@ -1147,71 +1117,6 @@ impl IpamStore for PostgresStore {
             .await
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         Ok(rows.iter().map(pg_row_to_hostname_pointer).collect())
-    }
-
-    async fn delete_hostname_pointer(
-        &self,
-        tenant_id: &str,
-        actor: &str,
-        ip: &str,
-        hostname: &str,
-    ) -> Result<()> {
-        let now = Self::now();
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        let prev = sqlx::query(
-            "SELECT id, tenant_id, ip_address, hostname, allocation_id, notes, created_at, updated_at \
-             FROM hostname_pointers WHERE tenant_id = $1 AND ip_address = $2 AND hostname = $3",
-        )
-        .bind(tenant_id)
-        .bind(ip)
-        .bind(hostname)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
-        .map(|row| pg_row_to_hostname_pointer(&row));
-
-        let prev = match prev {
-            Some(p) => p,
-            None => {
-                return Err(NetcidrError::HostnamePointerNotFound(format!(
-                    "{ip} -> {hostname}"
-                )));
-            }
-        };
-
-        sqlx::query("DELETE FROM hostname_pointers WHERE id = $1 AND tenant_id = $2")
-            .bind(&prev.id)
-            .bind(tenant_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        sqlx::query(
-            "INSERT INTO hostname_pointer_history \
-             (id, tenant_id, pointer_id, ip_address, hostname, change_kind, previous_value, new_value, actor, changed_at) \
-             VALUES ($1, $2, $3, $4, $5, 'delete', $6, NULL, $7, $8)",
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(tenant_id)
-        .bind(&prev.id)
-        .bind(&prev.ip_address)
-        .bind(&prev.hostname)
-        .bind(pg_hostname_snapshot(&prev))
-        .bind(actor)
-        .bind(&now)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        tx.commit()
-            .await
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        Ok(())
     }
 
     async fn list_hostname_history(

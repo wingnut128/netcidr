@@ -18,8 +18,8 @@ use crate::audit_context::AuditContext;
 use crate::error::{NetcidrError, Result};
 use crate::ipam::idempotency::TTL;
 use crate::ipam::models::{
-    Allocation, AllocationStatus, AuditEntry, CidrBlock, IdempotencyRecord, PersonalAccessToken,
-    UserRecord,
+    Allocation, AllocationStatus, AuditEntry, CidrBlock, HostnamePointer, IdempotencyRecord,
+    PersonalAccessToken, UserRecord,
 };
 use crate::ipam::operations::IdempotentOutcome;
 use crate::ipam::store::{
@@ -80,6 +80,16 @@ impl DecideCtx {
 
     pub fn caller(&self) -> &AuditContext {
         &self.caller
+    }
+
+    /// Who is making the change, for `*_by` columns and history rows: the
+    /// caller's email, else their subject, else `"cli"`.
+    pub fn actor(&self) -> String {
+        self.caller
+            .caller_email
+            .clone()
+            .or_else(|| self.caller.caller_sub.clone())
+            .unwrap_or_else(|| "cli".to_string())
     }
 
     pub fn new_id(&self) -> String {
@@ -197,6 +207,21 @@ impl ReadSet {
         })
     }
 
+    /// The live hostname pointer for `(ip_address, hostname)` in
+    /// `tenant_id`, or `None`.
+    pub fn hostname_pointer(
+        &mut self,
+        tenant_id: &str,
+        ip_address: &str,
+        hostname: &str,
+    ) -> Handle<Option<HostnamePointer>> {
+        self.push(Read::HostnamePointer {
+            tenant_id: tenant_id.to_string(),
+            ip_address: ip_address.to_string(),
+            hostname: hostname.to_string(),
+        })
+    }
+
     /// A cidr block's allocations in `statuses` (with tags), ordered by
     /// network address.
     pub fn allocations_in_block(
@@ -299,6 +324,15 @@ impl FromRows for Vec<Allocation> {
     }
 }
 
+impl FromRows for Option<HostnamePointer> {
+    fn from_rows(rows: &Rows) -> Option<&Self> {
+        match rows {
+            Rows::HostnamePointer(pointer) => Some(pointer),
+            _ => None,
+        }
+    }
+}
+
 /// The rows a unit read, under its lock.
 #[derive(Debug, Default)]
 pub struct Snapshot {
@@ -367,12 +401,34 @@ impl AuditFact {
 #[derive(Debug, Clone)]
 pub struct Change {
     write: Write,
+    also: Vec<Write>,
     audit: AuditFact,
 }
 
 impl Change {
     pub fn new(write: Write, audit: AuditFact) -> Self {
-        Self { write, audit }
+        Self {
+            write,
+            also: Vec::new(),
+            audit,
+        }
+    }
+
+    /// Another row written as part of the same change, applied after the
+    /// primary write and recorded by the same audit fact — e.g. the history
+    /// entry that accompanies a hostname pointer write.
+    pub fn also(mut self, write: Write) -> Self {
+        self.also.push(write);
+        self
+    }
+
+    /// Every write in this change, primary first.
+    pub fn writes(&self) -> impl Iterator<Item = &Write> {
+        std::iter::once(&self.write).chain(&self.also)
+    }
+
+    pub fn audit(&self) -> &AuditFact {
+        &self.audit
     }
 }
 
@@ -489,11 +545,13 @@ pub async fn execute<M: Mutation>(
 
         let decision = mutation.decide(handles, &Snapshot::new(loaded.rows), &cx)?;
         let output_json = serde_json::to_string(&decision.output)?;
-        let (writes, audits) = decision
-            .changes
-            .into_iter()
-            .map(|c| (c.write, c.audit.into_entry(&tenant, &cx)))
-            .unzip();
+        let mut writes = Vec::new();
+        let mut audits = Vec::new();
+        for change in decision.changes {
+            writes.push(change.write);
+            writes.extend(change.also);
+            audits.push(change.audit.into_entry(&tenant, &cx));
+        }
         let record = idempotency.map(|spec| IdempotencyRecord {
             tenant_id: tenant.clone(),
             key: spec.key,
@@ -680,6 +738,69 @@ mod tests {
         );
     }
 
+    /// Inserts two cidr blocks as one Change: the second rides along via
+    /// `also`.
+    struct PairOfBlocks;
+
+    impl Mutation for PairOfBlocks {
+        type Output = ();
+        type Reads = ();
+
+        fn scope(&self) -> LockScope {
+            LockScope::Tenant {
+                tenant_id: TENANT.to_string(),
+            }
+        }
+
+        fn reads(&self, _set: &mut ReadSet) -> Self::Reads {}
+
+        fn decide(self, _: (), _: &Snapshot, cx: &DecideCtx) -> Result<Decision<()>> {
+            let block = |cidr: &str| {
+                CidrBlock::from_input(
+                    TENANT,
+                    &CreateCidrBlock {
+                        cidr: cidr.to_string(),
+                        name: None,
+                        description: None,
+                    },
+                    cx.new_id(),
+                    cx.now(),
+                )
+            };
+            let change = Change::new(
+                Write::InsertCidrBlock(block("10.0.0.0/8")?),
+                AuditFact {
+                    action: "pair",
+                    entity_type: "cidr_block",
+                    entity_id: "pair".to_string(),
+                    details: None,
+                },
+            )
+            .also(Write::InsertCidrBlock(block("172.16.0.0/12")?));
+            assert_eq!(change.writes().count(), 2);
+            Ok(Decision::new((), change))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_change_commits_its_extra_writes_under_one_audit_row() {
+        let store = SqliteStore::in_memory().unwrap();
+        store.initialize().await.unwrap();
+        store.migrate().await.unwrap();
+        let store: Arc<dyn IpamStore> = Arc::new(store);
+        let ops = IpamOps::new(Arc::clone(&store));
+
+        ops.run(TENANT, PairOfBlocks, None).await.unwrap();
+
+        assert_eq!(store.list_cidr_blocks(TENANT).await.unwrap().len(), 2);
+        let audit = store
+            .query_audit(TENANT, &crate::ipam::models::AuditFilter::default())
+            .await
+            .unwrap();
+        assert_eq!(audit.len(), 1);
+        assert_eq!(audit[0].action, "pair");
+    }
+
     #[test]
     fn a_handle_from_another_read_set_is_an_error() {
         let mut set = ReadSet::default();
@@ -763,5 +884,20 @@ mod tests {
         .into_entry(TENANT, &cx);
         assert_eq!(entry.auth_method, "oidc");
         assert_eq!(entry.caller_sub, None);
+    }
+
+    #[test]
+    fn the_actor_is_the_callers_email_then_subject_then_cli() {
+        let cx = |email: Option<&str>, sub: Option<&str>| {
+            let caller = AuditContext {
+                caller_email: email.map(str::to_string),
+                caller_sub: sub.map(str::to_string),
+                ..AuditContext::default()
+            };
+            DecideCtx::new(noon(), caller, Arc::new(UuidIds))
+        };
+        assert_eq!(cx(Some("a@x"), Some("sub-1")).actor(), "a@x");
+        assert_eq!(cx(None, Some("sub-1")).actor(), "sub-1");
+        assert_eq!(cx(None, None).actor(), "cli");
     }
 }
