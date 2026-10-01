@@ -17,9 +17,10 @@
 //! whose payload is an EventBridge Scheduled Event (`"source":
 //! "aws.events"`, `"detail-type": "Scheduled Event"`) runs one expiry sweep
 //! across every tenant; every other payload is an HTTP request for the
-//! router. API Gateway builds HTTP events itself, so a client cannot make a
-//! request look scheduled; only an IAM principal allowed to invoke the
-//! function directly can send arbitrary payloads.
+//! router. AWS builds HTTP events itself (whether from a Function URL or API
+//! Gateway), so a client cannot make a request look scheduled; only an IAM
+//! principal allowed to invoke the function directly can send arbitrary
+//! payloads.
 //!
 //! Build with:
 //!   `cargo lambda build --release --arm64 --bin lambda --features lambda,ipam-postgres`
