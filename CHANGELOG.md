@@ -7,24 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Other
+
+- The `[0.32.0]` CHANGELOG section is deduplicated and SECURITY.md lists 0.32.x as the current release ([#474](https://github.com/wingnut128/netcidr/issues/474)).
+
 ## [0.32.0](https://github.com/wingnut128/netcidr/compare/v0.31.0...v0.32.0) - 2026-10-01
 
 ### Added
 
-- *(cli)* netcidr ipam --api-url / NETCIDR_API_URL talks to a netcidr server ([#459](https://github.com/wingnut128/netcidr/pull/459))
-
-### Other
-
-- replace Digestabot with Dependabot for image digests ([#470](https://github.com/wingnut128/netcidr/pull/470))
-- *(deps)* bump the cargo-minor-and-patch group with 2 updates ([#465](https://github.com/wingnut128/netcidr/pull/465))
-- *(deps)* bump the codeql-action group across 1 directory with 3 updates ([#467](https://github.com/wingnut128/netcidr/pull/467))
-- *(deps-dev)* bump jsdom ([#464](https://github.com/wingnut128/netcidr/pull/464))
-- *(dependabot)* leave chainguard/static digests to Digestabot ([#463](https://github.com/wingnut128/netcidr/pull/463))
-- use the real `ipam cidr-block` subcommand in examples ([#456](https://github.com/wingnut128/netcidr/pull/456))
-
-### Added
-
-- `netcidr ipam` can talk to a netcidr server: `--api-url URL` (or `NETCIDR_API_URL`) runs every IPAM subcommand against that server, using `--api-token`, `NETCIDR_API_TOKEN`, or the `netcidr login` session. `--db PATH` always forces the local database. The backend in use is printed to stderr, and `netcidr ipam --help` explains the selection order. `dump`/`load` remain local-only ([#457](https://github.com/wingnut128/netcidr/issues/457)).
+- `netcidr ipam` can talk to a netcidr server: `--api-url URL` (or `NETCIDR_API_URL`) runs every IPAM subcommand against that server, using `--api-token`, `NETCIDR_API_TOKEN`, or the `netcidr login` session. `--db PATH` always forces the local database. The backend in use is printed to stderr, and `netcidr ipam --help` explains the selection order. `dump`/`load` remain local-only ([#457](https://github.com/wingnut128/netcidr/issues/457), [#459](https://github.com/wingnut128/netcidr/pull/459)).
 
 ### Fixed
 
@@ -32,8 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other
 
-- Digestabot is removed; Dependabot alone keeps the Dockerfile's base-image digests fresh. Digestabot's commits could never satisfy `main`'s required signed commits (gitsign signatures don't verify on GitHub), so its PRs were unmergeable, and it duplicated Dependabot's digest bumps ([#462](https://github.com/wingnut128/netcidr/issues/462), [#469](https://github.com/wingnut128/netcidr/issues/469)).
+- Digestabot is removed; Dependabot alone keeps the Dockerfile's base-image digests fresh. Digestabot's commits could never satisfy `main`'s required signed commits (gitsign signatures don't verify on GitHub), so its PRs were unmergeable, and it duplicated Dependabot's digest bumps ([#462](https://github.com/wingnut128/netcidr/issues/462), [#463](https://github.com/wingnut128/netcidr/pull/463), [#469](https://github.com/wingnut128/netcidr/issues/469), [#470](https://github.com/wingnut128/netcidr/pull/470)).
 - Agent skills are configured for this repo: `docs/agents/` records the issue tracker (GitHub, with Linear as the internal mirror), the triage label names, and the domain-docs layout, and `CLAUDE.md` gains an `Agent skills` section pointing at them. `CONTEXT.md` is renamed to `GLOSSARY.md` so the skills find the existing domain terms ([#471](https://github.com/wingnut128/netcidr/issues/471)).
+- README examples use the real `ipam cidr-block` subcommand ([#456](https://github.com/wingnut128/netcidr/pull/456)).
+- Dependency updates: the cargo minor-and-patch group ([#465](https://github.com/wingnut128/netcidr/pull/465)), the codeql-action group ([#467](https://github.com/wingnut128/netcidr/pull/467)), and jsdom ([#464](https://github.com/wingnut128/netcidr/pull/464)).
 
 ## [0.31.0](https://github.com/wingnut128/netcidr/compare/v0.30.0...v0.31.0) - 2026-10-01
 
