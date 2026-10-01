@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `netcidr ipam` can talk to a netcidr server: `--api-url URL` (or `NETCIDR_API_URL`) runs every IPAM subcommand against that server, using `--api-token`, `NETCIDR_API_TOKEN`, or the `netcidr login` session. `--db PATH` always forces the local database. The backend in use is printed to stderr, and `netcidr ipam --help` explains the selection order. `dump`/`load` remain local-only ([#457](https://github.com/wingnut128/netcidr/issues/457)).
+
+### Fixed
+
+- The remote IPAM client (used by `netcidr mcp-serve --api-url` and now `netcidr ipam --api-url`) fetched only the first page of list endpoints, so lists of CIDR blocks, allocations, hostnames and hostname history silently stopped at 100 rows. It now pages through every result ([#457](https://github.com/wingnut128/netcidr/issues/457)).
+
+## [0.31.0](https://github.com/wingnut128/netcidr/compare/v0.30.0...v0.31.0) - 2026-10-01
+
+### Added
+
+- *(mcp)* `ipam_update_allocation` tool renames or retags an allocation in place (name, description, resource ID/type, environment, owner) with a single audit event, instead of releasing and re-allocating. Works with both the local (`--ipam-db`) and remote (`--api-url`) backends ([#448](https://github.com/wingnut128/netcidr/pull/448))
+
+### Fixed
+
+- *(ipam)* re-allocating a released CIDR now creates a new allocation instead of reactivating the released one. The new allocation no longer inherits the old owner, environment, resource, name or description, and `tags`, `ttl_seconds` and `parent_allocation_id` on the request are now honored. The released record is kept as history, which means it can no longer be reactivated while its CIDR is in use again. This matches how auto-allocation already behaved ([#454](https://github.com/wingnut128/netcidr/pull/454))
+- *(login)* `netcidr login` against a server with no CLI OAuth client now names everything the server needs (`NETCIDR_AUTH_MODE=oidc`, `NETCIDR_OIDC_CLI_CLIENT_ID` and `NETCIDR_OIDC_CLI_CLIENT_SECRET`) and points to the `NETCIDR_API_TOKEN` fallback ([#453](https://github.com/wingnut128/netcidr/pull/453))
+
+### Security
+
+- Release workflow no longer passes every repository secret to the reusable `publish-image` workflow (`secrets: inherit` removed); it only needs `GITHUB_TOKEN` ([#455](https://github.com/wingnut128/netcidr/pull/455))
+
+### Other
+
+- Telemetry config reads environment through an injectable lookup, removing the last `unsafe` blocks (test-only `env::set_var`) and fixing a test race; a false-positive semgrep path finding in `credentials.rs` is suppressed with a justification. `just check` (including semgrep) passes again ([#455](https://github.com/wingnut128/netcidr/pull/455))
+
 ## [0.30.0](https://github.com/wingnut128/netcidr/compare/v0.29.0...v0.30.0) - 2026-09-29
 
 ### Added

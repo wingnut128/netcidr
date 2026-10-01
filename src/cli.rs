@@ -89,10 +89,22 @@ pub enum Commands {
     },
 
     /// IP Address Management — track allocations, CIDR blocks, and free space
+    #[command(after_long_help = IPAM_BACKEND_HELP)]
     Ipam {
-        /// Path to SQLite database (overrides NETCIDR_DB env and config file)
-        #[arg(long)]
+        /// Use this local SQLite database (always wins; overrides NETCIDR_DB,
+        /// the config file, and NETCIDR_API_URL)
+        #[arg(long, conflicts_with = "api_url")]
         db: Option<String>,
+
+        /// Talk to a netcidr server at this URL instead of a local database
+        /// (or set NETCIDR_API_URL)
+        #[arg(long, value_name = "URL")]
+        api_url: Option<String>,
+
+        /// Bearer token for the server: a personal access token or static
+        /// token (or set NETCIDR_API_TOKEN; otherwise uses `netcidr login`)
+        #[arg(long, value_name = "TOKEN")]
+        api_token: Option<String>,
 
         #[command(subcommand)]
         command: IpamCommands,
@@ -349,6 +361,26 @@ pub enum AdminUserCommands {
     /// List all users with role and status
     List,
 }
+
+/// Shown under `netcidr ipam --help`: which backend a command uses.
+const IPAM_BACKEND_HELP: &str = "\
+Where commands run (first match wins):
+  --db PATH             local SQLite database
+  --api-url URL         netcidr server at URL
+  NETCIDR_API_URL       netcidr server at that URL
+  otherwise             local database: NETCIDR_DB, then the config file,
+                        then the default data-dir path
+
+Auth for a server: --api-token, then NETCIDR_API_TOKEN, then the session
+saved by `netcidr login --api-url URL`.
+
+The backend in use is printed to stderr, e.g. `ipam: remote https://...`.
+`dump` and `load` work on a local database only.
+
+Examples:
+  netcidr ipam --db ./test.db cidr-block list
+  netcidr ipam --api-url http://localhost:8080 --api-token devtoken cidr-block list
+  export NETCIDR_API_URL=https://netcidr.example.com; netcidr ipam cidr-block list";
 
 #[derive(Subcommand)]
 pub enum IpamCommands {

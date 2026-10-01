@@ -2,8 +2,10 @@ use netcidr::cli::{
     AdminCommands, AdminUserCommands, AllocationCommands, CidrBlockCommands, HostnameCommands,
     IpamCommands, TagCommands,
 };
-use netcidr::error::Result;
+use netcidr::error::{NetcidrError, Result};
+use netcidr::ipam::backend::IpamBackend;
 use netcidr::ipam::config::IpamConfig;
+use netcidr::ipam::http_client::HttpIpamClient;
 use netcidr::ipam::models::*;
 use netcidr::ipam::operations::IpamOps;
 use netcidr::output::{CsvOutput, OutputWriter, TextOutput};
@@ -13,7 +15,8 @@ use serde::Serialize;
 
 use crate::print_stdout;
 
-// CLI uses local SQLite, single-tenant by definition. Pass `Tenant::LOCAL`.
+// The local backend is single-tenant by definition (`Tenant::LOCAL`); a
+// remote server derives the tenant from the caller's credential.
 
 fn output_result<T: Serialize + TextOutput + CsvOutput>(
     writer: &OutputWriter,
@@ -30,6 +33,69 @@ async fn create_ops(db: Option<&str>) -> Result<IpamOps> {
     let config = IpamConfig::default();
     let store = netcidr::ipam::create_store(&config, db, None).await?;
     Ok(IpamOps::new(store))
+}
+
+/// Where `netcidr ipam` sends its operations.
+#[derive(Debug, PartialEq, Eq)]
+enum Target {
+    /// Local SQLite database: an explicit `--db` path, or `None` to resolve
+    /// `NETCIDR_DB` / config file / default path.
+    Local(Option<String>),
+    /// A netcidr server at this base URL.
+    Remote(String),
+}
+
+/// `--db` always means local. Otherwise `--api-url`, then a non-blank
+/// `NETCIDR_API_URL`, selects a server. With none of them, local.
+fn select_target(db: Option<&str>, api_url: Option<&str>, env_api_url: Option<&str>) -> Target {
+    if let Some(path) = db {
+        return Target::Local(Some(path.to_string()));
+    }
+    match api_url.or(env_api_url.filter(|url| !url.trim().is_empty())) {
+        Some(url) => Target::Remote(url.to_string()),
+        None => Target::Local(None),
+    }
+}
+
+/// Open the selected backend and say which one it is on stderr, so an
+/// empty result can't silently mean "looked at the wrong database".
+async fn connect(target: Target, api_token: Option<&str>) -> Result<IpamBackend> {
+    match target {
+        Target::Local(db) => {
+            let config = IpamConfig::default();
+            let path = netcidr::ipam::config::resolve_db_path(db.as_deref(), &config.sqlite);
+            eprintln!("ipam: local {path}");
+            let ops = create_ops(Some(&path)).await?;
+            Ok(IpamBackend::Local(std::sync::Arc::new(ops)))
+        }
+        Target::Remote(url) => {
+            let url = netcidr::credentials::normalize_api_url(&url)?;
+            eprintln!("ipam: remote {url}");
+            let token = netcidr::credentials::resolve_credential(&url, api_token)
+                .await
+                .map_err(|e| match e {
+                    NetcidrError::NotAuthenticated(_) => NetcidrError::NotAuthenticated(format!(
+                        "no credential for {url}: run `netcidr login --api-url {url}`, \
+                         or pass --api-token / set NETCIDR_API_TOKEN"
+                    )),
+                    other => other,
+                })?;
+            Ok(IpamBackend::Remote(HttpIpamClient::new(
+                &url,
+                Some(&token),
+            )?))
+        }
+    }
+}
+
+/// `dump`/`load` have no API endpoint; they need the local store itself.
+fn local_ops(backend: &IpamBackend) -> Result<&IpamOps> {
+    match backend {
+        IpamBackend::Local(ops) => Ok(ops),
+        IpamBackend::Remote(_) => Err(NetcidrError::InvalidInput(
+            "dump and load only work on a local database; pass --db PATH".to_string(),
+        )),
+    }
 }
 
 fn parse_status(s: &Option<String>) -> Result<Option<AllocationStatus>> {
@@ -60,9 +126,13 @@ pub async fn handle_ipam_command(
     writer: &OutputWriter,
     output_file: &Option<String>,
     db: Option<&str>,
+    api_url: Option<&str>,
+    api_token: Option<&str>,
     command: IpamCommands,
 ) -> Result<()> {
-    let ops = create_ops(db).await?;
+    let env_api_url = std::env::var("NETCIDR_API_URL").ok();
+    let target = select_target(db, api_url, env_api_url.as_deref());
+    let ops = connect(target, api_token).await?;
 
     match command {
         IpamCommands::CidrBlock { command } => match command {
@@ -72,19 +142,16 @@ pub async fn handle_ipam_command(
                 description,
             } => {
                 let sn = ops
-                    .create_cidr_block(
-                        Tenant::LOCAL,
-                        &CreateCidrBlock {
-                            cidr,
-                            name,
-                            description,
-                        },
-                    )
+                    .create_cidr_block(&CreateCidrBlock {
+                        cidr,
+                        name,
+                        description,
+                    })
                     .await?;
                 output_result(writer, output_file, &sn);
             }
             CidrBlockCommands::List => {
-                let list = ops.list_cidr_blocks(Tenant::LOCAL).await?;
+                let list = ops.list_cidr_blocks().await?;
                 let result = CidrBlockList {
                     count: list.len(),
                     cidr_blocks: list,
@@ -92,11 +159,11 @@ pub async fn handle_ipam_command(
                 output_result(writer, output_file, &result);
             }
             CidrBlockCommands::Get { id } => {
-                let sn = ops.get_cidr_block(Tenant::LOCAL, &id).await?;
+                let sn = ops.get_cidr_block(&id).await?;
                 output_result(writer, output_file, &sn);
             }
             CidrBlockCommands::Delete { id } => {
-                ops.delete_cidr_block(Tenant::LOCAL, &id).await?;
+                ops.delete_cidr_block(&id).await?;
                 eprintln!("CIDR block {} deleted", id);
             }
         },
@@ -116,23 +183,20 @@ pub async fn handle_ipam_command(
         } => {
             let status = parse_status(&status)?;
             let alloc = ops
-                .allocate_specific(
-                    Tenant::LOCAL,
-                    &CreateAllocation {
-                        cidr_block_id,
-                        cidr,
-                        status,
-                        resource_id,
-                        resource_type,
-                        name,
-                        description,
-                        environment,
-                        owner,
-                        parent_allocation_id: parent_id,
-                        tags: None,
-                        ttl_seconds: ttl,
-                    },
-                )
+                .allocate_specific(&CreateAllocation {
+                    cidr_block_id,
+                    cidr,
+                    status,
+                    resource_id,
+                    resource_type,
+                    name,
+                    description,
+                    environment,
+                    owner,
+                    parent_allocation_id: parent_id,
+                    tags: None,
+                    ttl_seconds: ttl,
+                })
                 .await?;
             output_result(writer, output_file, &alloc);
         }
@@ -153,24 +217,21 @@ pub async fn handle_ipam_command(
         } => {
             let status = parse_status(&status)?;
             let allocs = ops
-                .allocate_auto(
-                    Tenant::LOCAL,
-                    &AutoAllocateRequest {
-                        cidr_block_id,
-                        prefix_length: prefix,
-                        count: Some(count),
-                        status,
-                        resource_id,
-                        resource_type,
-                        name,
-                        description,
-                        environment,
-                        owner,
-                        parent_allocation_id: parent_id,
-                        tags: None,
-                        ttl_seconds: ttl,
-                    },
-                )
+                .allocate_auto(&AutoAllocateRequest {
+                    cidr_block_id,
+                    prefix_length: prefix,
+                    count: Some(count),
+                    status,
+                    resource_id,
+                    resource_type,
+                    name,
+                    description,
+                    environment,
+                    owner,
+                    parent_allocation_id: parent_id,
+                    tags: None,
+                    ttl_seconds: ttl,
+                })
                 .await?;
             let result = AllocationList {
                 count: allocs.len(),
@@ -181,7 +242,7 @@ pub async fn handle_ipam_command(
 
         IpamCommands::Allocation { command } => match command {
             AllocationCommands::Get { id } => {
-                let alloc = ops.get_allocation(Tenant::LOCAL, &id).await?;
+                let alloc = ops.get_allocation(&id).await?;
                 output_result(writer, output_file, &alloc);
             }
             AllocationCommands::List {
@@ -194,18 +255,15 @@ pub async fn handle_ipam_command(
             } => {
                 let status = parse_status(&status)?;
                 let allocs = ops
-                    .list_allocations(
-                        Tenant::LOCAL,
-                        &AllocationFilter {
-                            cidr_block_id,
-                            status,
-                            resource_id,
-                            resource_type,
-                            environment,
-                            owner,
-                            ..Default::default()
-                        },
-                    )
+                    .list_allocations(&AllocationFilter {
+                        cidr_block_id,
+                        status,
+                        resource_id,
+                        resource_type,
+                        environment,
+                        owner,
+                        ..Default::default()
+                    })
                     .await?;
                 let result = AllocationList {
                     count: allocs.len(),
@@ -226,7 +284,6 @@ pub async fn handle_ipam_command(
                 let status = parse_status(&status)?;
                 let alloc = ops
                     .update_allocation(
-                        Tenant::LOCAL,
                         &id,
                         &UpdateAllocation {
                             name,
@@ -244,12 +301,12 @@ pub async fn handle_ipam_command(
         },
 
         IpamCommands::Release { id } => {
-            let alloc = ops.release_allocation(Tenant::LOCAL, &id).await?;
+            let alloc = ops.release_allocation(&id).await?;
             output_result(writer, output_file, &alloc);
         }
 
         IpamCommands::Utilization { cidr_block_id } => {
-            let report = ops.utilization(Tenant::LOCAL, &cidr_block_id).await?;
+            let report = ops.utilization(&cidr_block_id).await?;
             output_result(writer, output_file, &report);
         }
 
@@ -257,14 +314,12 @@ pub async fn handle_ipam_command(
             cidr_block_id,
             prefix,
         } => {
-            let report = ops
-                .free_blocks(Tenant::LOCAL, &cidr_block_id, prefix)
-                .await?;
+            let report = ops.free_blocks(&cidr_block_id, prefix).await?;
             output_result(writer, output_file, &report);
         }
 
         IpamCommands::FindIp { address } => {
-            let allocs = ops.find_by_ip(Tenant::LOCAL, &address).await?;
+            let allocs = ops.find_by_ip(&address).await?;
             let result = AllocationList {
                 count: allocs.len(),
                 allocations: allocs,
@@ -273,7 +328,7 @@ pub async fn handle_ipam_command(
         }
 
         IpamCommands::FindResource { resource_id } => {
-            let allocs = ops.find_by_resource(Tenant::LOCAL, &resource_id).await?;
+            let allocs = ops.find_by_resource(&resource_id).await?;
             let result = AllocationList {
                 count: allocs.len(),
                 allocations: allocs,
@@ -288,16 +343,13 @@ pub async fn handle_ipam_command(
             limit,
         } => {
             let entries = ops
-                .query_audit(
-                    Tenant::LOCAL,
-                    &AuditFilter {
-                        entity_type,
-                        entity_id,
-                        action,
-                        limit: Some(limit),
-                        ..Default::default()
-                    },
-                )
+                .query_audit(&AuditFilter {
+                    entity_type,
+                    entity_id,
+                    action,
+                    limit: Some(limit),
+                    ..Default::default()
+                })
                 .await?;
             let result = AuditList {
                 count: entries.len(),
@@ -307,7 +359,7 @@ pub async fn handle_ipam_command(
         }
 
         IpamCommands::Dump { tenant } => {
-            let dump = ops.dump(&tenant).await?;
+            let dump = local_ops(&ops)?.dump(&tenant).await?;
             let json = serde_json::to_string_pretty(&dump).expect("Failed to serialize dump");
             if output_file.is_none() {
                 print_stdout(&json);
@@ -315,6 +367,8 @@ pub async fn handle_ipam_command(
         }
 
         IpamCommands::Load { file, tenant } => {
+            // Fail before reading stdin/file when pointed at a server.
+            let local = local_ops(&ops)?;
             let json = match file {
                 Some(path) => std::fs::read_to_string(&path).map_err(|e| {
                     netcidr::error::NetcidrError::InvalidInput(format!(
@@ -340,7 +394,7 @@ pub async fn handle_ipam_command(
                     netcidr::error::NetcidrError::InvalidInput(format!("invalid JSON: {}", e))
                 })?;
 
-            let (sn_count, alloc_count) = ops.load(&tenant, &dump).await?;
+            let (sn_count, alloc_count) = local.load(&tenant, &dump).await?;
             eprintln!(
                 "Imported {} CIDR blocks and {} allocations",
                 sn_count, alloc_count
@@ -349,7 +403,7 @@ pub async fn handle_ipam_command(
 
         IpamCommands::Tags { command } => match command {
             TagCommands::Get { allocation_id } => {
-                let alloc = ops.get_allocation(Tenant::LOCAL, &allocation_id).await?;
+                let alloc = ops.get_allocation(&allocation_id).await?;
                 output_result(writer, output_file, &alloc);
             }
             TagCommands::Set {
@@ -357,9 +411,7 @@ pub async fn handle_ipam_command(
                 tags,
             } => {
                 let parsed_tags = parse_tags(&tags)?;
-                ops.set_tags(Tenant::LOCAL, &allocation_id, &parsed_tags)
-                    .await?;
-                let alloc = ops.get_allocation(Tenant::LOCAL, &allocation_id).await?;
+                let alloc = ops.set_tags(&allocation_id, &parsed_tags).await?;
                 output_result(writer, output_file, &alloc);
             }
         },
@@ -372,20 +424,17 @@ pub async fn handle_ipam_command(
                 notes,
             } => {
                 let pointer = ops
-                    .set_hostname_pointer(
-                        Tenant::LOCAL,
-                        &CreateHostnamePointer {
-                            ip_address: ip,
-                            hostname,
-                            allocation_id,
-                            notes,
-                        },
-                    )
+                    .set_hostname_pointer(&CreateHostnamePointer {
+                        ip_address: ip,
+                        hostname,
+                        allocation_id,
+                        notes,
+                    })
                     .await?;
                 output_result(writer, output_file, &pointer);
             }
             HostnameCommands::Get { ip } => {
-                let pointers = ops.get_hostname_pointers_for_ip(Tenant::LOCAL, &ip).await?;
+                let pointers = ops.get_hostname_pointers_for_ip(&ip).await?;
                 let result = HostnamePointerList {
                     count: pointers.len(),
                     pointers,
@@ -398,15 +447,12 @@ pub async fn handle_ipam_command(
                 allocation_id,
             } => {
                 let pointers = ops
-                    .list_hostname_pointers(
-                        Tenant::LOCAL,
-                        &HostnamePointerFilter {
-                            ip_address: ip,
-                            hostname,
-                            allocation_id,
-                            ..Default::default()
-                        },
-                    )
+                    .list_hostname_pointers(&HostnamePointerFilter {
+                        ip_address: ip,
+                        hostname,
+                        allocation_id,
+                        ..Default::default()
+                    })
                     .await?;
                 let result = HostnamePointerList {
                     count: pointers.len(),
@@ -429,7 +475,7 @@ pub async fn handle_ipam_command(
                         ..Default::default()
                     }
                 };
-                let entries = ops.list_hostname_history(Tenant::LOCAL, &filter).await?;
+                let entries = ops.list_hostname_history(&filter).await?;
                 let result = HostnamePointerHistoryList {
                     count: entries.len(),
                     entries,
@@ -437,8 +483,7 @@ pub async fn handle_ipam_command(
                 output_result(writer, output_file, &result);
             }
             HostnameCommands::Delete { ip, hostname } => {
-                ops.delete_hostname_pointer(Tenant::LOCAL, &ip, &hostname)
-                    .await?;
+                ops.delete_hostname_pointer(&ip, &hostname).await?;
                 if output_file.is_none() {
                     print_stdout(&format!("Deleted hostname pointer {ip} -> {hostname}"));
                 }
@@ -531,4 +576,43 @@ pub async fn handle_admin_command(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn db_flag_always_selects_local() {
+        assert_eq!(
+            select_target(Some("/tmp/a.db"), None, Some("https://x")),
+            Target::Local(Some("/tmp/a.db".to_string()))
+        );
+    }
+
+    #[test]
+    fn api_url_flag_selects_remote() {
+        assert_eq!(
+            select_target(None, Some("https://flag"), Some("https://env")),
+            Target::Remote("https://flag".to_string())
+        );
+    }
+
+    #[test]
+    fn env_api_url_selects_remote() {
+        assert_eq!(
+            select_target(None, None, Some("https://env")),
+            Target::Remote("https://env".to_string())
+        );
+    }
+
+    #[test]
+    fn blank_env_api_url_is_ignored() {
+        assert_eq!(select_target(None, None, Some("  ")), Target::Local(None));
+    }
+
+    #[test]
+    fn nothing_set_selects_default_local() {
+        assert_eq!(select_target(None, None, None), Target::Local(None));
+    }
 }

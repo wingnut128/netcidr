@@ -540,4 +540,46 @@ async fn operations_layer(store: PostgresStore) {
     let free = ops.free_blocks(TEST_TENANT, &sn.id, None).await.unwrap();
     assert!(!free.blocks.is_empty());
     assert!(free.total_free > 0);
+
+    // Re-allocating a released CIDR creates a new record; the released one
+    // stays as history and nothing is inherited from it.
+    let released = ops
+        .release_allocation(TEST_TENANT, &allocs[0].id)
+        .await
+        .unwrap();
+    let fresh = ops
+        .allocate_specific(
+            TEST_TENANT,
+            &CreateAllocation {
+                cidr_block_id: sn.id.clone(),
+                cidr: released.cidr.clone(),
+                status: None,
+                resource_id: None,
+                resource_type: None,
+                name: Some("reused".to_string()),
+                description: None,
+                environment: None,
+                owner: None,
+                parent_allocation_id: None,
+                tags: None,
+                ttl_seconds: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_ne!(fresh.id, released.id);
+    assert_eq!(fresh.name.as_deref(), Some("reused"));
+    let old = ops
+        .list_allocations(
+            TEST_TENANT,
+            &AllocationFilter {
+                cidr_block_id: Some(sn.id.clone()),
+                status: Some(AllocationStatus::Released),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(old.len(), 1);
+    assert_eq!(old[0].id, released.id);
 }

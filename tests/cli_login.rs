@@ -68,8 +68,15 @@ async fn login_reports_a_server_with_no_cli_client() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("NETCIDR_OIDC_CLI_CLIENT_ID"),
-        "got: {stderr}"
-    );
+    // The server needs all three to advertise a CLI client; naming only one
+    // sends the operator round the loop again.
+    for needed in [
+        "NETCIDR_AUTH_MODE=oidc",
+        "NETCIDR_OIDC_CLI_CLIENT_ID",
+        "NETCIDR_OIDC_CLI_CLIENT_SECRET",
+        // The fallback that still works meanwhile.
+        "NETCIDR_API_TOKEN",
+    ] {
+        assert!(stderr.contains(needed), "missing {needed}; got: {stderr}");
+    }
 }

@@ -128,13 +128,15 @@ netcidr 2001:db8::/48                   # IPv6 prefix info
 netcidr split 10.0.0.0/8 -p 16 -n 10   # Generate 10 /16 subnets
 netcidr split 10.0.0.0/8 -p 16 --max   # Generate all possible /16 subnets
 
-# IPAM commands
-netcidr ipam cidr_block create 10.0.0.0/8 --name "Corp"
+# IPAM commands (local SQLite by default; `--api-url URL` or NETCIDR_API_URL targets a
+# netcidr server, `--db PATH` always forces local. See `netcidr ipam --help`.)
+netcidr ipam cidr-block create 10.0.0.0/8 --name "Corp"
 netcidr ipam allocate <cidr_block-id> 10.0.1.0/24 --name "Web"
 netcidr ipam auto-allocate <cidr_block-id> -p 24 -n 3
 netcidr ipam utilization <cidr_block-id> --format text
 netcidr ipam find-ip 10.0.1.50
-netcidr ipam --db /path/to/db cidr_block list   # Custom DB path
+netcidr ipam --db /path/to/db cidr-block list   # Custom DB path
+netcidr ipam --api-url https://netcidr.example.com cidr-block list   # Remote server
 ```
 
 Global options: `--format json|text|csv|yaml`, `--output <file>`
@@ -153,9 +155,10 @@ This is a Rust CLI/API/MCP server for IPv4 and IPv6 subnet calculations with IPA
 - `validation.rs` - Shared input validation (CIDR, IP, text fields, identifiers, status allowlist)
 - `api.rs` - Axum HTTP server with REST endpoints sharing the same data structures as CLI
 - `ipam/` - IPAM persistence layer: `operations.rs` (business logic), `store.rs` (trait), `sqlite/` (backend), `models.rs`, `config.rs`
-- `ipam_cli.rs` - CLI handler for `netcidr ipam` subcommands
+- `ipam_cli.rs` - CLI handler for `netcidr ipam` subcommands; picks a local or remote `IpamBackend`
+- `ipam/backend.rs` - `IpamBackend` (local `IpamOps` or remote `HttpIpamClient`), shared by the CLI and MCP
+- `ipam/http_client.rs` - HTTP client for a remote `netcidr serve` IPAM API (pages through list endpoints)
 - `mcp.rs` - Rust-native MCP server using `rmcp` SDK (feature-gated: `mcp`), supports local or remote IPAM backend
-- `mcp_client.rs` - HTTP client that proxies IPAM operations to a remote `netcidr serve` API (feature-gated: `mcp`)
 - `error.rs` - Custom `NetcidrError` enum with `Result<T>` type alias used throughout
 - `output.rs` - `TextOutput` / `CsvOutput` traits for JSON/text/CSV/YAML formatting
 

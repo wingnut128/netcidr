@@ -376,6 +376,7 @@ launchctl load ~/Library/LaunchAgents/com.netcidr.mcp.plist
 | `ipam_list_cidr_blocks` | List all CIDR blocks |
 | `ipam_allocate` | Auto-allocate next-available CIDR block(s) |
 | `ipam_allocate_specific` | Allocate a specific CIDR block |
+| `ipam_update_allocation` | Rename or retag an allocation in place (name, description, resource, environment, owner) |
 | `ipam_release` | Release an allocation |
 | `ipam_list_allocations` | List allocations (filterable by status/env/owner) |
 | `ipam_free_blocks` | Find free blocks in a cidr_block |
@@ -511,8 +512,8 @@ netcidr serve --enable-swagger --max-batch-size 500 --timeout 60
 # Run as a background daemon
 netcidr serve --daemonize --pid-file /var/run/netcidr.pid --log-file /var/log/netcidr.log
 
-# Daemonize with IPAM enabled
-netcidr serve --daemonize --ipam-enabled --ipam-db /path/to/ipam.db
+# Daemonize with IPAM enabled (IPAM needs auth: bearer or oidc in the config)
+netcidr serve --daemonize --config netcidr.toml --ipam-enabled --ipam-db /path/to/ipam.db
 ```
 
 #### Server Configuration
@@ -938,6 +939,7 @@ The IPAM module provides library-level IP address allocation tracking with a plu
 
 - **CidrBlock management** — define top-level address spaces (e.g. `10.0.0.0/8`) with overlap detection
 - **Allocation lifecycle** — allocate specific CIDRs or auto-allocate next-available blocks, update metadata, release
+  - Released allocations are kept as history. Allocating the same CIDR again creates a new allocation with only the fields you pass; nothing is inherited from the released record. To rename or retag an allocation, update it in place instead of releasing it.
 - **Conflict detection** — prevents overlapping allocations within a CIDR block
 - **Free space discovery** — find available blocks by prefix length, with utilization reporting
 - **Reverse lookup** — find allocations by IP address or resource ID
@@ -954,10 +956,10 @@ The IPAM module provides library-level IP address allocation tracking with a plu
 
 ```bash
 # Create a cidr_block
-netcidr ipam cidr_block create 10.0.0.0/8 --name "Corporate Network"
+netcidr ipam cidr-block create 10.0.0.0/8 --name "Corporate Network"
 
 # List cidr_blocks
-netcidr ipam cidr_block list --format text
+netcidr ipam cidr-block list --format text
 
 # Allocate a specific block
 netcidr ipam allocate <cidr_block-id> 10.0.1.0/24 --name "Web Tier" --environment production
@@ -999,27 +1001,54 @@ netcidr ipam hostname history 10.0.1.5                      # append-only trail 
 netcidr ipam hostname delete 10.0.1.5 app.example.com       # hard delete, kept in history
 
 # IPv6 IPAM — same commands, IPv6 CIDRs
-netcidr ipam cidr_block create 2001:db8::/32 --name "IPv6 Space"
+netcidr ipam cidr-block create 2001:db8::/32 --name "IPv6 Space"
 netcidr ipam allocate <cidr_block-id> 2001:db8:1::/48 --name "Site A"
 netcidr ipam auto-allocate <cidr_block-id> -p 48 -n 5
 netcidr ipam find-ip 2001:db8:1::50
 
 # Use a specific database file
-netcidr ipam --db /path/to/my.db cidr_block list
+netcidr ipam --db /path/to/my.db cidr-block list
 ```
 
 **Database location** (precedence order): `--db` flag > `NETCIDR_DB` env var > `db_path` in config file > `~/.local/share/netcidr/netcidr.db`
 
-**REST API:**
+**Talking to a netcidr server.** `netcidr ipam` can run against a `netcidr serve` instance (local or published) instead of a local database. It decides where to run like this, first match wins:
 
-Enable IPAM endpoints on the HTTP server with `--ipam-enabled`:
+| Setting | Runs against |
+|---|---|
+| `--db PATH` | that local SQLite file (always wins) |
+| `--api-url URL` | the server at URL |
+| `NETCIDR_API_URL` | the server at that URL |
+| none of the above | the local database (see precedence above) |
+
+For a server, the credential comes from `--api-token`, then `NETCIDR_API_TOKEN` (a personal access token or static bearer token), then the session saved by `netcidr login --api-url URL`. Every invocation prints the backend in use to stderr (`ipam: remote https://…` or `ipam: local /path/to/netcidr.db`). `dump` and `load` only work on a local database.
 
 ```bash
-# Start server with IPAM enabled
-netcidr serve --ipam-enabled
+# Published endpoint, using your `netcidr login` session
+export NETCIDR_API_URL=https://netcidr.example.com
+netcidr ipam cidr-block list
+
+# A local test server in bearer-token mode
+printf 'auth_mode = "bearer"\nauth_token = "devtoken"\n' > dev.toml
+netcidr serve --config dev.toml --ipam-enabled --ipam-db ./serve.db &
+netcidr ipam --api-url http://localhost:8080 --api-token devtoken cidr-block list
+
+# Force the local database even with NETCIDR_API_URL exported
+netcidr ipam --db ./test.db cidr-block list
+```
+
+> `netcidr serve --ipam-enabled` refuses to start without authentication (`IPAM API requires auth_mode='bearer' or auth_mode='oidc'`), because IPAM data is scoped to the authenticated caller. Use bearer-token mode for local testing, as above.
+
+**REST API:**
+
+Enable IPAM endpoints on the HTTP server with `--ipam-enabled`. IPAM requires authentication (`auth_mode = "bearer"` with `auth_token`, or `"oidc"`); the server refuses to start without it.
+
+```bash
+# Start server with IPAM enabled (netcidr.toml sets auth_mode and its settings)
+netcidr serve --config netcidr.toml --ipam-enabled
 
 # Use a specific database file
-netcidr serve --ipam-enabled --ipam-db /path/to/ipam.db
+netcidr serve --config netcidr.toml --ipam-enabled --ipam-db /path/to/ipam.db
 ```
 
 | Endpoint | Method | Description |

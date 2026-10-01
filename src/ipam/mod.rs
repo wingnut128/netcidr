@@ -1,5 +1,7 @@
+pub mod backend;
 pub mod bootstrap;
 pub mod config;
+pub mod http_client;
 pub mod idempotency;
 pub mod models;
 pub mod operations;
