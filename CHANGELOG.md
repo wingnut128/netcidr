@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.32.0](https://github.com/wingnut128/netcidr/compare/v0.31.0...v0.32.0) - 2026-10-01
+
+### Added
+
+- *(cli)* netcidr ipam --api-url / NETCIDR_API_URL talks to a netcidr server ([#459](https://github.com/wingnut128/netcidr/pull/459))
+
+### Other
+
+- replace Digestabot with Dependabot for image digests ([#470](https://github.com/wingnut128/netcidr/pull/470))
+- *(deps)* bump the cargo-minor-and-patch group with 2 updates ([#465](https://github.com/wingnut128/netcidr/pull/465))
+- *(deps)* bump the codeql-action group across 1 directory with 3 updates ([#467](https://github.com/wingnut128/netcidr/pull/467))
+- *(deps-dev)* bump jsdom ([#464](https://github.com/wingnut128/netcidr/pull/464))
+- *(dependabot)* leave chainguard/static digests to Digestabot ([#463](https://github.com/wingnut128/netcidr/pull/463))
+- use the real `ipam cidr-block` subcommand in examples ([#456](https://github.com/wingnut128/netcidr/pull/456))
+
 ### Added
 
 - `netcidr ipam` can talk to a netcidr server: `--api-url URL` (or `NETCIDR_API_URL`) runs every IPAM subcommand against that server, using `--api-token`, `NETCIDR_API_TOKEN`, or the `netcidr login` session. `--db PATH` always forces the local database. The backend in use is printed to stderr, and `netcidr ipam --help` explains the selection order. `dump`/`load` remain local-only ([#457](https://github.com/wingnut128/netcidr/issues/457)).
