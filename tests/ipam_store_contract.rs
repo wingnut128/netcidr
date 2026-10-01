@@ -1409,6 +1409,84 @@ macro_rules! store_contract_tests {
             assert_eq!(removed, 2);
         }
 
+        #[tokio::test]
+        async fn contract_due_expiry_blocks_spans_tenants_and_skips_released() {
+            let store = $factory().await;
+            let mk = |block: &str, cidr: &str, status, ttl| CreateAllocation {
+                cidr_block_id: block.to_string(),
+                cidr: cidr.to_string(),
+                status,
+                resource_id: None,
+                resource_type: None,
+                name: None,
+                description: None,
+                environment: None,
+                owner: None,
+                parent_allocation_id: None,
+                tags: None,
+                ttl_seconds: ttl,
+            };
+            let mut due = Vec::new();
+            for tenant in ["a@x", "b@x"] {
+                let block = store
+                    .create_cidr_block(
+                        tenant,
+                        &CreateCidrBlock {
+                            cidr: "10.0.0.0/8".to_string(),
+                            name: None,
+                            description: None,
+                        },
+                    )
+                    .await
+                    .unwrap();
+                for (cidr, status, ttl) in [
+                    ("10.0.1.0/24", Some(AllocationStatus::Reserved), Some(60)),
+                    ("10.0.2.0/24", None, Some(60)),
+                    ("10.0.3.0/24", Some(AllocationStatus::Released), Some(60)),
+                    ("10.0.4.0/24", None, None),
+                ] {
+                    store
+                        .create_allocation(tenant, &mk(&block.id, cidr, status, ttl))
+                        .await
+                        .unwrap();
+                }
+                due.push(ExpiryDue {
+                    tenant_id: tenant.to_string(),
+                    cidr_block_id: block.id,
+                });
+            }
+            // A block with nothing expiring is never listed.
+            store
+                .create_cidr_block(
+                    "a@x",
+                    &CreateCidrBlock {
+                        cidr: "172.16.0.0/12".to_string(),
+                        name: None,
+                        description: None,
+                    },
+                )
+                .await
+                .unwrap();
+
+            assert!(
+                store
+                    .due_expiry_blocks("2000-01-01T00:00:00+00:00")
+                    .await
+                    .unwrap()
+                    .is_empty(),
+                "nothing has expired yet"
+            );
+            due.sort();
+            assert_eq!(
+                store
+                    .due_expiry_blocks("2999-01-01T00:00:00+00:00")
+                    .await
+                    .unwrap(),
+                due,
+                "one entry per block, released allocations ignored"
+            );
+        }
+
         // ---- Hostname pointers ----
 
         #[tokio::test]

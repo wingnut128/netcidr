@@ -189,6 +189,16 @@ async fn reader_denied_query_audit() {
 }
 
 #[tokio::test]
+async fn admin_can_reap_and_allocator_cannot() {
+    // POST /ipam/reap is Admin-only: it releases other users' reservations.
+    let app = app().await;
+    let (status, _body) = send_as(&app, "POST", "/ipam/reap", Some("admin"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _body) = send_as(&app, "POST", "/ipam/reap", Some("allocator"), None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn platform_admin_passes_admin_gates_via_ord() {
     // PlatformAdmin > Admin in the Ord chain, so every Admin-gated route
     // admits it without extra wiring (ADR-0006).

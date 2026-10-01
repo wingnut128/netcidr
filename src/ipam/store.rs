@@ -316,6 +316,11 @@ pub trait IpamStore: Send + Sync {
         cidr_block_id: &str,
         statuses: &[AllocationStatus],
     ) -> Result<Vec<Allocation>>;
+    /// Every cidr block, across all tenants, holding an active or reserved
+    /// allocation whose `expires_at` is at or before `now_rfc3339`.
+    /// Tenant-agnostic on purpose: it drives the expiry sweep, which then
+    /// works one tenant and block at a time.
+    async fn due_expiry_blocks(&self, now_rfc3339: &str) -> Result<Vec<ExpiryDue>>;
 
     // --- tags ---
     async fn get_tags(&self, tenant_id: &str, allocation_id: &str) -> Result<Vec<Tag>>;

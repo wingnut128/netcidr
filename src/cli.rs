@@ -294,6 +294,12 @@ pub enum Commands {
         /// IPAM PostgreSQL connection URL (overrides NETCIDR_IPAM_DB_URL env and config file)
         #[arg(long)]
         ipam_db_url: Option<String>,
+
+        /// Seconds between expiry sweeps: release allocations past their TTL
+        /// and delete expired idempotency keys and PATs. 0 disables
+        /// (default 300; overrides config file)
+        #[arg(long)]
+        reap_interval: Option<u64>,
     },
 }
 
@@ -481,6 +487,10 @@ pub enum IpamCommands {
         /// CIDR block ID
         cidr_block_id: String,
     },
+
+    /// Release allocations whose TTL has passed (`--ttl`). A running
+    /// `netcidr serve` also does this on its own every few minutes.
+    Reap,
 
     /// List free blocks in a CIDR block
     FreeBlocks {

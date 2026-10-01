@@ -334,6 +334,35 @@ pub struct StatusBreakdown {
     pub released_count: usize,
 }
 
+/// Result of expiring one tenant's due allocations (`POST /ipam/reap`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
+pub struct ReapResult {
+    /// Allocations released because their `expires_at` had passed.
+    pub released: usize,
+}
+
+/// What one expiry sweep did across every tenant.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SweepReport {
+    /// Allocations released because their `expires_at` had passed.
+    pub allocations_released: usize,
+    /// Cidr blocks whose expiry failed (e.g. a lock timeout) and will be
+    /// retried by the next sweep.
+    pub blocks_failed: usize,
+    /// Expired idempotency records deleted.
+    pub idempotency_keys_deleted: u64,
+    /// Expired personal access tokens deleted.
+    pub pats_deleted: u64,
+}
+
+impl SweepReport {
+    /// Whether the sweep changed or attempted anything worth logging.
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
 pub struct UtilizationReport {
@@ -616,6 +645,14 @@ impl From<PersonalAccessToken> for PersonalAccessTokenSummary {
 /// A cached response keyed by client-supplied `Idempotency-Key` plus a scope
 /// (endpoint + resource ID) so retries on the same logical operation return
 /// the same result without re-executing.
+/// A cidr block with at least one allocation past its `expires_at`; see
+/// `IpamStore::due_expiry_blocks`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ExpiryDue {
+    pub tenant_id: String,
+    pub cidr_block_id: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdempotencyRecord {
     pub tenant_id: String,

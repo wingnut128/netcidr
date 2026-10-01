@@ -310,6 +310,11 @@ pub async fn handle_ipam_command(
             output_result(writer, output_file, &report);
         }
 
+        IpamCommands::Reap => {
+            let result = ops.reap_expired().await?;
+            output_result(writer, output_file, &result);
+        }
+
         IpamCommands::FreeBlocks {
             cidr_block_id,
             prefix,

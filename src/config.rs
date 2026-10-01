@@ -9,6 +9,9 @@ const MAX_BODY_SIZE_LIMIT: usize = 10_485_760; // 10 MiB
 const MAX_RATE_LIMIT_PER_SECOND: u64 = 10_000;
 const MAX_RATE_LIMIT_BURST: u32 = 100_000;
 const MAX_TIMEOUT_SECONDS: u64 = 300;
+/// Bounds for `reap_interval_seconds` when the sweep is enabled.
+const MIN_REAP_INTERVAL_SECONDS: u64 = 10;
+const MAX_REAP_INTERVAL_SECONDS: u64 = 86_400;
 const AUTH_TOKEN_ENV: &str = "NETCIDR_API_TOKEN";
 const OIDC_AUDIENCE_ENV: &str = "NETCIDR_OIDC_AUDIENCE";
 const OIDC_CLI_CLIENT_ID_ENV: &str = "NETCIDR_OIDC_CLI_CLIENT_ID";
@@ -142,6 +145,10 @@ pub struct ServerConfig {
     /// Maximum number of active (non-revoked, non-expired) PATs per tenant.
     /// Callers that exceed this cap receive 429 and must revoke a token first.
     pub max_pats_per_tenant: u32,
+    /// How often `netcidr serve` expires allocations past their TTL and
+    /// deletes expired idempotency keys and PATs, in seconds. `0` disables
+    /// the sweep (e.g. when an external scheduler calls `POST /ipam/reap`).
+    pub reap_interval_seconds: u64,
 }
 
 impl Default for ServerConfig {
@@ -172,6 +179,7 @@ impl Default for ServerConfig {
             allow_public_bind: false,
             require_auth_for_public_bind: true,
             max_pats_per_tenant: 25,
+            reap_interval_seconds: 300,
         }
     }
 }
@@ -190,6 +198,7 @@ pub struct CliOverrides {
     pub ipam_backend: Option<String>,
     pub ipam_db: Option<String>,
     pub ipam_db_url: Option<String>,
+    pub reap_interval: Option<u64>,
 }
 
 impl ServerConfig {
@@ -239,6 +248,9 @@ impl ServerConfig {
         if overrides.ipam_db_url.is_some() {
             self.ipam_db_url.clone_from(&overrides.ipam_db_url);
         }
+        if let Some(v) = overrides.reap_interval {
+            self.reap_interval_seconds = v;
+        }
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -279,6 +291,14 @@ impl ServerConfig {
             1,
             MAX_TIMEOUT_SECONDS,
         )?;
+        if self.reap_interval_seconds != 0 {
+            validate_range_u64(
+                "reap_interval_seconds",
+                self.reap_interval_seconds,
+                MIN_REAP_INTERVAL_SECONDS,
+                MAX_REAP_INTERVAL_SECONDS,
+            )?;
+        }
 
         if self
             .auth_token
@@ -791,6 +811,31 @@ mod tests {
         std::fs::write(&path, "timeout_seconds = 0\n").unwrap();
         let result = ServerConfig::load(path.to_str().unwrap());
         assert!(matches!(result, Err(NetcidrError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn reap_interval_defaults_to_five_minutes_and_zero_disables() {
+        assert_eq!(ServerConfig::default().reap_interval_seconds, 300);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reap.toml");
+        for (value, ok) in [
+            (0, true),
+            (10, true),
+            (86_400, true),
+            (5, false),
+            (86_401, false),
+        ] {
+            std::fs::write(&path, format!("reap_interval_seconds = {value}\n")).unwrap();
+            let result = ServerConfig::load(path.to_str().unwrap());
+            assert_eq!(result.is_ok(), ok, "reap_interval_seconds = {value}");
+        }
+
+        let mut config = ServerConfig::default();
+        config.merge_cli_overrides(&CliOverrides {
+            reap_interval: Some(0),
+            ..Default::default()
+        });
+        assert_eq!(config.reap_interval_seconds, 0);
     }
 
     #[test]

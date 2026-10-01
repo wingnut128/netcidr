@@ -419,6 +419,7 @@ async fn async_main(cli: Cli) {
             ipam_backend,
             ipam_db,
             ipam_db_url,
+            reap_interval,
         }) => {
             // Parse and validate log level
             let level = match parse_log_level(&log_level) {
@@ -469,6 +470,7 @@ async fn async_main(cli: Cli) {
                 ipam_backend,
                 ipam_db,
                 ipam_db_url,
+                reap_interval,
             });
 
             if let Err(e) = server_config.validate_deployment(&address) {
@@ -539,7 +541,20 @@ async fn async_main(cli: Cli) {
                 println!("IPAM endpoints enabled at /ipam/");
                 #[cfg(feature = "dashboard")]
                 println!("IPAM dashboard at /dashboard");
-                Some(std::sync::Arc::new(ipam::operations::IpamOps::new(store)))
+                let ops = std::sync::Arc::new(ipam::operations::IpamOps::new(store));
+                if server_config.reap_interval_seconds > 0 {
+                    info!(
+                        "Expiry sweep every {}s",
+                        server_config.reap_interval_seconds
+                    );
+                    ipam::sweeper::spawn(
+                        std::sync::Arc::clone(&ops),
+                        std::time::Duration::from_secs(server_config.reap_interval_seconds),
+                    );
+                } else {
+                    info!("Expiry sweep disabled (reap_interval_seconds = 0)");
+                }
+                Some(ops)
             } else {
                 None
             };

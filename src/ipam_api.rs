@@ -348,6 +348,7 @@ pub fn create_ipam_router() -> Router {
         )
         .route("/hostnames/history", get(ipam_hostname_history))
         .route("/audit", get(ipam_query_audit))
+        .route("/reap", post(ipam_reap_expired))
         .route("/batch/allocate", post(ipam_batch_allocate))
         .route("/batch/release", post(ipam_batch_release))
         .route("/batch/summary", get(ipam_batch_summary))
@@ -1010,6 +1011,29 @@ async fn ipam_delete_hostname(
         .await
     {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => ipam_error_response(e),
+    }
+}
+
+#[cfg_attr(feature = "swagger", utoipa::path(
+    post,
+    path = "/ipam/reap",
+    responses(
+        (status = 200, description = "Expired allocations released", body = ReapResult),
+    ),
+    security(("bearerAuth" = [])),
+    tag = "ipam"
+))]
+/// Release the caller's tenant's allocations whose TTL has passed. Meant
+/// for a scheduler holding an admin PAT; the server and Lambda sweeps cover
+/// every tenant on their own.
+async fn ipam_reap_expired(
+    Extension(ops): Extension<Arc<IpamOps>>,
+    tenant: crate::tenant::Tenant,
+    _: RequireAdmin,
+) -> impl IntoResponse {
+    match ops.reap_expired(tenant.as_str()).await {
+        Ok(released) => Json(ReapResult { released }).into_response(),
         Err(e) => ipam_error_response(e),
     }
 }

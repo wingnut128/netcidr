@@ -532,6 +532,7 @@ rate_limit_burst = 50         # Burst allowance per IP (default: 50)
 timeout_seconds = 30          # Request timeout (default: 30s)
 enable_swagger = false        # Swagger UI at /swagger-ui (default: false)
 max_pats_per_tenant = 25      # Max active PATs per tenant (default: 25; POST /me/tokens returns 429 when reached)
+reap_interval_seconds = 300   # Expiry sweep interval: TTL'd allocations, idempotency keys, PATs (default: 300; 0 = disabled; else 10-86400)
 ```
 
 **Security defaults**: All endpoints are protected by per-IP rate limiting, request body size limits, request timeouts, restrictive CORS (no origins allowed by default), and security headers (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Cache-Control: no-store`).
@@ -950,6 +951,7 @@ The IPAM module provides library-level IP address allocation tracking with a plu
 - **Reverse lookup** — find allocations by IP address or resource ID
 - **Audit trail** — immutable log of all mutations (create, update, release)
 - **Tags** — flexible key-value metadata on allocations
+- **Reservation TTLs** — `--ttl <seconds>` (API: `ttl_seconds`) sets an allocation's `expires_at`. Expired allocations are released by an expiry sweep. `netcidr serve` runs it every 5 minutes (`reap_interval_seconds`), the Lambda runs it on an EventBridge schedule, and `netcidr ipam reap` / `POST /ipam/reap` (Admin) runs it on demand for your tenant. The sweep also deletes expired idempotency keys and personal access tokens.
 
 **Storage backends:**
 
@@ -983,6 +985,9 @@ netcidr ipam find-ip 10.0.1.50
 
 # View audit log
 netcidr ipam audit --limit 10
+
+# Release allocations whose TTL has passed (serve also does this on a timer)
+netcidr ipam reap
 
 # Admin: query the audit log by user or PAT (who did what)
 netcidr admin audit --user alice@example.com
@@ -1078,6 +1083,7 @@ netcidr serve --config netcidr.toml --ipam-enabled --ipam-db /path/to/ipam.db
 | `/ipam/hostnames` | `DELETE` | Delete a hostname pointer (`?ip=&hostname=`) |
 | `/ipam/hostnames/history` | `GET` | Hostname pointer change history (`?ip=&hostname=`) |
 | `/ipam/audit` | `GET` | Query audit log (filterable) |
+| `/ipam/reap` | `POST` | Release the tenant's allocations whose TTL has passed (Admin); returns `{"released": n}` |
 | `/admin/users` | `GET` | List the users directory: email, role, status (Platform Admin) |
 | `/admin/users` | `POST` | Add or update a user `{email, role, status}` (Platform Admin) |
 | `/admin/users` | `DELETE` | Remove a user (`?email=`, Platform Admin; last-platform-admin guarded) |
@@ -1149,6 +1155,8 @@ cargo lambda build --release --arm64 --bin lambda --features lambda,ipam-postgre
 | `NETCIDR_RATE_LIMIT_BURST` | No | `50` | Per-IP burst allowance |
 
 Point `NETCIDR_DATABASE_URL` at a serverless Postgres (e.g. [Neon](https://neon.tech)) or RDS. For RDS, consider RDS Proxy to manage connection pooling across Lambda invocations.
+
+**Scheduled expiry sweep.** Lambda has no long-running process, so `netcidr serve`'s background sweep doesn't run there. Instead, add an EventBridge schedule rule (e.g. `rate(5 minutes)`) that targets the function with the default event payload. The `lambda` binary recognises an EventBridge **Scheduled Event** (`"source": "aws.events"`, `"detail-type": "Scheduled Event"`) and runs one sweep across every tenant: it releases allocations past their TTL and deletes expired idempotency keys and PATs. It returns the counts and logs them. Every other payload is handled as an HTTP request. Clients can't fake a scheduled event through API Gateway, which builds the HTTP event itself. Only an IAM principal allowed to invoke the function directly can send one.
 
 **Per-IP rate limiting under Lambda.** The router derives the client IP from the `X-Forwarded-For` header (via tower-governor's `SmartIpKeyExtractor`), so the limiter works behind API Gateway even though `lambda_http` provides no TCP peer address. This is only trustworthy because **API Gateway is a trusted proxy that overwrites `X-Forwarded-For`** with the real client IP — never expose the Lambda Function URL directly, or callers could spoof the header to evade throttling. For `netcidr serve` (direct TCP), clients that send no forwarding header fall back to the connection's peer IP. Tune the limit per environment with `NETCIDR_RATE_LIMIT` / `NETCIDR_RATE_LIMIT_BURST` without redeploying.
 

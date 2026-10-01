@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Allocation TTLs now expire.** `--ttl` / `ttl_seconds` set `expires_at` since v0.13.2, but nothing ever released expired allocations. An expiry sweep now does so in every tenant, one audited `expire` per allocation. `netcidr serve` runs it every `reap_interval_seconds` (default 300, `0` disables, CLI `--reap-interval`). The Lambda runs it when invoked by an EventBridge Scheduled Event. `POST /ipam/reap` (Admin) and `netcidr ipam reap` run it on demand for the caller's tenant ([#497](https://github.com/wingnut128/netcidr/issues/497)).
+- The same sweep deletes expired idempotency keys and expired personal access tokens, which were never pruned before ([#498](https://github.com/wingnut128/netcidr/issues/498)).
 - `IpamStore::transact` runs a decide-then-commit unit under one Lock Scope (ADR-0007): the store takes the lock (`BEGIN IMMEDIATE` on SQLite, a transaction-scoped advisory lock on Postgres), runs the unit's reads, calls its pure `decide`, and commits the resulting writes, audit rows, and idempotency record together. `IpamOps::run` executes a typed `Mutation` this way, with an injected clock and id source. Allocation operations use it as of #482; the rest move over in #483–#487 ([#481](https://github.com/wingnut128/netcidr/issues/481)).
 
 ### Changed

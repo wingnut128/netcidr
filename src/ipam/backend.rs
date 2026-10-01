@@ -112,6 +112,16 @@ impl IpamBackend {
         }
     }
 
+    /// Release this tenant's allocations whose TTL has passed.
+    pub async fn reap_expired(&self) -> Result<ReapResult> {
+        match self {
+            Self::Local(ops) => Ok(ReapResult {
+                released: ops.reap_expired(Tenant::LOCAL).await?,
+            }),
+            Self::Remote(client) => client.reap_expired().await,
+        }
+    }
+
     pub async fn find_by_ip(&self, address: &str) -> Result<Vec<Allocation>> {
         match self {
             Self::Local(ops) => ops.find_by_ip(Tenant::LOCAL, address).await,

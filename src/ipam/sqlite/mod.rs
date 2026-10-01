@@ -1073,6 +1073,27 @@ impl IpamStore for SqliteStore {
         read_allocations_in_block(&conn, tenant_id, cidr_block_id, statuses)
     }
 
+    async fn due_expiry_blocks(&self, now_rfc3339: &str) -> Result<Vec<ExpiryDue>> {
+        let conn = self.conn()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT tenant_id, cidr_block_id FROM allocations \
+                 WHERE status IN ('active', 'reserved') \
+                   AND expires_at IS NOT NULL AND expires_at <= ?1 \
+                 ORDER BY tenant_id, cidr_block_id",
+            )
+            .map_err(db_err)?;
+        stmt.query_map(params![now_rfc3339], |row| {
+            Ok(ExpiryDue {
+                tenant_id: row.get(0)?,
+                cidr_block_id: row.get(1)?,
+            })
+        })
+        .map_err(db_err)?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(db_err)
+    }
+
     async fn get_tags(&self, tenant_id: &str, allocation_id: &str) -> Result<Vec<Tag>> {
         let conn = self.conn()?;
         Self::assert_allocation_in_tenant(&conn, tenant_id, allocation_id)?;
