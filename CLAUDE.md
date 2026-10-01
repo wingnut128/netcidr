@@ -31,7 +31,7 @@ All external inputs must be validated before use. Use the shared validation modu
 NEVER read, write, edit, list, display, copy, move, or otherwise access the following:
 
 - `~/.ssh/` or any `.ssh/` directory and its contents (keys, config, known_hosts, etc.)
-- `.env`, `.env.*`, `*.env` files (e.g., `.env.local`, `.env.production`, `prod.env`)
+- `.env`, `.env.*`, `*.env` files (e.g., `.env.local`, `.env.production`, `prod.env`). **Exception:** templates ending in `.example`, `.sample`, or `.template` may be read and edited, but must contain placeholders only (e.g. `YOUR-TOKEN-HERE`, `you@example.com`), never real credentials or personal data. If a template already holds something that looks real, stop and flag it.
 - `credentials.json`, `service-account*.json`, `*-credentials.*`
 - `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks` (private keys and keystores)
 - `~/.aws/`, `~/.config/gcloud/`, `~/.azure/` (cloud provider credentials)
