@@ -102,6 +102,18 @@ pub enum Read {
         cidr_block_id: String,
         statuses: Vec<AllocationStatus>,
     },
+    /// One user by (lowercased) email. The user directory is global.
+    User {
+        email: String,
+    },
+    /// Every user, ordered by email.
+    Users,
+    /// How many users are active platform admins.
+    ActivePlatformAdminCount,
+    /// Whether the one-shot bootstrap marker `key` has been written.
+    BootstrapMarker {
+        key: String,
+    },
 }
 
 /// The result of one [`Read`], in the same position as its read.
@@ -114,6 +126,10 @@ pub enum Rows {
     CidrBlocks(Vec<CidrBlock>),
     Allocation(Option<Allocation>),
     Allocations(Vec<Allocation>),
+    User(Option<UserRecord>),
+    Users(Vec<UserRecord>),
+    Count(u64),
+    Flag(bool),
 }
 
 /// A rule-free row write. The adapter applies it verbatim: ids, timestamps,
@@ -134,6 +150,13 @@ pub enum Write {
     /// descriptive fields, `updated_at`, `released_at`, `expires_at`),
     /// matched by tenant and id. Tags are left as they are.
     ReplaceAllocation(Allocation),
+    /// Insert a user, or overwrite every column of the existing row with the
+    /// same email.
+    PutUser(UserRecord),
+    /// Delete the user with this (lowercased) email.
+    DeleteUser { email: String },
+    /// Record that the one-shot bootstrap step `key` has run.
+    SetBootstrapMarker { key: String, applied_at: String },
 }
 
 /// Looks up an existing idempotency record inside the unit, under its lock.
@@ -279,32 +302,9 @@ pub trait IpamStore: Send + Sync {
     /// Fetch a user row by email, or `None` if no row exists.
     async fn get_user(&self, email: &str) -> Result<Option<UserRecord>>;
     async fn list_users(&self) -> Result<Vec<UserRecord>>;
-    /// Insert or update a user row. `actor` records who made the change
-    /// (stamped into `created_by` on insert, `updated_by` on update).
-    async fn upsert_user(
-        &self,
-        email: &str,
-        role: crate::auth::Role,
-        status: UserStatus,
-        actor: &str,
-    ) -> Result<UserRecord>;
-    /// Hard-delete a user row. Returns `UserNotFound` if no row exists.
-    /// Tenant data is untouched (tenant_id is just the email string).
-    async fn delete_user(&self, email: &str) -> Result<()>;
     /// Number of rows with `role = 'platform_admin' AND status = 'active'` —
     /// used for the last-platform-admin guard.
     async fn count_active_platform_admins(&self) -> Result<u64>;
-    /// Seed the users table from `(email, role, status)` triples exactly once,
-    /// guarded by the `bootstrap_markers` table (key `users_env_seed`) rather
-    /// than table emptiness — migration 013 copies `role_assignments` in, so
-    /// the table is non-empty on upgraded deployments, yet allowlist-only
-    /// emails still need a one-time top-up. Existing rows are never
-    /// overwritten (`ON CONFLICT DO NOTHING`). Returns the number of rows
-    /// inserted; 0 forever after the marker is written.
-    async fn seed_users_once(
-        &self,
-        seeds: &[(String, crate::auth::Role, UserStatus)],
-    ) -> Result<u64>;
 
     // --- audit ---
     /// `entry.tenant_id` is the source of truth (already populated by caller).

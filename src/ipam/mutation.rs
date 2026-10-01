@@ -17,7 +17,9 @@ use serde::{Serialize, de::DeserializeOwned};
 use crate::audit_context::AuditContext;
 use crate::error::{NetcidrError, Result};
 use crate::ipam::idempotency::TTL;
-use crate::ipam::models::{Allocation, AllocationStatus, AuditEntry, CidrBlock, IdempotencyRecord};
+use crate::ipam::models::{
+    Allocation, AllocationStatus, AuditEntry, CidrBlock, IdempotencyRecord, UserRecord,
+};
 use crate::ipam::operations::IdempotentOutcome;
 use crate::ipam::store::{
     IdempotencyLookup, IpamStore, Loaded, LockScope, Plan, Read, Rows, TxUnit, Write,
@@ -147,6 +149,30 @@ impl ReadSet {
         })
     }
 
+    /// The user with this (lowercased) email, or `None`.
+    pub fn user(&mut self, email: &str) -> Handle<Option<UserRecord>> {
+        self.push(Read::User {
+            email: email.to_string(),
+        })
+    }
+
+    /// Every user, ordered by email.
+    pub fn users(&mut self) -> Handle<Vec<UserRecord>> {
+        self.push(Read::Users)
+    }
+
+    /// How many users are active platform admins.
+    pub fn active_platform_admin_count(&mut self) -> Handle<u64> {
+        self.push(Read::ActivePlatformAdminCount)
+    }
+
+    /// Whether the bootstrap marker `key` has been written.
+    pub fn bootstrap_marker(&mut self, key: &str) -> Handle<bool> {
+        self.push(Read::BootstrapMarker {
+            key: key.to_string(),
+        })
+    }
+
     /// A cidr block's allocations in `statuses` (with tags), ordered by
     /// network address.
     pub fn allocations_in_block(
@@ -181,6 +207,42 @@ impl FromRows for Vec<CidrBlock> {
     fn from_rows(rows: &Rows) -> Option<&Self> {
         match rows {
             Rows::CidrBlocks(blocks) => Some(blocks),
+            _ => None,
+        }
+    }
+}
+
+impl FromRows for Option<UserRecord> {
+    fn from_rows(rows: &Rows) -> Option<&Self> {
+        match rows {
+            Rows::User(user) => Some(user),
+            _ => None,
+        }
+    }
+}
+
+impl FromRows for Vec<UserRecord> {
+    fn from_rows(rows: &Rows) -> Option<&Self> {
+        match rows {
+            Rows::Users(users) => Some(users),
+            _ => None,
+        }
+    }
+}
+
+impl FromRows for u64 {
+    fn from_rows(rows: &Rows) -> Option<&Self> {
+        match rows {
+            Rows::Count(n) => Some(n),
+            _ => None,
+        }
+    }
+}
+
+impl FromRows for bool {
+    fn from_rows(rows: &Rows) -> Option<&Self> {
+        match rows {
+            Rows::Flag(flag) => Some(flag),
             _ => None,
         }
     }

@@ -498,6 +498,130 @@ fn replace_allocation(conn: &Connection, a: &Allocation) -> Result<()> {
     Ok(())
 }
 
+const USER_COLUMNS: &str = "email, role, status, created_at, updated_at, created_by, updated_by";
+
+fn row_to_user(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserColumns> {
+    Ok((
+        row.get(0)?,
+        row.get(1)?,
+        row.get(2)?,
+        row.get(3)?,
+        row.get(4)?,
+        row.get(5)?,
+        row.get(6)?,
+    ))
+}
+
+type UserColumns = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+);
+
+fn user_from_columns(
+    (email, role, status, created_at, updated_at, created_by, updated_by): UserColumns,
+) -> Result<UserRecord> {
+    Ok(UserRecord {
+        email,
+        role: role.parse::<crate::auth::Role>()?,
+        status: status.parse::<UserStatus>()?,
+        created_at,
+        updated_at,
+        created_by,
+        updated_by,
+    })
+}
+
+fn read_user(conn: &Connection, email: &str) -> Result<Option<UserRecord>> {
+    conn.query_row(
+        &format!("SELECT {USER_COLUMNS} FROM users WHERE email = ?1"),
+        params![email],
+        row_to_user,
+    )
+    .optional()
+    .map_err(db_err)?
+    .map(user_from_columns)
+    .transpose()
+}
+
+fn read_users(conn: &Connection) -> Result<Vec<UserRecord>> {
+    let mut stmt = conn
+        .prepare(&format!("SELECT {USER_COLUMNS} FROM users ORDER BY email"))
+        .map_err(db_err)?;
+    let rows = stmt
+        .query_map([], row_to_user)
+        .map_err(db_err)?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(db_err)?;
+    rows.into_iter().map(user_from_columns).collect()
+}
+
+fn read_active_platform_admin_count(conn: &Connection) -> Result<u64> {
+    let n: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM users WHERE role = 'platform_admin' AND status = 'active'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(db_err)?;
+    Ok(n as u64)
+}
+
+fn read_bootstrap_marker(conn: &Connection, key: &str) -> Result<bool> {
+    let found: Option<String> = conn
+        .query_row(
+            "SELECT key FROM bootstrap_markers WHERE key = ?1",
+            params![key],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(db_err)?;
+    Ok(found.is_some())
+}
+
+fn put_user(conn: &Connection, u: &UserRecord) -> Result<()> {
+    conn.execute(
+        "INSERT INTO users (email, role, status, created_at, updated_at, created_by, updated_by) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+         ON CONFLICT(email) DO UPDATE SET role = ?2, status = ?3, created_at = ?4, \
+             updated_at = ?5, created_by = ?6, updated_by = ?7",
+        params![
+            u.email,
+            u.role.as_str(),
+            u.status.as_str(),
+            u.created_at,
+            u.updated_at,
+            u.created_by,
+            u.updated_by
+        ],
+    )
+    .map_err(db_err)?;
+    Ok(())
+}
+
+fn delete_user_row(conn: &Connection, email: &str) -> Result<()> {
+    let deleted = conn
+        .execute("DELETE FROM users WHERE email = ?1", params![email])
+        .map_err(db_err)?;
+    if deleted == 0 {
+        return Err(NetcidrError::UserNotFound(email.to_string()));
+    }
+    Ok(())
+}
+
+fn set_bootstrap_marker(conn: &Connection, key: &str, applied_at: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO bootstrap_markers (key, applied_at) VALUES (?1, ?2)",
+        params![key, applied_at],
+    )
+    .map_err(db_err)?;
+    Ok(())
+}
+
 fn read_one(conn: &Connection, read: &Read) -> Result<Rows> {
     match read {
         Read::CidrBlock { tenant_id, id } => {
@@ -519,6 +643,10 @@ fn read_one(conn: &Connection, read: &Read) -> Result<Rows> {
             cidr_block_id,
             statuses,
         )?)),
+        Read::User { email } => Ok(Rows::User(read_user(conn, email)?)),
+        Read::Users => Ok(Rows::Users(read_users(conn)?)),
+        Read::ActivePlatformAdminCount => Ok(Rows::Count(read_active_platform_admin_count(conn)?)),
+        Read::BootstrapMarker { key } => Ok(Rows::Flag(read_bootstrap_marker(conn, key)?)),
     }
 }
 
@@ -528,6 +656,11 @@ fn apply_write(conn: &Connection, write: &Write) -> Result<()> {
         Write::DeleteCidrBlock { tenant_id, id } => delete_cidr_block_rows(conn, tenant_id, id),
         Write::InsertAllocation(a) => insert_allocation(conn, a),
         Write::ReplaceAllocation(a) => replace_allocation(conn, a),
+        Write::PutUser(u) => put_user(conn, u),
+        Write::DeleteUser { email } => delete_user_row(conn, email),
+        Write::SetBootstrapMarker { key, applied_at } => {
+            set_bootstrap_marker(conn, key, applied_at)
+        }
     }
 }
 
@@ -1010,201 +1143,17 @@ impl IpamStore for SqliteStore {
 
     async fn get_user(&self, email: &str) -> Result<Option<UserRecord>> {
         let conn = self.conn()?;
-        let needle = email.to_ascii_lowercase();
-        let row: Option<(
-            String,
-            String,
-            String,
-            String,
-            String,
-            Option<String>,
-            Option<String>,
-        )> = conn
-            .query_row(
-                "SELECT email, role, status, created_at, updated_at, created_by, updated_by \
-                 FROM users WHERE email = ?1",
-                params![needle],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                        row.get(6)?,
-                    ))
-                },
-            )
-            .optional()
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        match row {
-            Some((email, role, status, created_at, updated_at, created_by, updated_by)) => {
-                Ok(Some(UserRecord {
-                    email,
-                    role: role.parse::<crate::auth::Role>()?,
-                    status: status.parse::<UserStatus>()?,
-                    created_at,
-                    updated_at,
-                    created_by,
-                    updated_by,
-                }))
-            }
-            None => Ok(None),
-        }
+        read_user(&conn, &email.to_ascii_lowercase())
     }
 
     async fn list_users(&self) -> Result<Vec<UserRecord>> {
         let conn = self.conn()?;
-        let mut stmt = conn
-            .prepare(
-                "SELECT email, role, status, created_at, updated_at, created_by, updated_by \
-                 FROM users ORDER BY email",
-            )
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?,
-                    row.get::<_, Option<String>>(5)?,
-                    row.get::<_, Option<String>>(6)?,
-                ))
-            })
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        rows.into_iter()
-            .map(
-                |(email, role, status, created_at, updated_at, created_by, updated_by)| {
-                    Ok(UserRecord {
-                        email,
-                        role: role.parse::<crate::auth::Role>()?,
-                        status: status.parse::<UserStatus>()?,
-                        created_at,
-                        updated_at,
-                        created_by,
-                        updated_by,
-                    })
-                },
-            )
-            .collect()
-    }
-
-    async fn upsert_user(
-        &self,
-        email: &str,
-        role: crate::auth::Role,
-        status: UserStatus,
-        actor: &str,
-    ) -> Result<UserRecord> {
-        let conn = self.conn()?;
-        let needle = email.to_ascii_lowercase();
-        let now = Self::now();
-        conn.execute(
-            "INSERT INTO users (email, role, status, created_at, updated_at, created_by) \
-             VALUES (?1, ?2, ?3, ?4, ?4, ?5) \
-             ON CONFLICT(email) DO UPDATE SET \
-                 role = ?2, status = ?3, updated_at = ?4, updated_by = ?5",
-            params![needle, role.as_str(), status.as_str(), now, actor],
-        )
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        // Read back to return canonical audit fields (created_* unchanged on update).
-        let (created_at, updated_at, created_by, updated_by): (
-            String,
-            String,
-            Option<String>,
-            Option<String>,
-        ) = conn
-            .query_row(
-                "SELECT created_at, updated_at, created_by, updated_by \
-                 FROM users WHERE email = ?1",
-                params![needle],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-            )
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        Ok(UserRecord {
-            email: needle,
-            role,
-            status,
-            created_at,
-            updated_at,
-            created_by,
-            updated_by,
-        })
-    }
-
-    async fn delete_user(&self, email: &str) -> Result<()> {
-        let conn = self.conn()?;
-        let needle = email.to_ascii_lowercase();
-        let deleted = conn
-            .execute("DELETE FROM users WHERE email = ?1", params![needle])
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        if deleted == 0 {
-            return Err(NetcidrError::UserNotFound(email.to_string()));
-        }
-        Ok(())
+        read_users(&conn)
     }
 
     async fn count_active_platform_admins(&self) -> Result<u64> {
         let conn = self.conn()?;
-        let n: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM users \
-                 WHERE role = 'platform_admin' AND status = 'active'",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        Ok(n as u64)
-    }
-
-    async fn seed_users_once(
-        &self,
-        seeds: &[(String, crate::auth::Role, UserStatus)],
-    ) -> Result<u64> {
-        let mut conn = self.conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        let marker: Option<String> = tx
-            .query_row(
-                "SELECT key FROM bootstrap_markers WHERE key = 'users_env_seed'",
-                [],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        if marker.is_some() {
-            return Ok(0);
-        }
-        let now = Self::now();
-        let mut seeded = 0u64;
-        for (email, role, status) in seeds {
-            let needle = email.to_ascii_lowercase();
-            // First-write-wins if env lists overlap (admin > allocator > reader
-            // order is the caller's responsibility). Never overwrites rows
-            // copied from role_assignments by migration 013.
-            let n = tx
-                .execute(
-                    "INSERT INTO users (email, role, status, created_at, updated_at, created_by) \
-                     VALUES (?1, ?2, ?3, ?4, ?4, 'bootstrap') ON CONFLICT(email) DO NOTHING",
-                    params![needle, role.as_str(), status.as_str(), now],
-                )
-                .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-            seeded += n as u64;
-        }
-        tx.execute(
-            "INSERT INTO bootstrap_markers (key, applied_at) VALUES ('users_env_seed', ?1)",
-            params![now],
-        )
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        tx.commit()
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        Ok(seeded)
+        read_active_platform_admin_count(&conn)
     }
 
     // --- audit ---

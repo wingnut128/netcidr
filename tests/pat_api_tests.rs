@@ -502,12 +502,12 @@ async fn disabled_user_oidc_session_is_forbidden_and_reenabling_restores_access(
     assert_eq!(status, StatusCode::OK, "body: {body}");
 
     // Disable → immediate 403 (allowlist gate, not a role surprise).
-    h.store
+    netcidr::ipam::operations::IpamOps::new(std::sync::Arc::clone(&h.store))
         .upsert_user(
+            netcidr::tenant::Tenant::LOCAL,
             USER_A_EMAIL,
             netcidr::auth::Role::Reader,
             netcidr::ipam::models::UserStatus::Disabled,
-            "test",
         )
         .await
         .unwrap();
@@ -515,12 +515,12 @@ async fn disabled_user_oidc_session_is_forbidden_and_reenabling_restores_access(
     assert_eq!(status, StatusCode::FORBIDDEN, "body: {body}");
 
     // Re-enable → access restored.
-    h.store
+    netcidr::ipam::operations::IpamOps::new(std::sync::Arc::clone(&h.store))
         .upsert_user(
+            netcidr::tenant::Tenant::LOCAL,
             USER_A_EMAIL,
             netcidr::auth::Role::Reader,
             netcidr::ipam::models::UserStatus::Active,
-            "test",
         )
         .await
         .unwrap();
@@ -534,12 +534,12 @@ async fn mint_requests_for_platform_admin_pats_are_clamped_to_admin() {
     // admin asking for a platform_admin PAT gets an admin one instead —
     // platform powers are never mintable as a long-lived token.
     let h = build_harness(vec![USER_A_EMAIL.to_string()]).await;
-    h.store
+    netcidr::ipam::operations::IpamOps::new(std::sync::Arc::clone(&h.store))
         .upsert_user(
+            netcidr::tenant::Tenant::LOCAL,
             USER_A_EMAIL,
             netcidr::auth::Role::PlatformAdmin,
             netcidr::ipam::models::UserStatus::Active,
-            "test",
         )
         .await
         .unwrap();

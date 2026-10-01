@@ -338,6 +338,27 @@ mod cross_process {
         }
     }
 
+    /// Both processes run the one-shot users seed at the same moment, as two
+    /// cold starts would. It must apply exactly once, and neither may fail.
+    pub async fn concurrent_seeds_apply_once(pair: Pair) {
+        let seeds: Vec<(String, Role, UserStatus)> = (0..10)
+            .map(|i| {
+                (
+                    format!("user-{i}@example.com"),
+                    Role::Reader,
+                    UserStatus::Active,
+                )
+            })
+            .collect();
+        let (a, b) = (Arc::clone(&pair.ops[0]), Arc::clone(&pair.ops[1]));
+        let (sa, sb) = (seeds.clone(), seeds.clone());
+        let ha = tokio::spawn(async move { a.seed_users(&sa).await });
+        let hb = tokio::spawn(async move { b.seed_users(&sb).await });
+        let (ra, rb) = (ha.await.unwrap().unwrap(), hb.await.unwrap().unwrap());
+        assert_eq!(ra + rb, 10, "seeded {ra} + {rb} users; expected 10 once");
+        assert_eq!(pair.stores[0].list_users().await.unwrap().len(), 10);
+    }
+
     /// Per round, 8 mints for one PAT Owner split across both processes,
     /// with a per-owner limit of 2. At most 2 may be active afterwards.
     pub async fn pat_limit_holds(pair: Pair) {
@@ -483,9 +504,13 @@ mod cross_process {
             }
 
             #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-            #[ignore = "cross-process last-platform-admin race; fixed by #484"]
             async fn last_platform_admin_survives() {
                 super::last_platform_admin_survives($pair.await).await;
+            }
+
+            #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+            async fn concurrent_seeds_apply_once() {
+                super::concurrent_seeds_apply_once($pair.await).await;
             }
 
             #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

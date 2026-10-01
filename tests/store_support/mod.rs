@@ -134,6 +134,9 @@ pub trait Seed {
     /// Delete a block and everything in it, without the active-allocation
     /// check.
     async fn delete_cidr_block(&self, tenant_id: &str, id: &str) -> netcidr::error::Result<()>;
+
+    /// Delete a user row, without the platform-admin guards.
+    async fn delete_user(&self, email: &str) -> netcidr::error::Result<()>;
 }
 
 impl<S: IpamStore + ?Sized> Seed for S {
@@ -184,6 +187,17 @@ impl<S: IpamStore + ?Sized> Seed for S {
             vec![netcidr::ipam::store::Write::DeleteCidrBlock {
                 tenant_id: tenant_id.to_string(),
                 id: id.to_string(),
+            }],
+        )
+        .await
+    }
+
+    async fn delete_user(&self, email: &str) -> netcidr::error::Result<()> {
+        commit_writes(
+            self,
+            "local",
+            vec![netcidr::ipam::store::Write::DeleteUser {
+                email: email.to_ascii_lowercase(),
             }],
         )
         .await

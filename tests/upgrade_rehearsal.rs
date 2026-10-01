@@ -107,7 +107,10 @@ async fn deployed_db_upgrades_without_lockout() {
     // ── Second boot (warm restart / new Lambda instance) ───────────────
     // Delete the viewer first: seed-if-empty semantics would resurrect
     // them; the marker must not.
-    store.delete_user("viewer@example.com").await.unwrap();
+    netcidr::ipam::operations::IpamOps::new(Arc::clone(&store))
+        .delete_user(netcidr::tenant::Tenant::LOCAL, "viewer@example.com")
+        .await
+        .unwrap();
     seed_users(&store, &config).await;
     assert!(
         store
