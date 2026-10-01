@@ -11,6 +11,7 @@ pub mod output;
 pub mod postgres;
 pub mod sqlite;
 pub mod store;
+pub mod sweeper;
 
 use crate::error::{NetcidrError, Result};
 use config::IpamConfig;

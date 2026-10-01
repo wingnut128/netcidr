@@ -294,6 +294,12 @@ pub enum Commands {
         /// IPAM PostgreSQL connection URL (overrides NETCIDR_IPAM_DB_URL env and config file)
         #[arg(long)]
         ipam_db_url: Option<String>,
+
+        /// Seconds between expiry sweeps: release allocations past their TTL
+        /// and delete expired idempotency keys and PATs. 0 disables
+        /// (default 300; overrides config file)
+        #[arg(long)]
+        reap_interval: Option<u64>,
     },
 }
 
