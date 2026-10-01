@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.0](https://github.com/wingnut128/netcidr/compare/v0.32.0...v0.33.0) - 2026-10-01
+
+### Added
+
+- expire TTL'd allocations and prune expired keys and PATs (#497, #498) ([#501](https://github.com/wingnut128/netcidr/pull/501))
+- transact seam and Mutation executor for atomic IPAM writes ([#490](https://github.com/wingnut128/netcidr/pull/490))
+
+### Fixed
+
+- rate-limit on one trusted client address; optional origin secret ([#504](https://github.com/wingnut128/netcidr/pull/504)) ([#505](https://github.com/wingnut128/netcidr/pull/505))
+- run the cross-process suite in just test-races ([#500](https://github.com/wingnut128/netcidr/pull/500))
+- transactional tags and claim-first batch idempotency ([#487](https://github.com/wingnut128/netcidr/pull/487)) ([#496](https://github.com/wingnut128/netcidr/pull/496))
+- run hostname pointer writes as transaction units (concurrent set race) ([#495](https://github.com/wingnut128/netcidr/pull/495))
+- run PAT mint and revoke as transaction units (PAT limit race) ([#494](https://github.com/wingnut128/netcidr/pull/494))
+- run user-directory writes as transaction units (last-platform-admin race) ([#493](https://github.com/wingnut128/netcidr/pull/493))
+- run cidr block writes and load as transaction units ([#492](https://github.com/wingnut128/netcidr/pull/492))
+- run allocation writes as transaction units (cross-process race) ([#491](https://github.com/wingnut128/netcidr/pull/491))
+
+### Other
+
+- run the lambda binary's tests ([#502](https://github.com/wingnut128/netcidr/pull/502)) ([#503](https://github.com/wingnut128/netcidr/pull/503))
+- run store tests on Postgres in CI and add cross-process race tests ([#489](https://github.com/wingnut128/netcidr/pull/489))
+- ADR-0007 decide-then-commit store seam ([#488](https://github.com/wingnut128/netcidr/pull/488))
+- note ADR-0006 amendments on ADR-0002 and ADR-0003 ([#478](https://github.com/wingnut128/netcidr/pull/478))
+- dedupe 0.32.0 CHANGELOG and update SECURITY.md ([#475](https://github.com/wingnut128/netcidr/pull/475))
+
 ### Security
 
 - **Per-IP rate limiting could be evaded by spoofing `X-Forwarded-For`.** The limiter keyed on the leftmost forwarding-header entry, which the client controls when the proxy appends rather than overwrites (CloudFront does). It now trusts exactly one configured source, `client_ip_source` / `NETCIDR_CLIENT_IP_SOURCE`: `peer`, `xff:N` (Nth entry from the right), or `header:<name>` such as `cloudfront-viewer-address`. IPv6 clients are keyed by /64. A new optional origin secret (`NETCIDR_ORIGIN_SECRET`; requests without a matching `X-Origin-Verify` header get 403) stops callers from going around the fronting proxy. ADR-0005 is amended.
