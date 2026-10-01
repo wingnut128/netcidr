@@ -77,9 +77,9 @@ test-mcp:
 test-postgres:
     cargo test --features ipam-postgres --test ipam_store_contract --test postgres_integration --test ipam_concurrency
 
-# Run the cross-process race tests that are ignored until #479 lands
+# Run the cross-process race tests (SQLite file + Postgres)
 test-races:
-    cargo test --features ipam-postgres --test ipam_concurrency -- --ignored
+    cargo test --features ipam-postgres --test ipam_concurrency cross_process
 
 # Run tests with captured output visible
 test-verbose:

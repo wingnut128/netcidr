@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `just test-races` ran no tests after #479 un-ignored the cross-process race tests; it now runs the `cross_process` suite on SQLite and Postgres ([#499](https://github.com/wingnut128/netcidr/issues/499)).
 - **Batch idempotency race.** Concurrent `POST /ipam/batch/allocate` requests with the same `Idempotency-Key` all missed the cache and all allocated (in tests, 8 of 8 ran). The batch now claims its key in a transaction of its own before allocating, so exactly one runs and the others replay its result or get `409` while it is in progress ([#487](https://github.com/wingnut128/netcidr/issues/487)).
 - **Tag replacement was not atomic on SQLite.** Replacing an allocation's tags deleted and re-inserted them outside a transaction; tags are now replaced in one transaction under the allocation's cidr block Lock Scope ([#487](https://github.com/wingnut128/netcidr/issues/487)).
 - **Concurrent hostname pointer race.** Two requests setting the same IP↔hostname pair at once, from one process or several, could both try to create it: one failed with a 500 (a duplicate-key error on Postgres, "database is locked" on SQLite). Setting and deleting a pointer now run as one transaction under the tenant's Lock Scope, so the second request updates the pointer the first created ([#486](https://github.com/wingnut128/netcidr/issues/486)).
