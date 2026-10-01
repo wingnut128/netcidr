@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `IpamStore::transact` runs a decide-then-commit unit under one Lock Scope (ADR-0007): the store takes the lock (`BEGIN IMMEDIATE` on SQLite, a transaction-scoped advisory lock on Postgres), runs the unit's reads, calls its pure `decide`, and commits the resulting writes, audit rows, and idempotency record together. `IpamOps::run` executes a typed `Mutation` this way, with an injected clock and id source. No operation uses it yet; they move over in #482–#487 ([#481](https://github.com/wingnut128/netcidr/issues/481)).
+
+### Changed
+
+- Waiting longer than the store's lock timeout (5s) for a lock or a pooled connection now fails with a retryable **503 "storage busy, retry"** (`NetcidrError::StoreBusy`, logged at warn) instead of a 500. The SQLite and Postgres connection pools also give up after 5s rather than 30s ([#481](https://github.com/wingnut128/netcidr/issues/481)).
+
+### Fixed
+
+- SQLite enforced foreign keys and waited on a locked database only on the one pooled connection that ran `initialize`; every connection in the pool now sets `foreign_keys=ON` and a 5s `busy_timeout` ([#481](https://github.com/wingnut128/netcidr/issues/481)).
+
 ### Other
 
 - The IPAM store contract suite now runs against file-backed SQLite and Postgres as well as in-memory SQLite, and CI runs the Postgres store tests against a Postgres service container, each test on its own database. New two-instance tests show that allocation overlap, the last-platform-admin guard, and the per-owner PAT limit can be violated by two processes sharing one database; they are `#[ignore]`d until the fix lands (`just test-races`) ([#480](https://github.com/wingnut128/netcidr/issues/480)).
