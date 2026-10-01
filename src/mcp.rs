@@ -12,7 +12,7 @@ use crate::ipam::models::*;
 use crate::ipam::operations::IpamOps;
 use crate::ipv4::Ipv4Subnet;
 use crate::ipv6::Ipv6Subnet;
-use crate::mcp_client::HttpIpamClient;
+use crate::ipam::http_client::HttpIpamClient;
 use crate::subnet_generator::{
     MAX_GENERATED_SUBNETS, count_subnets, generate_ipv4_subnets, generate_ipv6_subnets,
     hierarchical_split_ipv4, hierarchical_split_ipv6, vlsm_split_ipv4, vlsm_split_ipv6,
@@ -1800,7 +1800,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ipam_update_allocation_remote_backend() {
-        use crate::mcp_client::tests::{mock_update_api, sample_allocation};
+        use crate::ipam::http_client::tests::{mock_update_api, sample_allocation};
 
         let (base, seen) = mock_update_api(200, sample_allocation()).await;
         let server = NetcidrMcp::new(Some(McpIpamBackend::Remote(
