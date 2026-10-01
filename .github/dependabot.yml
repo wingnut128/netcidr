@@ -43,8 +43,6 @@ updates:
       interval: daily
     cooldown:
       default-days: 7
-    ignore:
-      # chainguard/static is only published as `:latest`, so every update is
-      # a digest refresh, which Digestabot owns (workflows/digestabot.yml).
-      # Letting Dependabot bump it too opened duplicate PRs (#445 / #446).
-      - dependency-name: "chainguard/static"
+    # Also refreshes `tag@sha256:` digests when a tag's image changes (e.g.
+    # chainguard/static:latest). Dependabot's commits are signed by GitHub,
+    # which `main`'s required-signatures rule needs; Digestabot's weren't (#469).

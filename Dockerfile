@@ -74,10 +74,10 @@ RUN touch src/main.rs && \
 # ---------- Runtime -------------------------------------------------------
 # cgr.dev/chainguard/static:latest — distroless, nonroot by default, CA bundle
 # bundled at /etc/ssl/certs/ca-certificates.crt, no shell, no package manager.
-# Tag + digest pinning: the tag tells digestabot what to track, the digest
+# Tag + digest pinning: the tag tells Dependabot what to track, the digest
 # guarantees reproducibility. Chainguard's `static` image is not versioned
 # beyond `:latest` / `:latest-glibc`, so `:latest` is the recommended tag per
-# their docs. Digestabot refreshes the digest on a schedule (.github/workflows/digestabot.yml).
+# their docs. Dependabot's docker ecosystem refreshes the digest daily (.github/dependabot.yml).
 FROM cgr.dev/chainguard/static:latest@sha256:41e17ed83c594a64a9396b6ab96dd26d5ddc290dacf4c177464712ff21ad534f
 
 COPY --from=builder /app/target/release/netcidr /usr/local/bin/netcidr
