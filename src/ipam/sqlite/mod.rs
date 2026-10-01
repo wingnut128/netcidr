@@ -312,12 +312,13 @@ fn insert_audit(conn: &Connection, entry: &AuditEntry) -> Result<()> {
     Ok(())
 }
 
-fn insert_idempotency(conn: &Connection, record: &IdempotencyRecord) -> Result<()> {
+fn put_idempotency(conn: &Connection, record: &IdempotencyRecord) -> Result<()> {
     conn.execute(
         "INSERT INTO idempotency_keys \
             (tenant_id, key, scope, request_hash, status_code, response_body, created_at, expires_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
-         ON CONFLICT(tenant_id, key, scope) DO NOTHING",
+         ON CONFLICT(tenant_id, key, scope) DO UPDATE SET request_hash = ?4, status_code = ?5, \
+             response_body = ?6, created_at = ?7, expires_at = ?8",
         params![
             record.tenant_id,
             record.key,
@@ -898,7 +899,7 @@ fn run_unit(pool: &ConnPool, unit: TxUnit) -> Result<String> {
         insert_audit(&tx, entry)?;
     }
     if let Some(record) = &plan.idempotency {
-        insert_idempotency(&tx, record)?;
+        put_idempotency(&tx, record)?;
     }
     tx.commit().map_err(db_err)?;
     Ok(plan.output_json)
@@ -1268,13 +1269,6 @@ impl IpamStore for SqliteStore {
         {
             let conn = self.conn()?;
             read_idempotency(&conn, tenant_id, key, scope)
-        }
-    }
-
-    async fn idempotency_put(&self, record: &IdempotencyRecord) -> Result<()> {
-        {
-            let conn = self.conn()?;
-            insert_idempotency(&conn, record)
         }
     }
 

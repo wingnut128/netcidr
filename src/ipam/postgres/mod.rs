@@ -265,12 +265,13 @@ async fn insert_audit<'e>(ex: impl PgExecutor<'e>, entry: &AuditEntry) -> Result
     Ok(())
 }
 
-async fn insert_idempotency<'e>(ex: impl PgExecutor<'e>, record: &IdempotencyRecord) -> Result<()> {
+async fn put_idempotency<'e>(ex: impl PgExecutor<'e>, record: &IdempotencyRecord) -> Result<()> {
     sqlx::query(
         "INSERT INTO idempotency_keys \
             (tenant_id, key, scope, request_hash, status_code, response_body, created_at, expires_at) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
-         ON CONFLICT (tenant_id, key, scope) DO NOTHING",
+         ON CONFLICT (tenant_id, key, scope) DO UPDATE SET request_hash = $4, status_code = $5, \
+             response_body = $6, created_at = $7, expires_at = $8",
     )
     .bind(&record.tenant_id)
     .bind(&record.key)
@@ -979,7 +980,7 @@ impl IpamStore for PostgresStore {
             insert_audit(&mut *tx, entry).await?;
         }
         if let Some(record) = &plan.idempotency {
-            insert_idempotency(&mut *tx, record).await?;
+            put_idempotency(&mut *tx, record).await?;
         }
         tx.commit().await.map_err(db_err)?;
         Ok(plan.output_json)
@@ -1248,10 +1249,6 @@ impl IpamStore for PostgresStore {
         scope: &str,
     ) -> Result<Option<IdempotencyRecord>> {
         read_idempotency(&self.pool, tenant_id, key, scope).await
-    }
-
-    async fn idempotency_put(&self, record: &IdempotencyRecord) -> Result<()> {
-        insert_idempotency(&self.pool, record).await
     }
 
     async fn idempotency_reap_expired(&self, now_rfc3339: &str) -> Result<u64> {

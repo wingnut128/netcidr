@@ -55,6 +55,13 @@ pub enum LockScope {
         tenant_id: String,
         owner_sub: String,
     },
+    /// One idempotency key, for operations that span several units and so
+    /// claim and complete their key in units of their own (batch allocate).
+    IdempotencyKey {
+        tenant_id: String,
+        key: String,
+        scope: String,
+    },
 }
 
 impl LockScope {
@@ -74,6 +81,11 @@ impl LockScope {
                 tenant_id,
                 owner_sub,
             } => format!("pat_owner{SEP}{tenant_id}{SEP}{owner_sub}"),
+            Self::IdempotencyKey {
+                tenant_id,
+                key,
+                scope,
+            } => format!("idempotency_key{SEP}{tenant_id}{SEP}{scope}{SEP}{key}"),
         }
     }
 }
@@ -220,7 +232,8 @@ pub struct Loaded {
 }
 
 /// What a unit commits: its writes, then its audit rows, then its
-/// idempotency record, all in one transaction. `output_json` is returned
+/// idempotency record (inserted, or replacing the key's existing record),
+/// all in one transaction. `output_json` is returned
 /// to the caller of [`IpamStore::transact`].
 #[derive(Debug, Clone, Default)]
 pub struct Plan {
@@ -339,8 +352,6 @@ pub trait IpamStore: Send + Sync {
         key: &str,
         scope: &str,
     ) -> Result<Option<IdempotencyRecord>>;
-    /// `record.tenant_id` is the source of truth.
-    async fn idempotency_put(&self, record: &IdempotencyRecord) -> Result<()>;
     /// Tenant-agnostic: prunes expired rows across all tenants.
     async fn idempotency_reap_expired(&self, now_rfc3339: &str) -> Result<u64>;
 

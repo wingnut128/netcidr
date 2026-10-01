@@ -1272,37 +1272,43 @@ impl IpamOps {
 
     /// Idempotency-aware variant of [`Self::batch_allocate`].
     /// Scope: `batch-allocate`.
+    ///
+    /// A batch runs one unit per item, so it claims the key in a unit of
+    /// its own first (see [`idempotency::claim`]): a concurrent request
+    /// with the same key gets `IdempotencyInProgress` instead of
+    /// allocating a second time.
     pub async fn batch_allocate_idempotent(
         &self,
         tenant_id: &str,
         items: &[BatchAllocateItem],
         idempotency_key: &str,
     ) -> Result<IdempotentOutcome<BatchAllocateResult>> {
-        let scope = "batch-allocate".to_string();
-        let hash = idempotency::input_hash(items)?;
-
-        if let Some(replay) = idempotency::try_replay::<BatchAllocateResult>(
-            self.store(),
-            tenant_id,
-            idempotency_key,
-            &scope,
-            &hash,
-        )
-        .await?
-        {
-            return Ok(IdempotentOutcome::Replayed(replay));
+        let spec = idempotency::KeySpec {
+            key: idempotency_key.to_string(),
+            scope: "batch-allocate".to_string(),
+            request_hash: idempotency::input_hash(items)?,
+        };
+        let store = self.store();
+        match idempotency::claim(store, self.clock.now(), tenant_id, &spec).await? {
+            idempotency::Claim::Replay(result) => return Ok(IdempotentOutcome::Replayed(result)),
+            idempotency::Claim::Claimed => {}
         }
 
-        let result = self.batch_allocate(tenant_id, items).await?;
-        if let Err(e) = idempotency::record_output(
-            self.store(),
-            tenant_id,
-            idempotency_key,
-            &scope,
-            &hash,
-            &result,
-        )
-        .await
+        let result = match self.batch_allocate(tenant_id, items).await {
+            Ok(result) => result,
+            Err(e) => {
+                if let Err(release) =
+                    idempotency::abandon(store, self.clock.now(), tenant_id, &spec).await
+                {
+                    tracing::warn!(error = %release, "failed to abandon idempotency claim");
+                }
+                return Err(e);
+            }
+        };
+        // The batch has committed; failing to record its result only means
+        // the claim expires and a retry runs again, so warn and return it.
+        if let Err(e) =
+            idempotency::complete(store, self.clock.now(), tenant_id, &spec, &result).await
         {
             tracing::warn!(error = %e, "failed to record idempotency key");
         }

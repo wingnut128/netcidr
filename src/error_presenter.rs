@@ -127,6 +127,14 @@ pub fn present(err: &NetcidrError) -> PresentedError {
             log_level: LogLevel::None,
         },
 
+        // 409 — the same key and body is still being processed.
+        IdempotencyInProgress => PresentedError {
+            status: 409,
+            client_msg: "A request with this Idempotency-Key is still in progress; retry later"
+                .to_string(),
+            log_level: LogLevel::None,
+        },
+
         // 503 — a lock or connection wait timed out; safe to retry.
         StoreBusy => PresentedError {
             status: 503,
@@ -377,6 +385,16 @@ mod tests {
             },
             409,
             "Idempotency-Key reused with a different request body",
+            LogLevel::None,
+        );
+    }
+
+    #[test]
+    fn idempotency_in_progress_is_409_and_retryable() {
+        case(
+            NetcidrError::IdempotencyInProgress,
+            409,
+            "A request with this Idempotency-Key is still in progress; retry later",
             LogLevel::None,
         );
     }
