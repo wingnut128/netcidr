@@ -341,8 +341,6 @@ pub trait IpamStore: Send + Sync {
     async fn count_active_platform_admins(&self) -> Result<u64>;
 
     // --- audit ---
-    /// `entry.tenant_id` is the source of truth (already populated by caller).
-    async fn append_audit(&self, entry: &AuditEntry) -> Result<()>;
     async fn query_audit(&self, tenant_id: &str, filter: &AuditFilter) -> Result<Vec<AuditEntry>>;
 
     // --- idempotency ---

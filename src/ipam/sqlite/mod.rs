@@ -1178,13 +1178,6 @@ impl IpamStore for SqliteStore {
 
     // --- audit ---
 
-    async fn append_audit(&self, entry: &AuditEntry) -> Result<()> {
-        {
-            let conn = self.conn()?;
-            insert_audit(&conn, entry)
-        }
-    }
-
     async fn query_audit(&self, tenant_id: &str, filter: &AuditFilter) -> Result<Vec<AuditEntry>> {
         let conn = self.conn()?;
         let mut sql = String::from(
@@ -1424,6 +1417,7 @@ mod tests {
             input: &CreateAllocation,
         ) -> Result<Allocation>;
         async fn delete_cidr_block(&self, tenant_id: &str, id: &str) -> Result<()>;
+        async fn append_audit(&self, entry: &AuditEntry) -> Result<()>;
         async fn pat_create(
             &self,
             input: &CreatePersonalAccessToken,
@@ -1497,6 +1491,25 @@ mod tests {
                 },
             )
             .await
+        }
+
+        async fn append_audit(&self, entry: &AuditEntry) -> Result<()> {
+            let entry = entry.clone();
+            self.transact(TxUnit {
+                scope: crate::ipam::store::LockScope::Tenant {
+                    tenant_id: entry.tenant_id.clone(),
+                },
+                reads: vec![],
+                idempotency: None,
+                decide: Box::new(move |_| {
+                    Ok(crate::ipam::store::Plan {
+                        audits: vec![entry],
+                        ..Default::default()
+                    })
+                }),
+            })
+            .await
+            .map(|_| ())
         }
 
         async fn pat_create(

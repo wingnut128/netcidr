@@ -138,6 +138,12 @@ pub trait Seed {
     /// Delete a user row, without the platform-admin guards.
     async fn delete_user(&self, email: &str) -> netcidr::error::Result<()>;
 
+    /// Append an audit row on its own, outside any operation.
+    async fn append_audit(
+        &self,
+        entry: &netcidr::ipam::models::AuditEntry,
+    ) -> netcidr::error::Result<()>;
+
     /// Replace an allocation's tags, without checking that it exists.
     async fn set_tags(
         &self,
@@ -226,6 +232,28 @@ impl<S: IpamStore + ?Sized> Seed for S {
             }],
         )
         .await
+    }
+
+    async fn append_audit(
+        &self,
+        entry: &netcidr::ipam::models::AuditEntry,
+    ) -> netcidr::error::Result<()> {
+        let entry = entry.clone();
+        self.transact(netcidr::ipam::store::TxUnit {
+            scope: netcidr::ipam::store::LockScope::Tenant {
+                tenant_id: entry.tenant_id.clone(),
+            },
+            reads: vec![],
+            idempotency: None,
+            decide: Box::new(move |_| {
+                Ok(netcidr::ipam::store::Plan {
+                    audits: vec![entry],
+                    ..Default::default()
+                })
+            }),
+        })
+        .await
+        .map(|_| ())
     }
 
     async fn set_tags(

@@ -1171,10 +1171,6 @@ impl IpamStore for PostgresStore {
 
     // --- audit ---
 
-    async fn append_audit(&self, entry: &AuditEntry) -> Result<()> {
-        insert_audit(&self.pool, entry).await
-    }
-
     async fn query_audit(&self, tenant_id: &str, filter: &AuditFilter) -> Result<Vec<AuditEntry>> {
         let mut builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
             "SELECT id, tenant_id, timestamp, action, entity_type, entity_id, details, caller_sub, caller_email, source_ip, request_id, auth_method, pat_id FROM audit_log WHERE tenant_id = ",
