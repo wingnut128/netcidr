@@ -19,6 +19,7 @@ pub mod audit_context;
 pub mod auth;
 pub mod authorization;
 pub mod cli;
+pub mod client_ip;
 pub mod ipam_api;
 pub mod me_api;
 pub mod output;

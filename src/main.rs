@@ -420,6 +420,7 @@ async fn async_main(cli: Cli) {
             ipam_db,
             ipam_db_url,
             reap_interval,
+            client_ip_source,
         }) => {
             // Parse and validate log level
             let level = match parse_log_level(&log_level) {
@@ -471,6 +472,7 @@ async fn async_main(cli: Cli) {
                 ipam_db,
                 ipam_db_url,
                 reap_interval,
+                client_ip_source,
             });
 
             if let Err(e) = server_config.validate_deployment(&address) {

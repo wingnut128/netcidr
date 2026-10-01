@@ -159,13 +159,18 @@ async fn main() -> Result<(), Error> {
         ipam_db: None,
         ipam_db_url: std::env::var("NETCIDR_DATABASE_URL").ok(),
         enable_swagger: env_or("NETCIDR_ENABLE_SWAGGER", "true") == "true",
-        // Per-IP rate limiting works under Lambda because the router uses
-        // SmartIpKeyExtractor, which reads the client IP from the
-        // X-Forwarded-For header that API Gateway sets (lambda_http provides
-        // no ConnectInfo). Tunable without a redeploy via NETCIDR_RATE_LIMIT
-        // (requests/sec, 0 disables) and NETCIDR_RATE_LIMIT_BURST.
+        // Per-IP rate limiting. lambda_http provides no ConnectInfo, so the
+        // client address comes from a header (see client_ip_source below).
+        // Tunable without a redeploy via NETCIDR_RATE_LIMIT (requests/sec,
+        // 0 disables) and NETCIDR_RATE_LIMIT_BURST.
         rate_limit_per_second: env_parse("NETCIDR_RATE_LIMIT", 20),
         rate_limit_burst: env_parse("NETCIDR_RATE_LIMIT_BURST", 50),
+        // Lambda has no TCP peer, so default to the rightmost
+        // X-Forwarded-For entry: the address the nearest AWS proxy saw.
+        // Entries to its left are client-controlled. Deployments behind
+        // CloudFront should set NETCIDR_CLIENT_IP_SOURCE to
+        // `header:cloudfront-viewer-address`, which wins over this.
+        client_ip_source: Some(netcidr::client_ip::ClientIpSource::ForwardedFor { hops: 1 }),
         ..ServerConfig::default()
     };
 

@@ -991,27 +991,18 @@ async fn test_rate_limit_allows_burst() {
     assert_eq!(resp.status(), 429);
 }
 
-#[tokio::test]
-async fn test_rate_limit_keys_on_x_forwarded_for() {
+/// Serve `server` on a loopback port (with ConnectInfo, as `netcidr serve`
+/// does) and return its base URL.
+async fn spawn_server(server: ServerConfig) -> String {
     use std::net::SocketAddr;
     use tokio::net::TcpListener;
 
-    // Burst of 1 so the second request from the same client IP is throttled.
-    // SmartIpKeyExtractor derives the client IP from X-Forwarded-For — the
-    // header API Gateway sets in front of Lambda — rather than the TCP peer.
-    let config = RouterConfig {
-        server: ServerConfig {
-            rate_limit_per_second: 1,
-            rate_limit_burst: 1,
-            ..Default::default()
-        },
+    let app = create_router(RouterConfig {
+        server,
         ..Default::default()
-    };
-    let app = create_router(config);
-
+    });
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-
     tokio::spawn(async move {
         axum::serve(
             listener,
@@ -1020,37 +1011,97 @@ async fn test_rate_limit_keys_on_x_forwarded_for() {
         .await
         .unwrap();
     });
+    format!("http://{addr}")
+}
 
-    let client = reqwest::Client::new();
-    let url = format!("http://{}/health", addr);
+/// Burst of 1, so a client's second request is throttled.
+fn one_request_per_client(source: Option<&str>) -> ServerConfig {
+    ServerConfig {
+        rate_limit_per_second: 1,
+        rate_limit_burst: 1,
+        client_ip_source: source.map(|s| s.parse().unwrap()),
+        ..Default::default()
+    }
+}
 
-    // First request from 203.0.113.1 succeeds and exhausts its burst.
-    let resp = client
-        .get(&url)
-        .header("X-Forwarded-For", "203.0.113.1")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
+async fn health_with(base: &str, headers: &[(&str, &str)]) -> u16 {
+    let mut req = reqwest::Client::new().get(format!("{base}/health"));
+    for (k, v) in headers {
+        req = req.header(*k, *v);
+    }
+    req.send().await.unwrap().status().as_u16()
+}
 
-    // Second request from the same forwarded IP is throttled — proving the
-    // limiter keys on the header, not the shared loopback TCP peer.
-    let resp = client
-        .get(&url)
-        .header("X-Forwarded-For", "203.0.113.1")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 429);
+#[tokio::test]
+async fn test_rate_limit_ignores_forwarding_headers_by_default() {
+    // Default source is the TCP peer: a client can't buy a fresh bucket by
+    // sending a different X-Forwarded-For.
+    let base = spawn_server(one_request_per_client(None)).await;
+    assert_eq!(
+        health_with(&base, &[("X-Forwarded-For", "203.0.113.1")]).await,
+        200
+    );
+    assert_eq!(
+        health_with(&base, &[("X-Forwarded-For", "203.0.113.2")]).await,
+        429
+    );
+}
 
-    // A different forwarded IP gets its own bucket and is allowed through.
-    let resp = client
-        .get(&url)
-        .header("X-Forwarded-For", "203.0.113.2")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
+#[tokio::test]
+async fn test_rate_limit_xff_trusts_only_the_proxy_appended_entry() {
+    let base = spawn_server(one_request_per_client(Some("xff:1"))).await;
+    // The proxy appended 198.51.100.7; the client-chosen left entry varies.
+    assert_eq!(
+        health_with(&base, &[("X-Forwarded-For", "6.6.6.1, 198.51.100.7")]).await,
+        200
+    );
+    assert_eq!(
+        health_with(&base, &[("X-Forwarded-For", "6.6.6.2, 198.51.100.7")]).await,
+        429,
+        "spoofing the leftmost entry must not evade the limit"
+    );
+    // A different real client gets its own bucket.
+    assert_eq!(
+        health_with(&base, &[("X-Forwarded-For", "6.6.6.1, 198.51.100.8")]).await,
+        200
+    );
+}
+
+#[tokio::test]
+async fn test_rate_limit_header_source_reads_cloudfront_viewer_address() {
+    let base = spawn_server(one_request_per_client(Some(
+        "header:cloudfront-viewer-address",
+    )))
+    .await;
+    let viewer = |v: &'static str| [("CloudFront-Viewer-Address", v)];
+    assert_eq!(health_with(&base, &viewer("198.51.100.7:40000")).await, 200);
+    // Same viewer from another source port is the same client.
+    assert_eq!(health_with(&base, &viewer("198.51.100.7:40001")).await, 429);
+    assert_eq!(health_with(&base, &viewer("198.51.100.8:40000")).await, 200);
+}
+
+#[tokio::test]
+async fn test_origin_secret_rejects_requests_that_bypass_the_proxy() {
+    let secret = "s3cr3t-s3cr3t-s3cr3t-s3cr3t-s3cr3t";
+    let base = spawn_server(ServerConfig {
+        origin_secret: Some(secret.to_string()),
+        ..one_request_per_client(None)
+    })
+    .await;
+    assert_eq!(health_with(&base, &[]).await, 403);
+    assert_eq!(
+        health_with(&base, &[("X-Origin-Verify", "wrong")]).await,
+        403
+    );
+    // Rejected requests don't spend the client's rate-limit budget.
+    assert_eq!(
+        health_with(&base, &[("X-Origin-Verify", secret)]).await,
+        200
+    );
+    assert_eq!(
+        health_with(&base, &[("X-Origin-Verify", secret)]).await,
+        429
+    );
 }
 
 #[tokio::test]
