@@ -18,7 +18,8 @@ use crate::audit_context::AuditContext;
 use crate::error::{NetcidrError, Result};
 use crate::ipam::idempotency::TTL;
 use crate::ipam::models::{
-    Allocation, AllocationStatus, AuditEntry, CidrBlock, IdempotencyRecord, UserRecord,
+    Allocation, AllocationStatus, AuditEntry, CidrBlock, IdempotencyRecord, PersonalAccessToken,
+    UserRecord,
 };
 use crate::ipam::operations::IdempotentOutcome;
 use crate::ipam::store::{
@@ -173,6 +174,29 @@ impl ReadSet {
         })
     }
 
+    /// The PAT `id`, only if it belongs to `owner_sub` in `tenant_id`.
+    pub fn pat(
+        &mut self,
+        tenant_id: &str,
+        owner_sub: &str,
+        id: &str,
+    ) -> Handle<Option<PersonalAccessToken>> {
+        self.push(Read::Pat {
+            tenant_id: tenant_id.to_string(),
+            owner_sub: owner_sub.to_string(),
+            id: id.to_string(),
+        })
+    }
+
+    /// How many of an owner's PATs are neither revoked nor expired at `now`.
+    pub fn active_pat_count(&mut self, tenant_id: &str, owner_sub: &str, now: &str) -> Handle<u64> {
+        self.push(Read::ActivePatCount {
+            tenant_id: tenant_id.to_string(),
+            owner_sub: owner_sub.to_string(),
+            now: now.to_string(),
+        })
+    }
+
     /// A cidr block's allocations in `statuses` (with tags), ordered by
     /// network address.
     pub fn allocations_in_block(
@@ -225,6 +249,15 @@ impl FromRows for Vec<UserRecord> {
     fn from_rows(rows: &Rows) -> Option<&Self> {
         match rows {
             Rows::Users(users) => Some(users),
+            _ => None,
+        }
+    }
+}
+
+impl FromRows for Option<PersonalAccessToken> {
+    fn from_rows(rows: &Rows) -> Option<&Self> {
+        match rows {
+            Rows::Pat(pat) => Some(pat),
             _ => None,
         }
     }

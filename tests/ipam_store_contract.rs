@@ -1340,7 +1340,7 @@ macro_rules! store_contract_tests {
         }
 
         #[tokio::test]
-        async fn contract_pat_revoke_idempotent_and_cross_owner_not_found() {
+        async fn contract_revoke_pat_sets_revoked_at_for_the_owner_only() {
             let store = $factory().await;
             let t = store
                 .pat_create(&CreatePersonalAccessToken {
@@ -1356,19 +1356,17 @@ macro_rules! store_contract_tests {
                 .await
                 .unwrap();
 
-            let first = store
+            store
                 .pat_revoke("a@x", "sub-a1", &t.id, "2026-05-02T00:00:00Z")
                 .await
                 .unwrap();
-            assert!(first.revoked_at.is_some());
-            // Idempotent.
-            let second = store
-                .pat_revoke("a@x", "sub-a1", &t.id, "2026-06-01T00:00:00Z")
-                .await
-                .unwrap();
-            assert_eq!(second.revoked_at, first.revoked_at);
+            let listed = store.pat_list_for_owner("a@x", "sub-a1").await.unwrap();
+            assert_eq!(
+                listed[0].revoked_at.as_deref(),
+                Some("2026-05-02T00:00:00Z")
+            );
 
-            // Cross-owner lookup → PatNotFound.
+            // The write matches on owner: another owner's token is not found.
             let cross = store
                 .pat_revoke("a@x", "sub-other", &t.id, "2026-05-02T00:00:00Z")
                 .await;

@@ -622,6 +622,87 @@ fn set_bootstrap_marker(conn: &Connection, key: &str, applied_at: &str) -> Resul
     Ok(())
 }
 
+fn read_pat(
+    conn: &Connection,
+    tenant_id: &str,
+    owner_sub: &str,
+    id: &str,
+) -> Result<Option<PersonalAccessToken>> {
+    conn.query_row(
+        "SELECT id, tenant_id, owner_sub, owner_email, name, prefix, token_hash, \
+                role, created_at, expires_at, last_used_at, revoked_at \
+         FROM personal_access_tokens \
+         WHERE id = ?1 AND tenant_id = ?2 AND owner_sub = ?3",
+        params![id, tenant_id, owner_sub],
+        row_to_pat,
+    )
+    .optional()
+    .map_err(db_err)
+}
+
+fn read_active_pat_count(
+    conn: &Connection,
+    tenant_id: &str,
+    owner_sub: &str,
+    now: &str,
+) -> Result<u64> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM personal_access_tokens \
+             WHERE tenant_id = ?1 AND owner_sub = ?2 \
+               AND revoked_at IS NULL AND expires_at > ?3",
+            params![tenant_id, owner_sub, now],
+            |row| row.get(0),
+        )
+        .map_err(db_err)?;
+    Ok(count as u64)
+}
+
+fn insert_pat(conn: &Connection, p: &PersonalAccessToken) -> Result<()> {
+    conn.execute(
+        "INSERT INTO personal_access_tokens
+            (id, tenant_id, owner_sub, owner_email, name, prefix, token_hash,
+             role, created_at, expires_at, last_used_at, revoked_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        params![
+            p.id,
+            p.tenant_id,
+            p.owner_sub,
+            p.owner_email,
+            p.name,
+            p.prefix,
+            p.token_hash,
+            p.role.as_str(),
+            p.created_at,
+            p.expires_at,
+            p.last_used_at,
+            p.revoked_at,
+        ],
+    )
+    .map_err(db_err)?;
+    Ok(())
+}
+
+fn revoke_pat(
+    conn: &Connection,
+    tenant_id: &str,
+    owner_sub: &str,
+    id: &str,
+    revoked_at: &str,
+) -> Result<()> {
+    let updated = conn
+        .execute(
+            "UPDATE personal_access_tokens SET revoked_at = ?1 \
+             WHERE id = ?2 AND tenant_id = ?3 AND owner_sub = ?4",
+            params![revoked_at, id, tenant_id, owner_sub],
+        )
+        .map_err(db_err)?;
+    if updated == 0 {
+        return Err(NetcidrError::PatNotFound(id.to_string()));
+    }
+    Ok(())
+}
+
 fn read_one(conn: &Connection, read: &Read) -> Result<Rows> {
     match read {
         Read::CidrBlock { tenant_id, id } => {
@@ -647,6 +728,18 @@ fn read_one(conn: &Connection, read: &Read) -> Result<Rows> {
         Read::Users => Ok(Rows::Users(read_users(conn)?)),
         Read::ActivePlatformAdminCount => Ok(Rows::Count(read_active_platform_admin_count(conn)?)),
         Read::BootstrapMarker { key } => Ok(Rows::Flag(read_bootstrap_marker(conn, key)?)),
+        Read::Pat {
+            tenant_id,
+            owner_sub,
+            id,
+        } => Ok(Rows::Pat(read_pat(conn, tenant_id, owner_sub, id)?)),
+        Read::ActivePatCount {
+            tenant_id,
+            owner_sub,
+            now,
+        } => Ok(Rows::Count(read_active_pat_count(
+            conn, tenant_id, owner_sub, now,
+        )?)),
     }
 }
 
@@ -661,6 +754,13 @@ fn apply_write(conn: &Connection, write: &Write) -> Result<()> {
         Write::SetBootstrapMarker { key, applied_at } => {
             set_bootstrap_marker(conn, key, applied_at)
         }
+        Write::InsertPat(p) => insert_pat(conn, p),
+        Write::RevokePat {
+            tenant_id,
+            owner_sub,
+            id,
+            revoked_at,
+        } => revoke_pat(conn, tenant_id, owner_sub, id, revoked_at),
     }
 }
 
@@ -1279,57 +1379,7 @@ impl IpamStore for SqliteStore {
         now_rfc3339: &str,
     ) -> Result<u32> {
         let conn = self.conn()?;
-        let count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM personal_access_tokens \
-                 WHERE tenant_id = ?1 AND owner_sub = ?2 \
-                   AND revoked_at IS NULL AND expires_at > ?3",
-                params![tenant_id, owner_sub, now_rfc3339],
-                |row| row.get(0),
-            )
-            .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        Ok(count as u32)
-    }
-
-    async fn pat_create(&self, input: &CreatePersonalAccessToken) -> Result<PersonalAccessToken> {
-        let conn = self.conn()?;
-        let id = uuid::Uuid::new_v4().to_string();
-        let now = Self::now();
-
-        conn.execute(
-            "INSERT INTO personal_access_tokens
-                (id, tenant_id, owner_sub, owner_email, name, prefix, token_hash,
-                 role, created_at, expires_at, last_used_at, revoked_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, NULL)",
-            params![
-                id,
-                input.tenant_id,
-                input.owner_sub,
-                input.owner_email,
-                input.name,
-                input.prefix,
-                input.token_hash,
-                input.role.as_str(),
-                now,
-                input.expires_at,
-            ],
-        )
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        Ok(PersonalAccessToken {
-            id,
-            tenant_id: input.tenant_id.clone(),
-            owner_sub: input.owner_sub.clone(),
-            owner_email: input.owner_email.clone(),
-            name: input.name.clone(),
-            prefix: input.prefix.clone(),
-            token_hash: input.token_hash.clone(),
-            role: input.role,
-            created_at: now,
-            expires_at: input.expires_at.clone(),
-            last_used_at: None,
-            revoked_at: None,
-        })
+        Ok(read_active_pat_count(&conn, tenant_id, owner_sub, now_rfc3339)? as u32)
     }
 
     async fn pat_get_by_hash(
@@ -1382,53 +1432,6 @@ impl IpamStore for SqliteStore {
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         Ok(rows)
-    }
-
-    async fn pat_revoke(
-        &self,
-        tenant_id: &str,
-        owner_sub: &str,
-        id: &str,
-        now_rfc3339: &str,
-    ) -> Result<PersonalAccessToken> {
-        let conn = self.conn()?;
-
-        // Confirm ownership first so cross-tenant / cross-owner attempts return
-        // PatNotFound (never reveal existence).
-        let existing: Option<PersonalAccessToken> = conn
-            .query_row(
-                "SELECT id, tenant_id, owner_sub, owner_email, name, prefix, token_hash, \
-                        role, created_at, expires_at, last_used_at, revoked_at \
-                 FROM personal_access_tokens \
-                 WHERE id = ?1 AND tenant_id = ?2 AND owner_sub = ?3",
-                params![id, tenant_id, owner_sub],
-                row_to_pat,
-            )
-            .map(Some)
-            .or_else(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => Ok(None),
-                other => Err(NetcidrError::DatabaseError(other.to_string())),
-            })?;
-
-        let mut row = match existing {
-            Some(r) => r,
-            None => return Err(NetcidrError::PatNotFound(id.to_string())),
-        };
-
-        // Idempotent: already-revoked rows return as-is.
-        if row.revoked_at.is_some() {
-            return Ok(row);
-        }
-
-        conn.execute(
-            "UPDATE personal_access_tokens SET revoked_at = ?1 \
-             WHERE id = ?2 AND tenant_id = ?3 AND owner_sub = ?4",
-            params![now_rfc3339, id, tenant_id, owner_sub],
-        )
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        row.revoked_at = Some(now_rfc3339.to_string());
-        Ok(row)
     }
 
     async fn pat_touch_last_used(&self, id: &str, now_rfc3339: &str) -> Result<()> {
@@ -1508,6 +1511,17 @@ mod tests {
             input: &CreateAllocation,
         ) -> Result<Allocation>;
         async fn delete_cidr_block(&self, tenant_id: &str, id: &str) -> Result<()>;
+        async fn pat_create(
+            &self,
+            input: &CreatePersonalAccessToken,
+        ) -> Result<PersonalAccessToken>;
+        async fn pat_revoke(
+            &self,
+            tenant_id: &str,
+            owner_sub: &str,
+            id: &str,
+            revoked_at: &str,
+        ) -> Result<()>;
     }
 
     async fn commit(store: &SqliteStore, tenant_id: &str, write: Write) -> Result<()> {
@@ -1567,6 +1581,48 @@ mod tests {
                 Write::DeleteCidrBlock {
                     tenant_id: tenant_id.to_string(),
                     id: id.to_string(),
+                },
+            )
+            .await
+        }
+
+        async fn pat_create(
+            &self,
+            input: &CreatePersonalAccessToken,
+        ) -> Result<PersonalAccessToken> {
+            let row = PersonalAccessToken {
+                id: uuid::Uuid::new_v4().to_string(),
+                tenant_id: input.tenant_id.clone(),
+                owner_sub: input.owner_sub.clone(),
+                owner_email: input.owner_email.clone(),
+                name: input.name.clone(),
+                prefix: input.prefix.clone(),
+                token_hash: input.token_hash.clone(),
+                role: input.role,
+                created_at: Utc::now().to_rfc3339(),
+                expires_at: input.expires_at.clone(),
+                last_used_at: None,
+                revoked_at: None,
+            };
+            commit(self, &input.tenant_id, Write::InsertPat(row.clone())).await?;
+            Ok(row)
+        }
+
+        async fn pat_revoke(
+            &self,
+            tenant_id: &str,
+            owner_sub: &str,
+            id: &str,
+            revoked_at: &str,
+        ) -> Result<()> {
+            commit(
+                self,
+                tenant_id,
+                Write::RevokePat {
+                    tenant_id: tenant_id.to_string(),
+                    owner_sub: owner_sub.to_string(),
+                    id: id.to_string(),
+                    revoked_at: revoked_at.to_string(),
                 },
             )
             .await
@@ -2457,68 +2513,6 @@ mod tests {
         // Wrong tenant for owner sub-a1 → empty.
         let cross = store.pat_list_for_owner("b@x", "sub-a1").await.unwrap();
         assert!(cross.is_empty());
-    }
-
-    #[tokio::test]
-    async fn pat_revoke_is_idempotent_and_returns_existing_row() {
-        let store = test_store().await;
-        let t = store
-            .pat_create(&pat_input(
-                TEST_TENANT,
-                "sub-1",
-                "tok",
-                0x21,
-                "2099-01-01T00:00:00Z",
-            ))
-            .await
-            .unwrap();
-
-        let first = store
-            .pat_revoke(TEST_TENANT, "sub-1", &t.id, "2026-05-02T00:00:00Z")
-            .await
-            .unwrap();
-        assert_eq!(first.revoked_at.as_deref(), Some("2026-05-02T00:00:00Z"));
-
-        // Second revoke must not error and returns the same revoked_at.
-        let second = store
-            .pat_revoke(TEST_TENANT, "sub-1", &t.id, "2026-06-01T00:00:00Z")
-            .await
-            .unwrap();
-        assert_eq!(
-            second.revoked_at.as_deref(),
-            Some("2026-05-02T00:00:00Z"),
-            "second revoke must not overwrite the original timestamp",
-        );
-    }
-
-    #[tokio::test]
-    async fn pat_revoke_returns_not_found_for_other_owner_or_tenant() {
-        let store = test_store().await;
-        let t = store
-            .pat_create(&pat_input(
-                "a@x",
-                "sub-a1",
-                "tok",
-                0x31,
-                "2099-01-01T00:00:00Z",
-            ))
-            .await
-            .unwrap();
-
-        let wrong_tenant = store
-            .pat_revoke("b@x", "sub-a1", &t.id, "2026-05-02T00:00:00Z")
-            .await;
-        assert!(matches!(wrong_tenant, Err(NetcidrError::PatNotFound(_))));
-
-        let wrong_owner = store
-            .pat_revoke("a@x", "sub-a2", &t.id, "2026-05-02T00:00:00Z")
-            .await;
-        assert!(matches!(wrong_owner, Err(NetcidrError::PatNotFound(_))));
-
-        // Original token is still active.
-        let listed = store.pat_list_for_owner("a@x", "sub-a1").await.unwrap();
-        assert_eq!(listed.len(), 1);
-        assert!(listed[0].revoked_at.is_none());
     }
 
     #[tokio::test]

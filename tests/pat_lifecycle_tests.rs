@@ -336,3 +336,69 @@ async fn mint_succeeds_after_revoking_to_below_cap() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn revoke_is_idempotent_owner_scoped_and_audited_once() {
+    let (lifecycle, store, _pepper) = lifecycle().await;
+    let minted = lifecycle
+        .mint_for_owner(
+            &owner(),
+            Role::Admin,
+            CreatePatRequest {
+                name: "ci".to_string(),
+                expires_in_days: Some(30),
+                role: None,
+            },
+        )
+        .await
+        .unwrap();
+    let id = minted.summary.id.clone();
+
+    lifecycle.revoke_for_owner(&owner(), &id).await.unwrap();
+    let revoked_at = |rows: Vec<netcidr::ipam::models::PersonalAccessToken>| {
+        rows.into_iter()
+            .find(|t| t.id == id)
+            .and_then(|t| t.revoked_at)
+    };
+    let first = revoked_at(
+        store
+            .pat_list_for_owner(OWNER_EMAIL, OWNER_SUB)
+            .await
+            .unwrap(),
+    );
+    assert!(first.is_some());
+
+    // Revoking again changes nothing, including the original timestamp.
+    lifecycle.revoke_for_owner(&owner(), &id).await.unwrap();
+    let second = revoked_at(
+        store
+            .pat_list_for_owner(OWNER_EMAIL, OWNER_SUB)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(second, first);
+
+    // Another owner cannot see, let alone revoke, the token.
+    let stranger = PatOwner {
+        subject: "someone-else".to_string(),
+        ..owner()
+    };
+    let err = lifecycle
+        .revoke_for_owner(&stranger, &id)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, NetcidrError::PatNotFound(_)));
+
+    // One audit row for the mint, one for the revoke; the no-op adds none.
+    let actions: Vec<String> = store
+        .query_audit(OWNER_EMAIL, &netcidr::ipam::models::AuditFilter::default())
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.entity_id == id)
+        .map(|e| e.action)
+        .collect();
+    assert_eq!(actions.len(), 2, "got {actions:?}");
+    assert!(actions.contains(&"mint_pat".to_string()));
+    assert!(actions.contains(&"revoke_pat".to_string()));
+}

@@ -114,6 +114,18 @@ pub enum Read {
     BootstrapMarker {
         key: String,
     },
+    /// One PAT, only if it belongs to this owner in this tenant.
+    Pat {
+        tenant_id: String,
+        owner_sub: String,
+        id: String,
+    },
+    /// How many of an owner's PATs are neither revoked nor expired at `now`.
+    ActivePatCount {
+        tenant_id: String,
+        owner_sub: String,
+        now: String,
+    },
 }
 
 /// The result of one [`Read`], in the same position as its read.
@@ -130,6 +142,7 @@ pub enum Rows {
     Users(Vec<UserRecord>),
     Count(u64),
     Flag(bool),
+    Pat(Option<PersonalAccessToken>),
 }
 
 /// A rule-free row write. The adapter applies it verbatim: ids, timestamps,
@@ -157,6 +170,15 @@ pub enum Write {
     DeleteUser { email: String },
     /// Record that the one-shot bootstrap step `key` has run.
     SetBootstrapMarker { key: String, applied_at: String },
+    /// Insert a new PAT row (its hash, never its plaintext).
+    InsertPat(PersonalAccessToken),
+    /// Set `revoked_at` on an owner's PAT.
+    RevokePat {
+        tenant_id: String,
+        owner_sub: String,
+        id: String,
+        revoked_at: String,
+    },
 }
 
 /// Looks up an existing idempotency record inside the unit, under its lock.
@@ -334,10 +356,6 @@ pub trait IpamStore: Send + Sync {
         now_rfc3339: &str,
     ) -> Result<u32>;
 
-    /// Insert a new PAT row. Caller has already computed `prefix` and
-    /// `token_hash`; the store trusts those inputs and parameterizes them.
-    async fn pat_create(&self, input: &CreatePersonalAccessToken) -> Result<PersonalAccessToken>;
-
     /// Lookup an active, non-revoked, non-expired PAT by its hash.
     /// `now_rfc3339` is passed in so the caller controls "now" — the SQL
     /// predicate is `revoked_at IS NULL AND expires_at > $now`. Returns
@@ -357,17 +375,6 @@ pub trait IpamStore: Send + Sync {
         tenant_id: &str,
         owner_sub: &str,
     ) -> Result<Vec<PersonalAccessToken>>;
-
-    /// Soft-revoke a PAT. Idempotent — if the row is already revoked, returns
-    /// the existing row unchanged. Returns `PatNotFound` when the id isn't
-    /// owned by `(tenant_id, owner_sub)`.
-    async fn pat_revoke(
-        &self,
-        tenant_id: &str,
-        owner_sub: &str,
-        id: &str,
-        now_rfc3339: &str,
-    ) -> Result<PersonalAccessToken>;
 
     /// Update `last_used_at = now`. Unscoped (no tenant_id arg) because the
     /// verifier has already proven possession of the secret.
