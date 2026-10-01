@@ -1,9 +1,19 @@
 # RBAC: roles come from per-user email config; extractors are per-handler
 
-**Status:** Accepted
-**Date:** 2026-05-20 (PR1) — amended 2026-05-20 (PR2)
+**Status:** Accepted — amended by [ADR-0006](./0006-unified-users-directory-and-platform-admin-tier.md)
+**Date:** 2026-05-20 (PR1) — amended 2026-05-20 (PR2), 2026-07-16 (ADR-0006)
 **Issue:** [#102](https://github.com/wingnut128/netcidr/issues/102)
 **Related:** [[ADR-0001 — Tenancy via explicit parameter]](./0001-tenancy-via-explicit-parameter.md)
+
+## Status update (ADR-0006)
+
+[ADR-0006](./0006-unified-users-directory-and-platform-admin-tier.md) added
+`Role::PlatformAdmin` above `Admin` and the `RequirePlatformAdmin` extractor
+for user-directory routes. The bearer-mode carve-out below now resolves to
+**`Role::PlatformAdmin`**, not `Role::Admin` (ADR-0006 §7). Roles are read
+from the unified `users` table rather than env lists or `role_assignments`.
+Everything else here — per-handler extractors, `Role::Reader` default — is
+unchanged.
 
 ## Status update (PR2)
 

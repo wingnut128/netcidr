@@ -1,9 +1,21 @@
 # Role membership lives in the DB; env vars are a first-start bootstrap seed
 
-**Status:** Accepted
-**Date:** 2026-05-29
+**Status:** Accepted — amended by [ADR-0006](./0006-unified-users-directory-and-platform-admin-tier.md)
+**Date:** 2026-05-29 — amended 2026-07-16 (ADR-0006)
 **Issue:** [#215](https://github.com/wingnut128/netcidr/issues/215) (ENG-88), part of [#102](https://github.com/wingnut128/netcidr/issues/102)
 **Related:** [[ADR-0002 — RBAC role config and per-handler extractors]](./0002-rbac-role-config-and-per-handler-extractors.md), [[ADR-0001 — Tenancy via explicit parameter]](./0001-tenancy-via-explicit-parameter.md)
+
+## Status update (ADR-0006)
+
+[ADR-0006](./0006-unified-users-directory-and-platform-admin-tier.md)
+replaced the `role_assignments` table with a unified `users` table
+(migration 013), which also holds the sign-in allowlist. The bootstrap rule
+changed from seed-if-empty to a one-shot marker (`users_env_seed`). The
+decisions below still hold in spirit — the DB is the source of truth and
+roles are global — but read `role_assignments` as `users`. The last-admin
+and self-revoke guards now protect the last active **platform admin**
+(`NetcidrError::LastPlatformAdmin`, ADR-0006 §8). See ADR-0006 for the
+current bootstrap and guards.
 
 ## Context
 
