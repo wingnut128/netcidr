@@ -616,6 +616,96 @@ async fn set_bootstrap_marker<'e>(
     Ok(())
 }
 
+async fn read_pat<'e>(
+    ex: impl PgExecutor<'e>,
+    tenant_id: &str,
+    owner_sub: &str,
+    id: &str,
+) -> Result<Option<PersonalAccessToken>> {
+    let row = sqlx::query(
+        "SELECT id, tenant_id, owner_sub, owner_email, name, prefix, token_hash, \
+                role, created_at, expires_at, last_used_at, revoked_at \
+         FROM personal_access_tokens \
+         WHERE id = $1 AND tenant_id = $2 AND owner_sub = $3",
+    )
+    .bind(id)
+    .bind(tenant_id)
+    .bind(owner_sub)
+    .fetch_optional(ex)
+    .await
+    .map_err(db_err)?;
+    Ok(row.map(pg_row_to_pat))
+}
+
+async fn read_active_pat_count<'e>(
+    ex: impl PgExecutor<'e>,
+    tenant_id: &str,
+    owner_sub: &str,
+    now: &str,
+) -> Result<u64> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM personal_access_tokens \
+         WHERE tenant_id = $1 AND owner_sub = $2 \
+           AND revoked_at IS NULL AND expires_at > $3",
+    )
+    .bind(tenant_id)
+    .bind(owner_sub)
+    .bind(now)
+    .fetch_one(ex)
+    .await
+    .map_err(db_err)?;
+    Ok(count as u64)
+}
+
+async fn insert_pat<'e>(ex: impl PgExecutor<'e>, p: &PersonalAccessToken) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO personal_access_tokens
+            (id, tenant_id, owner_sub, owner_email, name, prefix, token_hash,
+             role, created_at, expires_at, last_used_at, revoked_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+    )
+    .bind(&p.id)
+    .bind(&p.tenant_id)
+    .bind(&p.owner_sub)
+    .bind(&p.owner_email)
+    .bind(&p.name)
+    .bind(&p.prefix)
+    .bind(&p.token_hash)
+    .bind(p.role.as_str())
+    .bind(&p.created_at)
+    .bind(&p.expires_at)
+    .bind(&p.last_used_at)
+    .bind(&p.revoked_at)
+    .execute(ex)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
+async fn revoke_pat<'e>(
+    ex: impl PgExecutor<'e>,
+    tenant_id: &str,
+    owner_sub: &str,
+    id: &str,
+    revoked_at: &str,
+) -> Result<()> {
+    let res = sqlx::query(
+        "UPDATE personal_access_tokens SET revoked_at = $1 \
+         WHERE id = $2 AND tenant_id = $3 AND owner_sub = $4",
+    )
+    .bind(revoked_at)
+    .bind(id)
+    .bind(tenant_id)
+    .bind(owner_sub)
+    .execute(ex)
+    .await
+    .map_err(db_err)?;
+    if res.rows_affected() == 0 {
+        return Err(NetcidrError::PatNotFound(id.to_string()));
+    }
+    Ok(())
+}
+
 async fn read_one(conn: &mut sqlx::PgConnection, read: &Read) -> Result<Rows> {
     match read {
         Read::CidrBlock { tenant_id, id } => {
@@ -642,6 +732,20 @@ async fn read_one(conn: &mut sqlx::PgConnection, read: &Read) -> Result<Rows> {
         Read::BootstrapMarker { key } => {
             Ok(Rows::Flag(read_bootstrap_marker(&mut *conn, key).await?))
         }
+        Read::Pat {
+            tenant_id,
+            owner_sub,
+            id,
+        } => Ok(Rows::Pat(
+            read_pat(&mut *conn, tenant_id, owner_sub, id).await?,
+        )),
+        Read::ActivePatCount {
+            tenant_id,
+            owner_sub,
+            now,
+        } => Ok(Rows::Count(
+            read_active_pat_count(&mut *conn, tenant_id, owner_sub, now).await?,
+        )),
     }
 }
 
@@ -658,6 +762,13 @@ async fn apply_write(conn: &mut sqlx::PgConnection, write: &Write) -> Result<()>
         Write::SetBootstrapMarker { key, applied_at } => {
             set_bootstrap_marker(&mut *conn, key, applied_at).await
         }
+        Write::InsertPat(p) => insert_pat(&mut *conn, p).await,
+        Write::RevokePat {
+            tenant_id,
+            owner_sub,
+            id,
+            revoked_at,
+        } => revoke_pat(&mut *conn, tenant_id, owner_sub, id, revoked_at).await,
     }
 }
 
@@ -1252,59 +1363,7 @@ impl IpamStore for PostgresStore {
         owner_sub: &str,
         now_rfc3339: &str,
     ) -> Result<u32> {
-        let row = sqlx::query(
-            "SELECT COUNT(*) FROM personal_access_tokens \
-             WHERE tenant_id = $1 AND owner_sub = $2 \
-               AND revoked_at IS NULL AND expires_at > $3",
-        )
-        .bind(tenant_id)
-        .bind(owner_sub)
-        .bind(now_rfc3339)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-        let count: i64 = row.get(0);
-        Ok(count as u32)
-    }
-
-    async fn pat_create(&self, input: &CreatePersonalAccessToken) -> Result<PersonalAccessToken> {
-        let id = uuid::Uuid::new_v4().to_string();
-        let now = Self::now();
-
-        sqlx::query(
-            "INSERT INTO personal_access_tokens
-                (id, tenant_id, owner_sub, owner_email, name, prefix, token_hash,
-                 role, created_at, expires_at, last_used_at, revoked_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL, NULL)",
-        )
-        .bind(&id)
-        .bind(&input.tenant_id)
-        .bind(&input.owner_sub)
-        .bind(&input.owner_email)
-        .bind(&input.name)
-        .bind(&input.prefix)
-        .bind(&input.token_hash)
-        .bind(input.role.as_str())
-        .bind(&now)
-        .bind(&input.expires_at)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        Ok(PersonalAccessToken {
-            id,
-            tenant_id: input.tenant_id.clone(),
-            owner_sub: input.owner_sub.clone(),
-            owner_email: input.owner_email.clone(),
-            name: input.name.clone(),
-            prefix: input.prefix.clone(),
-            token_hash: input.token_hash.clone(),
-            role: input.role,
-            created_at: now,
-            expires_at: input.expires_at.clone(),
-            last_used_at: None,
-            revoked_at: None,
-        })
+        Ok(read_active_pat_count(&self.pool, tenant_id, owner_sub, now_rfc3339).await? as u32)
     }
 
     async fn pat_get_by_hash(
@@ -1344,51 +1403,6 @@ impl IpamStore for PostgresStore {
         .await
         .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
         Ok(rows.into_iter().map(pg_row_to_pat).collect())
-    }
-
-    async fn pat_revoke(
-        &self,
-        tenant_id: &str,
-        owner_sub: &str,
-        id: &str,
-        now_rfc3339: &str,
-    ) -> Result<PersonalAccessToken> {
-        let existing = sqlx::query(
-            "SELECT id, tenant_id, owner_sub, owner_email, name, prefix, token_hash, \
-                    role, created_at, expires_at, last_used_at, revoked_at \
-             FROM personal_access_tokens \
-             WHERE id = $1 AND tenant_id = $2 AND owner_sub = $3",
-        )
-        .bind(id)
-        .bind(tenant_id)
-        .bind(owner_sub)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        let mut row = match existing.map(pg_row_to_pat) {
-            Some(r) => r,
-            None => return Err(NetcidrError::PatNotFound(id.to_string())),
-        };
-
-        if row.revoked_at.is_some() {
-            return Ok(row);
-        }
-
-        sqlx::query(
-            "UPDATE personal_access_tokens SET revoked_at = $1 \
-             WHERE id = $2 AND tenant_id = $3 AND owner_sub = $4",
-        )
-        .bind(now_rfc3339)
-        .bind(id)
-        .bind(tenant_id)
-        .bind(owner_sub)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| NetcidrError::DatabaseError(e.to_string()))?;
-
-        row.revoked_at = Some(now_rfc3339.to_string());
-        Ok(row)
     }
 
     async fn pat_touch_last_used(&self, id: &str, now_rfc3339: &str) -> Result<()> {

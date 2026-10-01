@@ -7,8 +7,12 @@
 //! "plaintext-once" contract.
 
 use std::sync::Arc;
+
+mod store_support;
+
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
+use store_support::Seed;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};

@@ -11,8 +11,12 @@ use tracing::warn;
 
 use crate::auth::{AuthenticatedPrincipal, Role};
 use crate::error::{NetcidrError, Result};
-use crate::ipam::models::{CreatePersonalAccessToken, PersonalAccessTokenSummary};
-use crate::ipam::store::IpamStore;
+use crate::ipam::models::{PersonalAccessToken, PersonalAccessTokenSummary};
+use crate::ipam::mutation::{
+    AuditFact, Change, DecideCtx, Decision, Handle, Mutation, ReadSet, Snapshot, SystemClock,
+    UuidIds,
+};
+use crate::ipam::store::{IpamStore, LockScope, Write};
 use crate::pat::{self, PatPepper};
 use crate::validation;
 
@@ -89,38 +93,23 @@ impl PatLifecycle {
         let name = validate_name(&request.name)?;
         let days = validate_expires_in_days(request.expires_in_days)?;
         let now = chrono::Utc::now();
-        let now_rfc3339 = now.to_rfc3339();
 
-        let active = self
-            .store
-            .pat_count_active_for_owner(&owner.tenant_id, &owner.subject, &now_rfc3339)
-            .await?;
-        if active >= self.max_pats_per_tenant {
-            return Err(NetcidrError::PatLimitExceeded {
-                count: active,
-                limit: self.max_pats_per_tenant,
-            });
-        }
-
+        // The secret is generated outside the unit; only its public prefix
+        // and peppered hash enter the decision and the store.
         let minted = pat::mint(self.pepper.as_ref());
-        let expires_at = (now + chrono::Duration::days(days as i64)).to_rfc3339();
-
-        let row = self
-            .store
-            .pat_create(&CreatePersonalAccessToken {
-                tenant_id: owner.tenant_id.clone(),
-                owner_sub: owner.subject.clone(),
-                owner_email: owner.email.clone(),
-                name,
-                prefix: minted.prefix,
-                token_hash: minted.hash.to_vec(),
-                role,
-                expires_at,
-            })
-            .await?;
-
+        let mutation = MintPat {
+            owner: owner.clone(),
+            name,
+            role,
+            prefix: minted.prefix,
+            token_hash: minted.hash.to_vec(),
+            now: now.to_rfc3339(),
+            expires_at: (now + chrono::Duration::days(days as i64)).to_rfc3339(),
+            limit: self.max_pats_per_tenant,
+        };
+        let summary = self.run(&owner.tenant_id, mutation).await?;
         Ok(MintedPat {
-            summary: row.into(),
+            summary,
             plaintext: minted.plaintext,
         })
     }
@@ -137,11 +126,25 @@ impl PatLifecycle {
 
     pub async fn revoke_for_owner(&self, owner: &PatOwner, id: &str) -> Result<()> {
         validation::validate_identifier(id)?;
-        let now = chrono::Utc::now().to_rfc3339();
-        self.store
-            .pat_revoke(&owner.tenant_id, &owner.subject, id, &now)
-            .await
-            .map(|_| ())
+        let mutation = RevokePat {
+            owner: owner.clone(),
+            id: id.to_string(),
+        };
+        self.run(&owner.tenant_id, mutation).await
+    }
+
+    /// Run a PAT Mutation as one transaction unit under its owner's scope.
+    async fn run<M: Mutation>(&self, tenant_id: &str, mutation: M) -> Result<M::Output> {
+        Ok(crate::ipam::mutation::execute(
+            self.store.as_ref(),
+            &SystemClock,
+            Arc::new(UuidIds),
+            tenant_id,
+            mutation,
+            None,
+        )
+        .await?
+        .into_inner())
     }
 
     /// Mint a PAT for the identity carried by `principal`. The lifecycle
@@ -295,5 +298,221 @@ fn validate_expires_in_days(expires_in_days: Option<u32>) -> Result<u32> {
             "expires_in_days must not exceed {MAX_EXPIRES_IN_DAYS}"
         ))),
         Some(n) => Ok(n),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Mutations under the PAT Owner's Lock Scope (ADR-0007)
+// ---------------------------------------------------------------------------
+
+fn owner_scope(owner: &PatOwner) -> LockScope {
+    LockScope::PatOwner {
+        tenant_id: owner.tenant_id.clone(),
+        owner_sub: owner.subject.clone(),
+    }
+}
+
+/// Mint a PAT unless the owner already holds `limit` active ones. Counting
+/// and inserting under the owner's scope keeps the limit across processes.
+struct MintPat {
+    owner: PatOwner,
+    name: String,
+    role: Role,
+    prefix: String,
+    token_hash: Vec<u8>,
+    now: String,
+    expires_at: String,
+    limit: u32,
+}
+
+impl Mutation for MintPat {
+    type Output = PersonalAccessTokenSummary;
+    type Reads = Handle<u64>;
+
+    fn scope(&self) -> LockScope {
+        owner_scope(&self.owner)
+    }
+
+    fn reads(&self, set: &mut ReadSet) -> Self::Reads {
+        set.active_pat_count(&self.owner.tenant_id, &self.owner.subject, &self.now)
+    }
+
+    fn decide(
+        self,
+        active: Self::Reads,
+        snapshot: &Snapshot,
+        cx: &DecideCtx,
+    ) -> Result<Decision<PersonalAccessTokenSummary>> {
+        let count = u32::try_from(*snapshot.get(active)?).unwrap_or(u32::MAX);
+        if count >= self.limit {
+            return Err(NetcidrError::PatLimitExceeded {
+                count,
+                limit: self.limit,
+            });
+        }
+        let row = PersonalAccessToken {
+            id: cx.new_id(),
+            tenant_id: self.owner.tenant_id,
+            owner_sub: self.owner.subject,
+            owner_email: self.owner.email,
+            name: self.name,
+            prefix: self.prefix,
+            token_hash: self.token_hash,
+            role: self.role,
+            created_at: self.now,
+            expires_at: self.expires_at,
+            last_used_at: None,
+            revoked_at: None,
+        };
+        let change = Change::new(
+            Write::InsertPat(row.clone()),
+            AuditFact {
+                action: "mint_pat",
+                entity_type: "personal_access_token",
+                entity_id: row.id.clone(),
+                details: Some(format!("role={}", row.role.as_str())),
+            },
+        );
+        Ok(Decision::new(row.into(), change))
+    }
+}
+
+/// Revoke one of the owner's PATs. A PAT owned by anyone else reads as
+/// missing (never revealing that it exists); revoking an already-revoked PAT
+/// changes nothing.
+struct RevokePat {
+    owner: PatOwner,
+    id: String,
+}
+
+impl Mutation for RevokePat {
+    type Output = ();
+    type Reads = Handle<Option<PersonalAccessToken>>;
+
+    fn scope(&self) -> LockScope {
+        owner_scope(&self.owner)
+    }
+
+    fn reads(&self, set: &mut ReadSet) -> Self::Reads {
+        set.pat(&self.owner.tenant_id, &self.owner.subject, &self.id)
+    }
+
+    fn decide(self, pat: Self::Reads, snapshot: &Snapshot, cx: &DecideCtx) -> Result<Decision<()>> {
+        let pat = snapshot
+            .get(pat)?
+            .as_ref()
+            .ok_or_else(|| NetcidrError::PatNotFound(self.id.clone()))?;
+        if pat.revoked_at.is_some() {
+            return Ok(Decision::unchanged(()));
+        }
+        let change = Change::new(
+            Write::RevokePat {
+                tenant_id: self.owner.tenant_id.clone(),
+                owner_sub: self.owner.subject.clone(),
+                id: self.id.clone(),
+                revoked_at: cx.now().to_rfc3339(),
+            },
+            AuditFact {
+                action: "revoke_pat",
+                entity_type: "personal_access_token",
+                entity_id: self.id.clone(),
+                details: None,
+            },
+        );
+        Ok(Decision::new((), change))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use chrono::{TimeZone, Utc};
+
+    use super::*;
+    use crate::audit_context::AuditContext;
+    use crate::ipam::store::Rows;
+
+    fn owner() -> PatOwner {
+        PatOwner {
+            tenant_id: "o@x".to_string(),
+            subject: "sub".to_string(),
+            email: "o@x".to_string(),
+        }
+    }
+
+    fn decide<M: Mutation>(m: M, rows: Vec<Rows>) -> Result<Decision<M::Output>> {
+        let now = Utc.with_ymd_and_hms(2026, 10, 1, 12, 0, 0).unwrap();
+        let cx = DecideCtx::new(now, AuditContext::default(), Arc::new(UuidIds));
+        let mut set = ReadSet::default();
+        let reads = m.reads(&mut set);
+        m.decide(reads, &Snapshot::new(rows), &cx)
+    }
+
+    fn mint(limit: u32) -> MintPat {
+        MintPat {
+            owner: owner(),
+            name: "ci".to_string(),
+            role: Role::Reader,
+            prefix: "ncdr_pat_abc".to_string(),
+            token_hash: vec![7; 32],
+            now: "2026-10-01T12:00:00+00:00".to_string(),
+            expires_at: "2026-12-30T12:00:00+00:00".to_string(),
+            limit,
+        }
+    }
+
+    #[test]
+    fn mint_is_refused_at_the_limit_and_allowed_below_it() {
+        let at_limit = decide(mint(2), vec![Rows::Count(2)]);
+        assert!(matches!(
+            at_limit,
+            Err(NetcidrError::PatLimitExceeded { count: 2, limit: 2 })
+        ));
+
+        let d = decide(mint(2), vec![Rows::Count(1)]).unwrap();
+        assert_eq!(d.output().prefix, "ncdr_pat_abc");
+        assert_eq!(d.output().role, Role::Reader);
+        assert_eq!(d.changes().len(), 1);
+    }
+
+    fn token(revoked_at: Option<&str>) -> PersonalAccessToken {
+        PersonalAccessToken {
+            id: "t1".to_string(),
+            tenant_id: "o@x".to_string(),
+            owner_sub: "sub".to_string(),
+            owner_email: "o@x".to_string(),
+            name: "ci".to_string(),
+            prefix: "ncdr_pat_abc".to_string(),
+            token_hash: vec![7; 32],
+            role: Role::Reader,
+            created_at: "2026-01-01T00:00:00+00:00".to_string(),
+            expires_at: "2027-01-01T00:00:00+00:00".to_string(),
+            last_used_at: None,
+            revoked_at: revoked_at.map(str::to_string),
+        }
+    }
+
+    fn revoke() -> RevokePat {
+        RevokePat {
+            owner: owner(),
+            id: "t1".to_string(),
+        }
+    }
+
+    #[test]
+    fn revoke_writes_once_and_hides_missing_tokens() {
+        let d = decide(revoke(), vec![Rows::Pat(Some(token(None)))]).unwrap();
+        assert_eq!(d.changes().len(), 1);
+
+        let again = decide(
+            revoke(),
+            vec![Rows::Pat(Some(token(Some("2026-09-01T00:00:00+00:00"))))],
+        )
+        .unwrap();
+        assert!(again.changes().is_empty());
+
+        let missing = decide(revoke(), vec![Rows::Pat(None)]);
+        assert!(matches!(missing, Err(NetcidrError::PatNotFound(_))));
     }
 }

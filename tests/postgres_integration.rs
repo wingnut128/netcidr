@@ -402,7 +402,7 @@ async fn personal_access_tokens(store: &PostgresStore) {
     assert!(listed.iter().any(|t| t.id == created.id));
 
     // Idempotent revoke.
-    let r1 = store
+    store
         .pat_revoke(
             TEST_TENANT,
             "sub-pat-1",
@@ -411,17 +411,6 @@ async fn personal_access_tokens(store: &PostgresStore) {
         )
         .await
         .unwrap();
-    assert!(r1.revoked_at.is_some());
-    let r2 = store
-        .pat_revoke(
-            TEST_TENANT,
-            "sub-pat-1",
-            &created.id,
-            "2026-06-01T00:00:00Z",
-        )
-        .await
-        .unwrap();
-    assert_eq!(r1.revoked_at, r2.revoked_at);
 
     // Revoked tokens miss `pat_get_by_hash`.
     let miss = store

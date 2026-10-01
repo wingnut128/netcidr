@@ -137,6 +137,23 @@ pub trait Seed {
 
     /// Delete a user row, without the platform-admin guards.
     async fn delete_user(&self, email: &str) -> netcidr::error::Result<()>;
+
+    /// Insert a PAT row (fresh id, `created_at` now), without the per-owner
+    /// limit.
+    async fn pat_create(
+        &self,
+        input: &netcidr::ipam::models::CreatePersonalAccessToken,
+    ) -> netcidr::error::Result<netcidr::ipam::models::PersonalAccessToken>;
+
+    /// Set `revoked_at` on an owner's PAT; `PatNotFound` if the owner has no
+    /// such PAT. Unlike the lifecycle, re-revoking overwrites `revoked_at`.
+    async fn pat_revoke(
+        &self,
+        tenant_id: &str,
+        owner_sub: &str,
+        id: &str,
+        revoked_at: &str,
+    ) -> netcidr::error::Result<()>;
 }
 
 impl<S: IpamStore + ?Sized> Seed for S {
@@ -198,6 +215,53 @@ impl<S: IpamStore + ?Sized> Seed for S {
             "local",
             vec![netcidr::ipam::store::Write::DeleteUser {
                 email: email.to_ascii_lowercase(),
+            }],
+        )
+        .await
+    }
+
+    async fn pat_create(
+        &self,
+        input: &netcidr::ipam::models::CreatePersonalAccessToken,
+    ) -> netcidr::error::Result<netcidr::ipam::models::PersonalAccessToken> {
+        let row = netcidr::ipam::models::PersonalAccessToken {
+            id: uuid::Uuid::new_v4().to_string(),
+            tenant_id: input.tenant_id.clone(),
+            owner_sub: input.owner_sub.clone(),
+            owner_email: input.owner_email.clone(),
+            name: input.name.clone(),
+            prefix: input.prefix.clone(),
+            token_hash: input.token_hash.clone(),
+            role: input.role,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            expires_at: input.expires_at.clone(),
+            last_used_at: None,
+            revoked_at: None,
+        };
+        commit_writes(
+            self,
+            &input.tenant_id,
+            vec![netcidr::ipam::store::Write::InsertPat(row.clone())],
+        )
+        .await?;
+        Ok(row)
+    }
+
+    async fn pat_revoke(
+        &self,
+        tenant_id: &str,
+        owner_sub: &str,
+        id: &str,
+        revoked_at: &str,
+    ) -> netcidr::error::Result<()> {
+        commit_writes(
+            self,
+            tenant_id,
+            vec![netcidr::ipam::store::Write::RevokePat {
+                tenant_id: tenant_id.to_string(),
+                owner_sub: owner_sub.to_string(),
+                id: id.to_string(),
+                revoked_at: revoked_at.to_string(),
             }],
         )
         .await
