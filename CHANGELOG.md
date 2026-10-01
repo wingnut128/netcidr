@@ -13,12 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `netcidr ipam load` restores a dump in one transaction: a failure partway through leaves the tenant empty instead of half-restored. Each restored cidr block and allocation is recorded in the audit log as `load` ([#483](https://github.com/wingnut128/netcidr/issues/483)).
 - `allocate_auto` with `count > 1` creates all of its allocations or none; previously a failure partway through left the earlier ones in place. Each allocation's audit row, and for idempotent requests the idempotency record, now commits in the same transaction as the allocation ([#482](https://github.com/wingnut128/netcidr/issues/482)).
 - Releasing an allocation that is already released no longer writes a `release` audit row, since nothing changes ([#482](https://github.com/wingnut128/netcidr/issues/482)).
 - Waiting longer than the store's lock timeout (5s) for a lock or a pooled connection now fails with a retryable **503 "storage busy, retry"** (`NetcidrError::StoreBusy`, logged at warn) instead of a 500. The SQLite and Postgres connection pools also give up after 5s rather than 30s ([#481](https://github.com/wingnut128/netcidr/issues/481)).
 
 ### Fixed
 
+- **Cross-process CIDR-block races.** Two processes could create overlapping cidr blocks in one tenant, and a block could be deleted while another process allocated into it. Creating a block now runs as one transaction under the tenant's Lock Scope, and deleting one under the block's scope ([#483](https://github.com/wingnut128/netcidr/issues/483)).
 - **Cross-process allocation race.** Two processes sharing a database (Lambda execution environments, or several `netcidr serve` instances) could both pass the overlap check and allocate the same or overlapping CIDRs, because the only lock was an in-process mutex. `allocate_specific`, `allocate_auto`, `update_allocation`, `release_allocation`, and expiry now each run as one transaction under the cidr block's Lock Scope, and the in-process mutex is gone ([#482](https://github.com/wingnut128/netcidr/issues/482)).
 - SQLite enforced foreign keys and waited on a locked database only on the one pooled connection that ran `initialize`; every connection in the pool now sets `foreign_keys=ON` and a 5s `busy_timeout` ([#481](https://github.com/wingnut128/netcidr/issues/481)).
 

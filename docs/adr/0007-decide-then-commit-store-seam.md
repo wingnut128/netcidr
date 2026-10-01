@@ -34,11 +34,18 @@ adapters.
    compile. One executor handles idempotency replay and recording, and
    builds the decide context (`now`, id generator, caller) from an injected
    clock and id source. The `*_idempotent` wrappers go away.
-3. **Exactly one Lock Scope per unit:** a cidr block (allocations, tags), a
-   tenant (cidr-block create/delete, `load`), the user directory (user
-   upsert/delete/seed), or a PAT owner (mint/revoke). One lock per unit
-   makes deadlock impossible by construction. Operations spanning scopes run
-   one unit per scope, as `batch_allocate` and `reap_expired` already do.
+3. **Exactly one Lock Scope per unit:** a cidr block (allocations, tags,
+   cidr-block delete), a tenant (cidr-block create, `load`), the user
+   directory (user upsert/delete/seed), or a PAT owner (mint/revoke). One
+   lock per unit makes deadlock impossible by construction. Operations
+   spanning scopes run one unit per scope, as `batch_allocate` and
+   `reap_expired` already do.
+   A scope is chosen by what its rule reads. Create checks overlap across
+   every block in the tenant, so it takes the tenant. Delete checks that the
+   block has no live allocations, which are written under the block's scope,
+   so it takes the block: under the tenant scope an allocation could commit
+   between the check and the delete. A delete can only free space, so it
+   needs nothing from the tenant scope.
 4. **Adapters persist and lock; they hold no rules.**
    - SQLite runs the whole unit synchronously in one `spawn_blocking` under
      `BEGIN IMMEDIATE`, with `busy_timeout` 5s on every pooled connection.
