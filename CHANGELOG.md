@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.1](https://github.com/wingnut128/netcidr/compare/v0.33.0...v0.33.1) - 2026-10-02
+
+### Other
+
+- mark 0.33.x as the current supported release in SECURITY.md ([#508](https://github.com/wingnut128/netcidr/pull/508))
+- allow editing .env templates with placeholder values only ([#506](https://github.com/wingnut128/netcidr/pull/506))
+
 ## [0.33.0](https://github.com/wingnut128/netcidr/compare/v0.32.0...v0.33.0) - 2026-10-01
 
 ### Added
