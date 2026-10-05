@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.1](https://github.com/wingnut128/netcidr/compare/v0.33.0...v0.33.1) - 2026-10-05
+
+### Other
+
+- ignore build-time braces advisory in dashboard audit ([#512](https://github.com/wingnut128/netcidr/pull/512))
+- mark 0.33.x as the current supported release in SECURITY.md ([#508](https://github.com/wingnut128/netcidr/pull/508))
+- allow editing .env templates with placeholder values only ([#506](https://github.com/wingnut128/netcidr/pull/506))
+
 ### CI
 
 - ignore GHSA-vfj7-8cjw-p6xm (braces, build-time only via vite-plugin-singlefile) in the dashboard audit until a patched release exists
