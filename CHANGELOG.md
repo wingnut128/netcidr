@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### CI
+
+- ignore GHSA-vfj7-8cjw-p6xm (braces, build-time only via vite-plugin-singlefile) in the dashboard audit until a patched release exists
+
 ## [0.33.0](https://github.com/wingnut128/netcidr/compare/v0.32.0...v0.33.0) - 2026-10-01
 
 ### Added

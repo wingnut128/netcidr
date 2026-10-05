@@ -93,7 +93,12 @@ jobs:
         # GHSA-qwww-vcr4-c8h2: react-router RSC-mode CSRF — only affects server
         # components mode; this dashboard is a client-side SPA and is not exposed.
         # No fix exists for react-router 7.x; remove the ignore once ≥8.3.0 ships.
-        run: bun audit --audit-level=high --ignore=GHSA-qwww-vcr4-c8h2
+        # GHSA-vfj7-8cjw-p6xm: braces stack exhaustion on deeply nested patterns,
+        # pulled in build-time only via vite-plugin-singlefile > micromatch. The
+        # patterns come from our own vite config, never user input, and nothing
+        # ships to the browser. No braces release past 3.0.3 exists yet; remove
+        # the ignore once a patched version lands.
+        run: bun audit --audit-level=high --ignore=GHSA-qwww-vcr4-c8h2 --ignore=GHSA-vfj7-8cjw-p6xm
       - name: Check lockfile for known-compromised packages
         working-directory: dashboard
         env:
