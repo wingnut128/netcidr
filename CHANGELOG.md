@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- update `rustls`, `rustls-webpki`, `webpki-roots`, `webpki-root-certs`, `quinn-proto` and `ctutils` to patched releases (RUSTSEC-2026-0338..0349, 0381..0383, 0385)
+- ignore RUSTSEC-2026-0367/0368/0369 (`zip`, build-time only via `utoipa-swagger-ui`) and RUSTSEC-2026-0387 (`crypto-bigint`, public-key JWT verification only) in `cargo audit` and `cargo deny` until upstream releases fixes
+
 ### CI
 
 - ignore GHSA-vfj7-8cjw-p6xm (braces, build-time only via vite-plugin-singlefile) in the dashboard audit until a patched release exists
