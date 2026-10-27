@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.3](https://github.com/wingnut128/netcidr/compare/v0.33.2...v0.33.3) - 2026-10-27
+
+### Other
+
+- *(deps)* bump actions/upload-artifact from 7.0.1 to 7.0.2 ([#521](https://github.com/wingnut128/netcidr/pull/521))
+- *(deps)* bump actions/download-artifact from 8.0.1 to 8.0.2 ([#523](https://github.com/wingnut128/netcidr/pull/523))
+- stop dispatching netcidr-deploy on release ([#533](https://github.com/wingnut128/netcidr/pull/533))
+- *(deps)* bump the cargo-minor-and-patch group across 1 directory with 11 updates ([#531](https://github.com/wingnut128/netcidr/pull/531))
+- *(deps)* bump the bun-minor-and-patch group across 1 directory with 6 updates ([#530](https://github.com/wingnut128/netcidr/pull/530))
+
 ## [0.33.2](https://github.com/wingnut128/netcidr/compare/v0.33.1...v0.33.2) - 2026-10-27
 
 ### Fixed
