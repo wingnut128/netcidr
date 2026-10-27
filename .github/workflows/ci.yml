@@ -88,17 +88,6 @@ jobs:
         run: cd dashboard && bun run test
       - name: Build dashboard
         run: cd dashboard && bun run build
-      - name: Audit dashboard npm deps
-        working-directory: dashboard
-        # GHSA-qwww-vcr4-c8h2: react-router RSC-mode CSRF — only affects server
-        # components mode; this dashboard is a client-side SPA and is not exposed.
-        # No fix exists for react-router 7.x; remove the ignore once ≥8.3.0 ships.
-        # GHSA-vfj7-8cjw-p6xm: braces stack exhaustion on deeply nested patterns,
-        # pulled in build-time only via vite-plugin-singlefile > micromatch. The
-        # patterns come from our own vite config, never user input, and nothing
-        # ships to the browser. No braces release past 3.0.3 exists yet; remove
-        # the ignore once a patched version lands.
-        run: bun audit --audit-level=high --ignore=GHSA-qwww-vcr4-c8h2 --ignore=GHSA-vfj7-8cjw-p6xm
       - name: Check lockfile for known-compromised packages
         working-directory: dashboard
         env:
@@ -120,17 +109,45 @@ jobs:
         env:
           NETCIDR_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
 
+  # Gates a PR only on advisories it introduces: the PR's tree is audited
+  # against its base and only new ids fail. A full-tree gate here froze
+  # every PR whenever an advisory landed against a dependency already on
+  # main, including the Dependabot PRs that fix it. Advisories already on
+  # main are tracked by security-audit.yml, which keeps a `security` issue
+  # open until main is clean.
   audit:
     name: Security Audit
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: github.event_name == 'pull_request' && needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          path: head
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
       - uses: taiki-e/install-action@dfd6a81ff1efc1c100332d760e0c9edfe2ae0a51 # cargo-audit
         with:
           tool: cargo-audit
-      - run: cargo audit
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - name: Fail on advisories this PR introduces
+        run: |
+          set -euo pipefail
+          # The PR's script audits both trees, so the policy is the same on
+          # each side; each tree's own ignore lists apply.
+          head/.github/scripts/audit-ids.sh base | sort -u > base.txt
+          head/.github/scripts/audit-ids.sh head | sort -u > head.txt
+          comm -12 base.txt head.txt | while read -r id; do
+            echo "::warning::$id is already on main (tracked by the security issue)"
+          done
+          new=$(comm -13 base.txt head.txt)
+          if [ -n "$new" ]; then
+            for id in $new; do echo "::error::$id introduced by this PR"; done
+            exit 1
+          fi
+          echo "No new advisories."
 
   ci-status:
     name: CI Status
