@@ -1,0 +1,13 @@
+# Accepted dashboard advisories, read by .github/scripts/audit-ids.sh.
+# One GHSA id per line, then the rationale. Remove an entry once the fix ships.
+
+# react-router RSC-mode CSRF: only affects server components mode; this
+# dashboard is a client-side SPA and is not exposed. No fix exists for
+# react-router 7.x; remove once >=8.3.0 ships.
+GHSA-qwww-vcr4-c8h2
+
+# braces stack exhaustion on deeply nested patterns, pulled in build-time only
+# via vite-plugin-singlefile > micromatch. The patterns come from our own vite
+# config, never user input, and nothing ships to the browser. No braces
+# release past 3.0.3 exists yet; remove once a patched version lands.
+GHSA-vfj7-8cjw-p6xm

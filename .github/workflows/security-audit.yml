@@ -1,0 +1,105 @@
+name: Security Audit (main)
+
+# Full-tree advisory scan of main, on every push and daily. This is where a
+# new advisory against an existing dependency surfaces: it opens a
+# `security` issue (one at a time), comments when the set of advisories
+# changes, and closes the issue once main is clean. It is deliberately not
+# a PR check; ci.yml's audit job gates PRs only on advisories they
+# introduce, so a fix can always merge.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: Full-tree audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: taiki-e/install-action@dfd6a81ff1efc1c100332d760e0c9edfe2ae0a51 # cargo-audit
+        with:
+          tool: cargo-audit
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Audit
+        id: audit
+        run: |
+          set -euo pipefail
+          if .github/scripts/audit-ids.sh . | sort -u > ids.txt; then
+            echo "status=ok" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=error" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open, update or close the security issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATUS: ${{ steps.audit.outputs.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="Security audit failing on main"
+          gh label create security --color B60205 \
+            --description "Security advisories" 2>/dev/null || true
+          existing=$(gh issue list --state open --label security \
+            --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
+
+          if [ "$STATUS" = ok ] && [ ! -s ids.txt ]; then
+            if [ -n "$existing" ]; then
+              gh issue close "$existing" --comment "Clean as of $GITHUB_SHA ($RUN_URL)."
+            fi
+            exit 0
+          fi
+
+          if [ "$STATUS" = ok ]; then
+            fingerprint=$(paste -sd ' ' ids.txt)
+          else
+            fingerprint="audit-error"
+          fi
+          {
+            echo "<!-- advisories: $fingerprint -->"
+            if [ "$STATUS" = ok ]; then
+              echo "\`main\` at $GITHUB_SHA has advisories that fail the audit policy:"
+              echo
+              while read -r id; do
+                case "$id" in
+                  RUSTSEC-*) echo "- [$id](https://rustsec.org/advisories/$id.html)" ;;
+                  GHSA-*) echo "- [$id](https://github.com/advisories/$id)" ;;
+                  *) echo "- $id" ;;
+                esac
+              done < ids.txt
+            else
+              echo "The audit of \`main\` at $GITHUB_SHA could not complete (a tool produced no usable output). Treat it as failing until it runs clean."
+            fi
+            echo
+            echo "Fix on main by bumping, or accept with a rationale in \`deny.toml\` + \`.cargo/audit.toml\` (Rust) or \`dashboard/.bun-audit-ignore\` (dashboard). Then merge the Release PR and deploy."
+            echo
+            echo "Run: $RUN_URL"
+          } > body.md
+
+          if [ -z "$existing" ]; then
+            gh issue create --title "$title" --label security --body-file body.md
+          else
+            previous=$(gh issue view "$existing" --json body --jq .body \
+              | sed -n 's/^<!-- advisories: \(.*\) -->$/\1/p')
+            gh issue edit "$existing" --body-file body.md
+            # Comment (and so notify) only when the set changes.
+            if [ "$previous" != "$fingerprint" ]; then
+              gh issue comment "$existing" --body "Advisories changed: $fingerprint ($RUN_URL)"
+            fi
+          fi
+          exit 1
