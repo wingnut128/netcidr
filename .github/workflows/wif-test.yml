@@ -1,0 +1,29 @@
+# TEMPORARY: one-off workload identity federation check for the Claude
+# Console wizard. Remove before merging.
+name: anthropic-wif-test
+on: pull_request
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  exchange:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Exchange GitHub OIDC token for a Claude API token
+        run: |
+          set -euo pipefail
+          jwt=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" | jq -r .value)
+          echo "::add-mask::$jwt"
+          # Print the subject so a rule mismatch is easy to diagnose.
+          cut -d. -f2 <<<"$jwt" | tr '_-' '/+' | base64 -d 2>/dev/null | jq -c '{sub, aud, repository, event_name}' || true
+          jq -n --arg jwt "$jwt" '{
+            grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            assertion: $jwt,
+            federation_rule_id: "fdrl_01LVPJ9ZiqMM92ceBdKg8V2n",
+            organization_id: "3b53f260-c718-44ba-ab7f-edadfbfa9fe7",
+            service_account_id: "svac_01YK8ZDsJLSx5kQtUadTdFnN",
+            workspace_id: "wrkspc_01PyswRVvemKRctLqiFXyXyC"
+          }' | curl -sS https://api.anthropic.com/v1/oauth/token \
+            -H "content-type: application/json" --data @- \
+            | jq 'with_entries(if (.key | test("token$")) then .value = "<redacted>" else . end)'
