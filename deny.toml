@@ -12,6 +12,13 @@ ignore = [
     # never private-key RSA decryption, which is the path Marvin targets.
     # No patched `rsa` release exists yet.
     "RUSTSEC-2023-0071",
+    # RUSTSEC-2026-0387 — timing variability in `crypto-bigint` 0.5. Transitive
+    # via jsonwebtoken → p256/p384 → elliptic-curve 0.13. Not reachable: we
+    # only accept RS256 (src/auth.rs rejects any other `alg` before
+    # verification), so the ECDSA code that uses crypto-bigint never runs.
+    # The fix needs elliptic-curve 0.14; jsonwebtoken 11.1.0 is the latest
+    # release and still pins 0.13. Drop this once jsonwebtoken moves.
+    "RUSTSEC-2026-0387",
 ]
 
 [licenses]

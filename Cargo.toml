@@ -52,8 +52,8 @@ sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio",
 lambda_http = { version = "1.2", optional = true }
 
 # OpenAPI/Swagger dependencies
-utoipa = { version = "5", features = ["axum_extras"], optional = true }
-utoipa-swagger-ui = { version = "9", features = ["axum"], optional = true }
+utoipa = { version = "6", features = ["axum_extras"], optional = true }
+utoipa-swagger-ui = { version = "10", features = ["axum"], optional = true }
 
 # OpenTelemetry / OTLP span export (opt-in, feature `otel`). HTTP/protobuf
 # transport over reqwest+rustls — no gRPC/tonic, no native deps. reqwest and
