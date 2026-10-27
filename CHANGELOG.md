@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.2](https://github.com/wingnut128/netcidr/compare/v0.33.1...v0.33.2) - 2026-10-27
+
+### Fixed
+
+- *(deps)* patch shipped TLS and runtime advisories, unblock CI ([#528](https://github.com/wingnut128/netcidr/pull/528))
+
 ## [0.33.1](https://github.com/wingnut128/netcidr/compare/v0.33.0...v0.33.1) - 2026-10-05
 
 ### Other
