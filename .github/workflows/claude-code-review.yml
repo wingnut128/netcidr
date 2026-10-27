@@ -36,11 +36,16 @@ jobs:
         id: claude-review
         uses: anthropics/claude-code-action@e4a6faad497d33dbc7144135c75e41f82f0bf6c0 # v1.0.255
         with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Workload identity federation: the job's GitHub OIDC token is
+          # exchanged for a short-lived Claude API token, so no credential is
+          # stored anywhere. These are identifiers, not secrets. The rule only
+          # accepts OIDC tokens from this repository.
+          anthropic_organization_id: 3b53f260-c718-44ba-ab7f-edadfbfa9fe7
+          anthropic_federation_rule_id: fdrl_01LVPJ9ZiqMM92ceBdKg8V2n
+          anthropic_service_account_id: svac_01YK8ZDsJLSx5kQtUadTdFnN
+          anthropic_workspace_id: wrkspc_01PyswRVvemKRctLqiFXyXyC
           # Dependabot PRs auto-merge without human review, so they get a
-          # Claude review too. Runs triggered by Dependabot read Dependabot
-          # secrets, not Actions secrets: CLAUDE_CODE_OAUTH_TOKEN must exist
-          # under Settings -> Secrets -> Dependabot as well.
+          # Claude review too.
           allowed_bots: "dependabot[bot]"
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
