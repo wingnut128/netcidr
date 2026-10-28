@@ -103,3 +103,70 @@ jobs:
             fi
           fi
           exit 1
+
+  image-updates:
+    # A manual run on a feature branch must not close main's tracking issue.
+    if: github.ref == 'refs/heads/main'
+    name: Chainguard image freshness
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Compare Dockerfile pins with the registry
+        run: |
+          # Retain the report on stale pins or lookup errors so tracking runs.
+          python3 .github/scripts/image_updates.py > image-updates.json || true
+          jq -e '.status | IN("current", "not-applicable", "stale", "error")' image-updates.json
+          {
+            echo '### Chainguard image freshness'
+            echo '```json'
+            cat image-updates.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Track stale pins and lookup failures
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="Chainguard image updates pending on main"
+          gh label create security --color B60205 --description "Security advisories" 2>/dev/null || true
+          existing=$(gh issue list --state open --label security --search "\"$title\" in:title" \
+            --json number,title --jq '.[] | select(.title == "Chainguard image updates pending on main") | .number' | head -1)
+          status=$(jq -r .status image-updates.json)
+          if [ "$status" = current ] || [ "$status" = not-applicable ]; then
+            if [ -n "$existing" ]; then
+              gh issue close "$existing" --comment "Dockerfile pins are current (or no longer use Chainguard) on main at $GITHUB_SHA. This confirms source freshness only; release and deployment must still be verified. $RUN_URL"
+            fi
+            exit 0
+          fi
+          fingerprint=$(sha256sum image-updates.json | cut -d ' ' -f1)
+          {
+            echo "<!-- image-updates: $fingerprint -->"
+            echo "Chainguard freshness audit on main: **$status**."
+            echo
+            echo '```json'
+            cat image-updates.json
+            echo '```'
+            echo
+            echo 'For stale pins, update the Dockerfile through a signed PR, verify both supported architectures and scan the rebuilt image. Check closed Dependabot PRs if updates have stalled. A newer digest is an available update, not proof of a CVE.'
+            echo
+            echo 'For lookup errors, restore the check; do not treat missing results as up to date. Keep remediation tracked through merge, release, and deployment.'
+            echo
+            echo "Commit: $GITHUB_SHA. Run: $RUN_URL"
+          } > image-updates.md
+          if [ -z "$existing" ]; then
+            gh issue create --title "$title" --label security --body-file image-updates.md
+          else
+            previous=$(gh issue view "$existing" --json body --jq .body | sed -n 's/^<!-- image-updates: \(.*\) -->$/\1/p')
+            gh issue edit "$existing" --body-file image-updates.md
+            if [ "$previous" != "$fingerprint" ]; then
+              gh issue comment "$existing" --body "Chainguard audit changed: $status. $RUN_URL"
+            fi
+          fi
+          exit 1
