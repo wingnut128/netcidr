@@ -185,7 +185,8 @@ where
         return None;
     }
 
-    // HTTP/protobuf exporter over reqwest+rustls. Endpoint and headers are read
+    // HTTP/protobuf exporter over blocking reqwest+rustls (the batch processor
+    // exports from a plain OS thread; see Cargo.toml). Endpoint and headers are read
     // from the standard `OTEL_EXPORTER_OTLP_*` env vars by the builder.
     let exporter = match SpanExporter::builder()
         .with_http()
@@ -470,6 +471,69 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("traceparent", "not-a-traceparent".parse().unwrap());
         assert_ne!(trace_id_after_remote_parent(&headers), inbound);
+    }
+
+    /// Regression for #547: the batch processor exports from its own OS
+    /// thread, outside any Tokio runtime, so an async HTTP client panicked
+    /// there ("no reactor running") and took the Lambda process down. Mirrors
+    /// the Lambda: a span ends inside a multi-threaded runtime, then a
+    /// synchronous `force_flush` must deliver it to the collector.
+    #[test]
+    fn batch_export_reaches_collector_from_inside_tokio() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::mpsc;
+        use std::time::Duration;
+        use tracing_subscriber::layer::SubscriberExt;
+
+        // Minimal OTLP/HTTP collector: report each request line, answer 200.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let mut buf = [0u8; 8192];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let request_line = String::from_utf8_lossy(&buf[..n])
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .to_string();
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                );
+                let _ = tx.send(request_line);
+            }
+        });
+
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let exporter = SpanExporter::builder()
+                .with_http()
+                .with_protocol(Protocol::HttpBinary)
+                .with_endpoint(format!("http://{addr}/v1/traces"))
+                .build()
+                .unwrap();
+            let provider = SdkTracerProvider::builder()
+                .with_batch_exporter(RedactingExporter::new(exporter))
+                .build();
+            let subscriber = tracing_subscriber::registry()
+                .with(OpenTelemetryLayer::new(provider.tracer("test")));
+            tracing::subscriber::with_default(subscriber, || {
+                tracing::info_span!("export-check").in_scope(|| {});
+            });
+
+            provider.force_flush().expect("force_flush failed");
+            let request_line = rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("collector received no export");
+            assert_eq!(request_line, "POST /v1/traces HTTP/1.1");
+            provider.shutdown().expect("shutdown failed");
+        });
     }
 
     #[test]

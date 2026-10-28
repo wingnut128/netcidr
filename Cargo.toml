@@ -57,10 +57,13 @@ utoipa-swagger-ui = { version = "10", features = ["axum"], optional = true }
 
 # OpenTelemetry / OTLP span export (opt-in, feature `otel`). HTTP/protobuf
 # transport over reqwest+rustls — no gRPC/tonic, no native deps. reqwest and
-# rustls are already in the tree.
+# rustls are already in the tree. The *blocking* reqwest client is required:
+# the SDK's BatchSpanProcessor exports from its own OS thread, outside any
+# Tokio runtime, where the async client panics (#547). Don't add
+# `reqwest-client` back: when both are enabled the crate prefers async.
 opentelemetry = { version = "0.33", optional = true }
 opentelemetry_sdk = { version = "0.33", features = ["rt-tokio"], optional = true }
-opentelemetry-otlp = { version = "0.33", default-features = false, features = ["http-proto", "reqwest-client", "reqwest-rustls", "tls-webpki-roots", "trace"], optional = true }
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["http-proto", "reqwest-blocking-client", "reqwest-rustls", "tls-webpki-roots", "trace"], optional = true }
 tracing-opentelemetry = { version = "0.34", optional = true }
 
 [dev-dependencies]
