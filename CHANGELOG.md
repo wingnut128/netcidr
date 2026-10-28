@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Refresh the pinned Chainguard runtime image to include the updated CA certificate bundle (20261020-r0), addressing CVE-2026-111943 (#527).
+
 ## [0.33.3](https://github.com/wingnut128/netcidr/compare/v0.33.2...v0.33.3) - 2026-10-27
 
 ### Other
