@@ -39,3 +39,33 @@ When using netcidr:
 - Use appropriate network segmentation
 - Keep the software updated to the latest version
 - Review and restrict access to log files if sensitive data may be logged
+
+## Security update automation
+
+The daily **Security Audit (main)** runs two independent checks: Rust/dashboard
+advisories and Chainguard image freshness. The latter compares each literal
+`cgr.dev/chainguard/` Dockerfile `FROM` tag's registry digest with its SHA-256 pin,
+including the multi-platform index. It reports stale pins even when vulnerability
+scanners find no advisories or Dependabot has stopped opening updates. Registry
+errors and invalid pins fail the check; they never count as current images.
+
+A dedicated security issue tracks stale Chainguard pins and lookup failures. It
+closes only when a subsequent audit sees current pins on main (or no remaining
+Chainguard images), not when a proposed fix passes PR checks. This issue tracks
+source freshness, not deployment status. The weekly **Image Scan** separately
+tracks fixable vulnerabilities and fails visibly when findings are present.
+
+Every advisory review must also check Chainguard freshness:
+
+```sh
+python3 .github/scripts/image_updates.py Dockerfile
+```
+
+This requires Docker Buildx and registry access, but no image build or running
+Docker daemon. Exit codes are 0 for current/not applicable, 1 for stale pins, and
+2 for errors. Keep Chainguard references literal and pinned as `tag@sha256:...`.
+For a new digest, verify linux/amd64 and linux/arm64, scan the rebuilt image, and
+merge a signed update PR. Confirm a release includes the changed Dockerfile and
+that the deployed image uses that release before declaring remediation complete.
+If Dependabot stalls, inspect its update logs and closed digest PRs; a successful
+Dependabot run alone does not prove the image pins are fresh.

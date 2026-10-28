@@ -1167,3 +1167,5 @@ Point `NETCIDR_DATABASE_URL` at a serverless Postgres (e.g. [Neon](https://neon.
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
+
+Security maintenance includes daily Chainguard image freshness checks independent of Dependabot. See [security update automation](SECURITY.md#security-update-automation) for local checks and remediation steps.

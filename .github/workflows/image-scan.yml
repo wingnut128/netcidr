@@ -110,7 +110,9 @@ jobs:
         env:
           SARIF_PATH: ${{ steps.grype.outputs.sarif }}
         run: |
-          if [ -f "$SARIF_PATH" ] && jq -e '[.runs[].results[]] | length > 0' "$SARIF_PATH" >/dev/null; then
+          set -euo pipefail
+          jq -e '(.runs | type == "array") and (.runs | length > 0) and all(.runs[]; .results | type == "array")' "$SARIF_PATH" >/dev/null
+          if jq -e '[.runs[].results[]] | length > 0' "$SARIF_PATH" >/dev/null; then
             echo "found=true" >> "$GITHUB_OUTPUT"
           else
             echo "found=false" >> "$GITHUB_OUTPUT"
@@ -131,3 +133,9 @@ jobs:
           else
             gh issue create --title "$TITLE" --body "$BODY" --label image-scan-drift
           fi
+
+      - name: Fail scheduled scan when vulnerabilities were found
+        if: github.event_name == 'schedule' && steps.grype-findings.outputs.found == 'true'
+        run: |
+          echo "::error::Scheduled image scan found fixable vulnerabilities. See the SARIF report and image-scan-drift issue."
+          exit 1
