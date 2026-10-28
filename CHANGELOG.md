@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### CI
+
+- release-plz PRs no longer rerun the full pipeline. A new `.github/scripts/version_only.py` recognises a diff that only bumps netcidr's own version in `Cargo.toml`/`Cargo.lock` (plus Markdown), so CI skips Format, Lint & Test and the audit (the required `CI Status` still passes) and the PR image scan is skipped. The check compares file contents, not branch names, so a release PR that also changes a dependency still runs everything; the published release is still scanned and attested.
+
 ## [0.34.1](https://github.com/wingnut128/netcidr/compare/v0.34.0...v0.34.1) - 2026-10-28
 
 ### Fixed

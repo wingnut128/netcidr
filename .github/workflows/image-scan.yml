@@ -17,8 +17,34 @@ permissions:
   contents: read
 
 jobs:
+  # A release-plz PR only bumps netcidr's own version in Cargo.lock; the
+  # image it describes was already scanned on main and is scanned again
+  # (and attested) when the release is published.
+  changes:
+    name: Detect image changes
+    runs-on: ubuntu-latest
+    outputs:
+      scan: ${{ steps.filter.outputs.scan }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+      - name: Skip version-only PRs
+        id: filter
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ] &&
+             python3 .github/scripts/version_only.py "${{ github.event.pull_request.base.sha }}" "$GITHUB_SHA"; then
+            echo "scan=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "scan=true" >> "$GITHUB_OUTPUT"
+          fi
+
   scan:
     name: Build + Grype + SBOM
+    needs: changes
+    if: needs.changes.outputs.scan == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
