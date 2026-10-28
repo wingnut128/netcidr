@@ -15,6 +15,9 @@ import subprocess
 import sys
 
 PACKAGE = 'netcidr'
+# Regular files, or absent on one side (added/deleted). Symlinks (120000) and
+# submodules (160000) never count as version-only.
+REGULAR_MODES = {'000000', '100644', '100755'}
 VERSION_LINE = re.compile(r'^version\s*=\s*"[^"]*"\s*$')
 
 
@@ -65,6 +68,26 @@ def is_version_only(changes):
     return True
 
 
+def changed_paths(base, head):
+    """Changed paths, or None if any entry isn't a regular file.
+
+    Rename detection is off so a rename appears as a deletion plus an
+    addition: otherwise `src/main.rs -> notes.md` would list only the
+    Markdown path. NUL-separated so unusual file names survive intact.
+    """
+    raw = subprocess.run(['git', 'diff', '--raw', '--no-renames', '-z', base, head],
+                         capture_output=True, text=True, check=True).stdout
+    fields = raw.split('\0')
+    paths = []
+    # Each entry is ":<old mode> <new mode> <old sha> <new sha> <status>" then the path.
+    for meta, path in zip(fields[0::2], fields[1::2]):
+        old_mode, new_mode = meta.lstrip(':').split()[:2]
+        if old_mode not in REGULAR_MODES or new_mode not in REGULAR_MODES:
+            return None
+        paths.append(path)
+    return paths
+
+
 def show(rev, path):
     result = subprocess.run(['git', 'show', f'{rev}:{path}'], capture_output=True, text=True)
     return result.stdout if result.returncode == 0 else None
@@ -76,11 +99,13 @@ def main(argv):
         return 2
     base, head = argv[1], argv[2]
     try:
-        names = subprocess.run(['git', 'diff', '--name-only', base, head],
-                               capture_output=True, text=True, check=True).stdout.split()
+        names = changed_paths(base, head)
     except subprocess.CalledProcessError as error:
         print(f'git diff failed: {error.stderr.strip()}', file=sys.stderr)
         return 2
+    if names is None:
+        print('not version-only: non-regular file changed')
+        return 1
     changes = {path: (show(base, path), show(head, path)) for path in names}
     if is_version_only(changes):
         print(f'version-only: {", ".join(names)}')
