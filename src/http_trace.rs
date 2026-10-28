@@ -9,8 +9,10 @@
 //! - span name `{METHOD} {route}` via `otel.name`, using the matched route
 //!   template (`/ipam/cidr-blocks/{id}`), never the raw path, so names stay
 //!   low-cardinality; just `{METHOD}` when no route matched;
-//! - `otel.kind = server`, `http.request.method`, `http.route`, `url.path`
-//!   (path only: the query string is not recorded);
+//! - `otel.kind = server`, `http.request.method`, `http.route`. The raw path
+//!   and query string are not recorded: path parameters include free-form
+//!   user text (`find-resource/{resource_id}`) and unmatched paths are
+//!   whatever the client sent;
 //! - `http.response.status_code`, and `otel.status_code = error` on 5xx
 //!   (4xx is the client's fault and leaves the status unset, per semconv).
 //!
@@ -47,7 +49,6 @@ pub fn make_span<B>(req: &Request<B>) -> Span {
         otel.status_code = field::Empty,
         http.request.method = %method,
         http.route = route,
-        url.path = %req.uri().path(),
         http.response.status_code = field::Empty,
     );
 
@@ -176,13 +177,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn nested_route_span_uses_full_template_not_raw_path() {
+    async fn nested_route_span_uses_full_template_and_omits_raw_path() {
         let f = request_span("/ipam/things/42?secret=x").await;
         assert_eq!(f["otel.name"], "GET /ipam/things/{id}");
         assert_eq!(f["otel.kind"], "server");
         assert_eq!(f["http.request.method"], "GET");
         assert_eq!(f["http.route"], "/ipam/things/{id}");
-        assert_eq!(f["url.path"], "/ipam/things/42");
+        assert!(!f.contains_key("url.path"));
+        assert!(
+            f.values()
+                .all(|v| !v.contains("42") && !v.contains("secret"))
+        );
         assert_eq!(f["http.response.status_code"], "200");
         assert!(!f.contains_key("otel.status_code"));
     }

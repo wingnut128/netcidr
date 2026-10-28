@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- *(telemetry)* HTTP requests now produce a usable OpenTelemetry server span. tower-http's default `TraceLayer` span was created at DEBUG under the `tower_http` target, so the Lambda's `info,tower_http=warn` filter dropped it and each handler's `#[instrument]` span became its own root trace. The request span is now INFO under netcidr's target, named `{METHOD} {route}` from the matched route template, and follows the OTel HTTP server semantic conventions (`otel.kind=server`, `http.request.method`, `http.route`, `url.path` without the query string, `http.response.status_code`, error status on 5xx). At the default `info` level, `netcidr serve` now also logs one span-close line per request (#543).
+- *(telemetry)* HTTP requests now produce a usable OpenTelemetry server span. tower-http's default `TraceLayer` span was created at DEBUG under the `tower_http` target, so the Lambda's `info,tower_http=warn` filter dropped it and each handler's `#[instrument]` span became its own root trace. The request span is now INFO under netcidr's target, named `{METHOD} {route}` from the matched route template, and follows the OTel HTTP server semantic conventions (`otel.kind=server`, `http.request.method`, `http.route`, `http.response.status_code`; the raw path and query string are not recorded, error status on 5xx). At the default `info` level, `netcidr serve` now also logs one span-close line per request (#543).
 
 ### Added
 

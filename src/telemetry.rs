@@ -65,7 +65,6 @@ pub const SPAN_ATTR_ALLOWLIST: &[&str] = &[
     "http.route",
     "http.request.method",
     "http.response.status_code",
-    "url.path",
     "netcidr.tenant_id",
     "netcidr.role",
 ];
@@ -325,7 +324,6 @@ mod tests {
             "http.route",
             "http.request.method",
             "http.response.status_code",
-            "url.path",
             "netcidr.tenant_id",
             "netcidr.role",
             "pat_id", // a token *id*, not the secret — must survive
