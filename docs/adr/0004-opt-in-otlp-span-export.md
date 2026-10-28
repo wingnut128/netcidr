@@ -88,3 +88,21 @@ and without leaking credentials/PII into the exported spans.
   (the redaction guarantees safety today; enrichment is additive).
 - Metrics export, logs-over-OTLP, deployment-side Honeycomb config in
   `netcidr-deploy`.
+
+## Amendment (2026-10-28): request spans and inbound trace context (#543)
+
+- The HTTP request span is built by `src/http_trace.rs` instead of tower-http's
+  default (DEBUG, `tower_http` target, dropped by `info,tower_http=warn`). It
+  follows the OTel HTTP server semantic conventions and is named from the
+  matched route template, keeping span names low-cardinality.
+- The allowlist's HTTP keys move to the current semconv names
+  (`http.request.method`, `http.response.status_code`). The raw path and
+  query string are deliberately not recorded: path parameters include
+  free-form user text (`find-resource/{resource_id}`), IP addresses, and
+  arbitrary client input on unmatched paths. `http.route` carries the
+  grouping.
+- When export is configured, the W3C `TraceContextPropagator` is registered
+  and inbound `traceparent` parents the request span. Sampling stays
+  parent-based, so a caller can opt its own requests out of tracing with an
+  unsampled `traceparent`; it cannot affect anyone else's.
+
