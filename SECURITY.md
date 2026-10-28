@@ -40,6 +40,31 @@ When using netcidr:
 - Keep the software updated to the latest version
 - Review and restrict access to log files if sensitive data may be logged
 
+## Telemetry and data sent off-host
+
+OpenTelemetry trace export is opt-in: it needs a binary built with the `otel`
+feature **and** `OTEL_EXPORTER_OTLP_ENDPOINT` set at runtime. Without both, no
+spans leave the process.
+
+When export is on:
+
+- A redacting exporter strips any span attribute keyed like PII or a
+  credential (`*email`, `sub`, `*token*`, `*secret*`, `*password*`,
+  authorization/bearer, `database_url`, ...) before spans are sent. Request
+  spans record the route template (e.g. `/ipam/cidr-blocks/{id}`), never the
+  raw path or query string. See
+  [ADR-0004](docs/adr/0004-opt-in-otlp-span-export.md).
+- An inbound W3C `traceparent` header continues the caller's trace. Sampling
+  is parent-based, so a caller can opt its own requests out of tracing; it
+  cannot affect other callers' traces.
+- The collector credential (e.g. `OTEL_EXPORTER_OTLP_HEADERS` carrying a
+  Honeycomb ingest key) is an environment variable: restrict who can read the
+  process environment or function configuration, and rotate it like any other
+  secret.
+
+Report a field that should have been redacted but was exported as a
+vulnerability, using the process above.
+
 ## Security update automation
 
 The daily **Security Audit (main)** runs two independent checks: Rust/dashboard

@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - *(telemetry)* With `--features otel` and OTLP export configured, the W3C trace-context propagator is registered and request spans continue an inbound `traceparent`/`tracestate`, so a client's trace and the server's work can join into one trace (#543).
 
+### Documentation
+
+- *(security)* SECURITY.md now describes what OpenTelemetry export sends off-host, the redaction guarantee, inbound `traceparent` handling, and how to protect the collector credential.
+
 ## [0.33.5](https://github.com/wingnut128/netcidr/compare/v0.33.4...v0.33.5) - 2026-10-28
 
 ### Other
