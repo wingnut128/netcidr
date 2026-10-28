@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- *(telemetry)* OTLP export no longer crashes the process. The exporter used reqwest's async client, but the OpenTelemetry batch processor exports from its own OS thread outside any Tokio runtime, so the first export panicked ("no reactor running"). On Lambda that exited the process and returned 502 for requests that exported spans, as soon as export was enabled in v0.34.0. The exporter now uses the blocking reqwest client, and a regression test exports to a local collector from inside a Tokio runtime (#547).
+
 ## [0.34.0](https://github.com/wingnut128/netcidr/compare/v0.33.5...v0.34.0) - 2026-10-28
 
 ### Added

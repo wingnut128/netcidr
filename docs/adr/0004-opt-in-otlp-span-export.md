@@ -23,7 +23,7 @@ and without leaking credentials/PII into the exported spans.
    default build pulls none of the OTel crates.
 
 2. **HTTP/protobuf transport over reqwest+rustls — no gRPC/tonic.**
-   `opentelemetry-otlp` is configured with `http-proto` + `reqwest-client` +
+   `opentelemetry-otlp` is configured with `http-proto` + `reqwest-blocking-client` +
    `reqwest-rustls-webpki-roots` (`default-features = false`). reqwest and
    rustls are already in the tree. We deliberately avoid the `grpc-tonic`
    transport (no native deps, smaller surface, simpler in Lambda). Note: the
@@ -106,3 +106,15 @@ and without leaking credentials/PII into the exported spans.
   parent-based, so a caller can opt its own requests out of tracing with an
   unsampled `traceparent`; it cannot affect anyone else's.
 
+## Amendment (2026-10-28): blocking HTTP client (#547)
+
+`reqwest-client` (async) was the wrong client. The SDK's stable
+`BatchSpanProcessor` exports from its own OS thread, outside any Tokio
+runtime, so the async client panicked on the first export ("no reactor
+running"). On Lambda, the per-invocation `force_flush()` turned that into a
+process exit and a 502 on requests that exported spans. It went unnoticed
+because export was first enabled against a real collector in v0.34.0. The
+exporter now uses `reqwest-blocking-client`, the upstream default for this
+processor (the crate builds the blocking client on its own thread, so
+creating it under Tokio is safe). A regression test exports a span to a
+local OTLP/HTTP listener from inside a multi-threaded runtime.
