@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.5](https://github.com/wingnut128/netcidr/compare/v0.33.4...v0.33.5) - 2026-10-28
+
+### Other
+
+- independently audit Chainguard image freshness ([#541](https://github.com/wingnut128/netcidr/pull/541))
+
 ## [0.33.4](https://github.com/wingnut128/netcidr/compare/v0.33.3...v0.33.4) - 2026-10-28
 
 ### Fixed
