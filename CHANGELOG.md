@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- *(security)* SECURITY.md now describes what OpenTelemetry export sends off-host, the redaction guarantee, inbound `traceparent` handling, and how to protect the collector credential.
+- *(security)* SECURITY.md now describes what OpenTelemetry export sends off-host, the redaction guarantee, inbound `traceparent` handling, and how to protect the collector credential. Supported versions move to 0.34.x and 0.33.x for the 0.34.0 release.
 
 ## [0.33.5](https://github.com/wingnut128/netcidr/compare/v0.33.4...v0.33.5) - 2026-10-28
 
