@@ -1130,7 +1130,9 @@ netcidr serve   # binary built with --features otel
 
 Transport is HTTP/protobuf over reqwest + rustls (no gRPC/tonic, no native deps). `netcidr serve` uses a batch exporter (flushed on graceful shutdown); the Lambda binary uses a batch exporter with a per-invocation `force_flush()` so the frozen execution environment never loses buffered spans.
 
-**Privacy:** a fixed PII allowlist is **enforced at the export boundary** — a redacting exporter strips any attribute keyed like a credential or PII (`*email`, `sub`, `*token*`, `*secret*`, `database_url`, bearer/authorization, …) before spans leave the process. Email, OIDC sub, bearer tokens, PAT secrets, and `DATABASE_URL` are **never** exported, even though some spans record them for local CloudWatch logs. Exported request attributes are limited to `http.route`, `http.method`, `http.status_code`, `netcidr.tenant_id`, and `netcidr.role`. See [ADR-0004](docs/adr/0004-opt-in-otlp-span-export.md).
+**Privacy:** a fixed PII allowlist is **enforced at the export boundary** — a redacting exporter strips any attribute keyed like a credential or PII (`*email`, `sub`, `*token*`, `*secret*`, `database_url`, bearer/authorization, …) before spans leave the process. Email, OIDC sub, bearer tokens, PAT secrets, and `DATABASE_URL` are **never** exported, even though some spans record them for local CloudWatch logs. Exported request attributes are limited to `http.route`, `http.request.method`, `http.response.status_code`, `url.path` (never the query string), `netcidr.tenant_id`, and `netcidr.role`. See [ADR-0004](docs/adr/0004-opt-in-otlp-span-export.md).
+
+**Request spans and trace context:** every HTTP request gets one server span named after its route template (e.g. `GET /ipam/cidr-blocks/{id}`, or just the method when no route matched), with 5xx responses marked as errors. An inbound W3C `traceparent` header continues the caller's trace; because sampling is parent-based, a caller's sampled flag decides whether its own request is recorded.
 
 ## AWS Lambda deployment
 

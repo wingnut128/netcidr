@@ -593,7 +593,11 @@ pub fn create_router(config: RouterConfig) -> Router {
 
     let router = router
         .layer(Extension(config_ext))
-        .layer(TraceLayer::new_for_http())
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(crate::http_trace::make_span)
+                .on_response(crate::http_trace::on_response),
+        )
         .layer(RequestBodyLimitLayer::new(config.server.max_body_size))
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,

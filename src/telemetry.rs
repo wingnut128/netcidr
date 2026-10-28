@@ -20,10 +20,21 @@
 //! - `OTEL_SERVICE_NAME`           — service name (default `netcidr`).
 //! - `OTEL_TRACES_SAMPLER_ARG`     — parent-based ratio sampler arg (default `1.0`).
 //!
+//! ## Inbound trace context
+//!
+//! When export is configured, the W3C `TraceContextPropagator` is registered
+//! globally and each HTTP request span continues an inbound `traceparent`
+//! ([`set_remote_parent`]). The sampler is parent-based, so a caller's sampled
+//! flag decides whether its request is recorded: a client sending
+//! `...-00` can opt its own requests out of tracing. That only hides the
+//! caller's own traffic, and lets netcidr's CLI/MCP clients join one trace
+//! with the server.
+//!
 //! ## PII allowlist — enforced, not just documented
 //!
-//! Span attributes are restricted to a fixed allowlist (`http.route`,
-//! `http.method`, `http.status_code`, `netcidr.tenant_id`, `netcidr.role`).
+//! Span attributes are restricted to a fixed allowlist (see
+//! [`SPAN_ATTR_ALLOWLIST`]: HTTP semconv keys plus `netcidr.tenant_id` and
+//! `netcidr.role`).
 //! Because the `tracing`→OTel bridge exports *every* field recorded on a span,
 //! the allowlist is enforced at the export boundary by [`RedactingExporter`],
 //! which strips any attribute whose key looks like PII or a credential
@@ -31,14 +42,17 @@
 //! leaves the process. Email/sub/bearer/PAT-secret/`DATABASE_URL` are NEVER
 //! exported, even if some `#[instrument]` records them for local CloudWatch logs.
 
+use axum::http::HeaderMap;
 use opentelemetry::KeyValue;
-use opentelemetry::trace::TracerProvider as _;
+use opentelemetry::propagation::Extractor;
+use opentelemetry::trace::{TraceContextExt as _, TracerProvider as _};
 use opentelemetry_otlp::{Protocol, SpanExporter, WithExportConfig};
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::error::OTelSdkResult;
+use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::{Sampler, SdkTracerProvider, SpanData};
 use tracing::Subscriber;
-use tracing_opentelemetry::OpenTelemetryLayer;
+use tracing_opentelemetry::{OpenTelemetryLayer, OpenTelemetrySpanExt as _};
 use tracing_subscriber::registry::LookupSpan;
 
 /// Env var that gates activation. Set it to enable OTLP export.
@@ -49,8 +63,9 @@ const ENABLE_ENV: &str = "OTEL_EXPORTER_OTLP_ENDPOINT";
 /// than allow-by-list when fields can be added anywhere a span is created).
 pub const SPAN_ATTR_ALLOWLIST: &[&str] = &[
     "http.route",
-    "http.method",
-    "http.status_code",
+    "http.request.method",
+    "http.response.status_code",
+    "url.path",
     "netcidr.tenant_id",
     "netcidr.role",
 ];
@@ -201,10 +216,39 @@ where
     let tracer = provider.tracer(service_name(env));
     let layer = OpenTelemetryLayer::new(tracer);
 
-    // Make the provider global so context propagation / nested spans work.
+    // Make the provider global so context propagation / nested spans work,
+    // and accept W3C `traceparent`/`tracestate` on inbound requests.
     opentelemetry::global::set_tracer_provider(provider.clone());
+    opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
 
     Some((layer, OtelGuard { provider }))
+}
+
+/// Reads propagation headers (`traceparent`, `tracestate`) from an HTTP
+/// request. Non-UTF-8 values are treated as absent.
+struct HeaderExtractor<'a>(&'a HeaderMap);
+
+impl Extractor for HeaderExtractor<'_> {
+    fn get(&self, key: &str) -> Option<&str> {
+        self.0.get(key).and_then(|v| v.to_str().ok())
+    }
+
+    fn keys(&self) -> Vec<&str> {
+        self.0.keys().map(|k| k.as_str()).collect()
+    }
+}
+
+/// Parent `span` on the remote trace carried by `headers`, if any, using the
+/// global propagator. A no-op when the headers carry no valid trace context,
+/// when export isn't configured (the default global propagator extracts
+/// nothing), or when no OTel layer is attached.
+pub fn set_remote_parent(span: &tracing::Span, headers: &HeaderMap) {
+    let cx =
+        opentelemetry::global::get_text_map_propagator(|p| p.extract(&HeaderExtractor(headers)));
+    if cx.span().span_context().is_valid() {
+        // Err only means no OTel layer is attached; nothing to parent.
+        let _ = span.set_parent(cx);
+    }
 }
 
 /// A [`SpanExporter`] decorator that strips PII/credential-keyed attributes
@@ -279,8 +323,9 @@ mod tests {
     fn safe_keys_are_not_flagged() {
         for k in [
             "http.route",
-            "http.method",
-            "http.status_code",
+            "http.request.method",
+            "http.response.status_code",
+            "url.path",
             "netcidr.tenant_id",
             "netcidr.role",
             "pat_id", // a token *id*, not the secret — must survive
@@ -382,6 +427,51 @@ mod tests {
         // Drop the guard to shut the pipeline down promptly.
         drop(layer);
         println!("otel pipeline init took {elapsed:?}");
+    }
+
+    const INBOUND_TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
+
+    /// Creates a span under an OTel layer (no exporter), applies
+    /// [`set_remote_parent`] with `headers`, and returns the span's trace id.
+    fn trace_id_after_remote_parent(headers: &HeaderMap) -> opentelemetry::trace::TraceId {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        // Global, but every test installs the same propagator.
+        opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
+        let provider = SdkTracerProvider::builder().build();
+        let subscriber =
+            tracing_subscriber::registry().with(OpenTelemetryLayer::new(provider.tracer("test")));
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let span = tracing::info_span!("http.request");
+        set_remote_parent(&span, headers);
+        span.context().span().span_context().trace_id()
+    }
+
+    #[test]
+    fn inbound_traceparent_parents_the_span() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "traceparent",
+            format!("00-{INBOUND_TRACE_ID}-00f067aa0ba902b7-01")
+                .parse()
+                .unwrap(),
+        );
+        let trace_id = trace_id_after_remote_parent(&headers);
+        assert_eq!(
+            trace_id,
+            opentelemetry::trace::TraceId::from_hex(INBOUND_TRACE_ID).unwrap()
+        );
+    }
+
+    #[test]
+    fn missing_or_malformed_traceparent_starts_a_new_trace() {
+        let inbound = opentelemetry::trace::TraceId::from_hex(INBOUND_TRACE_ID).unwrap();
+        assert_ne!(trace_id_after_remote_parent(&HeaderMap::new()), inbound);
+
+        let mut headers = HeaderMap::new();
+        headers.insert("traceparent", "not-a-traceparent".parse().unwrap());
+        assert_ne!(trace_id_after_remote_parent(&headers), inbound);
     }
 
     #[test]
