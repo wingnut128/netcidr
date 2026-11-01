@@ -34,7 +34,7 @@ jobs:
 
       - name: Run Claude Code Review
         id: claude-review
-        uses: anthropics/claude-code-action@e4a6faad497d33dbc7144135c75e41f82f0bf6c0 # v1.0.255
+        uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1.0.262
         with:
           # Workload identity federation: the job's GitHub OIDC token is
           # exchanged for a short-lived Claude API token, so no credential is
