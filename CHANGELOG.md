@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.34.2](https://github.com/wingnut128/netcidr/compare/v0.34.1...v0.34.2) - 2026-11-02
+
+### Other
+
+- Merge pull request #555 from wingnut128/dependabot/cargo/serde-saphyr-2.0.0
+- *(deps)* bump docker/login-action from 4.6.0 to 4.7.0 ([#560](https://github.com/wingnut128/netcidr/pull/560))
+- *(deps)* bump the codeql-action group with 3 updates ([#557](https://github.com/wingnut128/netcidr/pull/557))
+- *(deps)* bump anthropics/claude-code-action from 1.0.255 to 1.0.262 ([#558](https://github.com/wingnut128/netcidr/pull/558))
+- *(deps)* bump release-plz/action from 0.5.139 to 0.5.146 ([#559](https://github.com/wingnut128/netcidr/pull/559))
+- *(deps)* bump the cargo-minor-and-patch group with 4 updates ([#553](https://github.com/wingnut128/netcidr/pull/553))
+- *(deps)* bump base64 from 0.22.1 to 0.23.1 ([#554](https://github.com/wingnut128/netcidr/pull/554))
+- *(deps-dev)* bump vite ([#556](https://github.com/wingnut128/netcidr/pull/556))
+- *(deps)* bump serde-saphyr from 1.3.0 to 2.0.0
+- skip the full pipeline for version-only release PRs ([#550](https://github.com/wingnut128/netcidr/pull/550))
+
 ### CI
 
 - release-plz PRs no longer rerun the full pipeline. A new `.github/scripts/version_only.py` recognises a diff that only bumps netcidr's own version in `Cargo.toml`/`Cargo.lock` (plus Markdown), so CI skips Format, Lint & Test and the audit (the required `CI Status` still passes) and the PR image scan is skipped. The check compares file contents, not branch names, so a release PR that also changes a dependency still runs everything; the published release is still scanned and attested.
