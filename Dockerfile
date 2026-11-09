@@ -78,7 +78,7 @@ RUN touch src/main.rs && \
 # guarantees reproducibility. Chainguard's `static` image is not versioned
 # beyond `:latest` / `:latest-glibc`, so `:latest` is the recommended tag per
 # their docs. Dependabot's docker ecosystem refreshes the digest daily (.github/dependabot.yml).
-FROM cgr.dev/chainguard/static:latest@sha256:9e2306b457ff71ce370043dc68c7b52bb1e6622c1c6c6714edbed57496f3116e
+FROM cgr.dev/chainguard/static:latest@sha256:fc42af33e643f20d08baf03cddcc1c02ba57052dfb02edb0d79f3fc47bcea8d9
 
 COPY --from=builder /app/target/release/netcidr /usr/local/bin/netcidr
 

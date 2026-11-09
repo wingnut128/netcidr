@@ -1,11 +1,11 @@
 /// Public so upgrade-rehearsal tests can rebuild a previous release's
 /// schema by applying a prefix of the migration list.
 pub mod migrations;
+mod pool;
 
 use async_trait::async_trait;
 use chrono::Utc;
 use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::path::Path;
 use std::time::Duration;
@@ -15,7 +15,9 @@ use crate::ipam::models::*;
 use crate::ipam::read_total_hosts;
 use crate::ipam::store::{DEFAULT_LOCK_TIMEOUT, IpamStore, Loaded, Read, Rows, TxUnit, Write};
 
-type ConnPool = Pool<SqliteConnectionManager>;
+use pool::SqliteManager;
+
+type ConnPool = Pool<SqliteManager>;
 
 pub struct SqliteStore {
     pool: ConnPool,
@@ -43,7 +45,7 @@ impl SqliteStore {
             })?;
         }
 
-        let pool = build_pool(SqliteConnectionManager::file(db_path), 8, lock_timeout)?;
+        let pool = build_pool(SqliteManager::file(db_path, lock_timeout), 8, lock_timeout)?;
 
         // Restrict the database file to owner-only (0600). It holds all IPAM
         // data (CIDR blocks, allocations, hostnames, audit log); the default
@@ -72,11 +74,11 @@ impl SqliteStore {
     /// Like [`in_memory`](Self::in_memory), with a custom lock timeout.
     pub fn in_memory_with_lock_timeout(lock_timeout: Duration) -> Result<Self> {
         // A single connection: each in-memory connection is its own database.
-        let pool = build_pool(SqliteConnectionManager::memory(), 1, lock_timeout)?;
+        let pool = build_pool(SqliteManager::memory(lock_timeout), 1, lock_timeout)?;
         Ok(Self { pool })
     }
 
-    fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
+    fn conn(&self) -> Result<r2d2::PooledConnection<SqliteManager>> {
         // r2d2 only fails a checkout after waiting `connection_timeout`
         // (the lock timeout) for a free connection.
         self.pool.get().map_err(|_| NetcidrError::StoreBusy)
@@ -205,15 +207,7 @@ fn row_to_hostname_history(
 /// `lock_timeout` on a locked database and enforces foreign keys. Both are
 /// per-connection settings in SQLite, so they belong in the pool's init
 /// hook rather than a one-off statement.
-fn build_pool(
-    manager: SqliteConnectionManager,
-    max_size: u32,
-    lock_timeout: Duration,
-) -> Result<ConnPool> {
-    let manager = manager.with_init(move |c| {
-        c.busy_timeout(lock_timeout)?;
-        c.execute_batch("PRAGMA foreign_keys=ON;")
-    });
+fn build_pool(manager: SqliteManager, max_size: u32, lock_timeout: Duration) -> Result<ConnPool> {
     Pool::builder()
         .max_size(max_size)
         .connection_timeout(lock_timeout)

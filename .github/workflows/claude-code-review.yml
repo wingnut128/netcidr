@@ -10,6 +10,9 @@ on:
     #   - "src/**/*.js"
     #   - "src/**/*.jsx"
 
+# Deny by default; the job grants only what it needs.
+permissions: {}
+
 jobs:
   claude-review:
     # Optional: Filter by PR author
