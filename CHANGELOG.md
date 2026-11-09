@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Bump rusqlite 0.39 -> 0.41 (bundled SQLite 3.54.1) for RUSTSEC-2026-0459. `r2d2_sqlite` still pins rusqlite 0.40, so it is replaced by a small in-tree r2d2 connection manager ([#565](https://github.com/wingnut128/netcidr/issues/565))
+- Bump rmcp 3.8 -> 3.9 for RUSTSEC-2026-0462 ([#565](https://github.com/wingnut128/netcidr/issues/565))
+- Bump the `cgr.dev/chainguard/static` runtime image digest ([#552](https://github.com/wingnut128/netcidr/issues/552))
+- Deny GITHUB_TOKEN permissions by default in the Claude Code Review workflow (Scorecard Token-Permissions)
+
 ## [0.34.2](https://github.com/wingnut128/netcidr/compare/v0.34.1...v0.34.2) - 2026-11-08
 
 ### Other
