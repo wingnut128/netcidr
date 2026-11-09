@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.34.3](https://github.com/wingnut128/netcidr/compare/v0.34.2...v0.34.3) - 2026-11-09
+
+### Fixed
+
+- *(security)* clear RUSTSEC-2026-0459 and RUSTSEC-2026-0462 ([#566](https://github.com/wingnut128/netcidr/pull/566))
+
 ### Security
 
 - Bump rusqlite 0.39 -> 0.41 (bundled SQLite 3.54.1) for RUSTSEC-2026-0459. `r2d2_sqlite` still pins rusqlite 0.40, so it is replaced by a small in-tree r2d2 connection manager ([#565](https://github.com/wingnut128/netcidr/issues/565))
