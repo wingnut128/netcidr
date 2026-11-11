@@ -73,8 +73,10 @@ impl SqliteStore {
 
     /// Like [`in_memory`](Self::in_memory), with a custom lock timeout.
     pub fn in_memory_with_lock_timeout(lock_timeout: Duration) -> Result<Self> {
-        // A single connection: each in-memory connection is its own database.
-        let pool = build_pool(SqliteManager::memory(lock_timeout), 1, lock_timeout)?;
+        // Keep operations serialized: shared-cache SQLite uses table locks,
+        // which do not wait for busy_timeout like file-backed database locks.
+        let manager = SqliteManager::memory(lock_timeout).map_err(db_err)?;
+        let pool = build_pool(manager, 1, lock_timeout)?;
         Ok(Self { pool })
     }
 
