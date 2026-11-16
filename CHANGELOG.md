@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.34.4](https://github.com/wingnut128/netcidr/compare/v0.34.3...v0.34.4) - 2026-11-16
+
+### Other
+
+- *(deps-dev)* bump jsdom from 30.1.3 to 31.0.0 in /dashboard
+- *(deps)* bump anthropics/claude-code-action from 1.0.266 to 1.0.269 ([#575](https://github.com/wingnut128/netcidr/pull/575))
+- *(deps)* bump the cargo-minor-and-patch group with 3 updates ([#576](https://github.com/wingnut128/netcidr/pull/576))
+- *(deps-dev)* bump the bun-minor-and-patch group ([#573](https://github.com/wingnut128/netcidr/pull/573))
+- *(deps)* bump the codeql-action group with 3 updates ([#570](https://github.com/wingnut128/netcidr/pull/570))
+- *(deps)* bump docker/login-action from 4.7.0 to 4.8.0 ([#572](https://github.com/wingnut128/netcidr/pull/572))
+- *(deps)* bump release-plz/action from 0.5.147 to 0.5.148 ([#571](https://github.com/wingnut128/netcidr/pull/571))
+
 ## [0.34.3](https://github.com/wingnut128/netcidr/compare/v0.34.2...v0.34.3) - 2026-11-09
 
 ### Fixed
