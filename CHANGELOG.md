@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve in-memory SQLite schema and data when pooled connections are recycled, while keeping independent stores isolated.
+
 ## [0.34.3](https://github.com/wingnut128/netcidr/compare/v0.34.2...v0.34.3) - 2026-11-09
 
 ### Fixed
